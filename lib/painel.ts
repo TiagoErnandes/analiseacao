@@ -1,5 +1,5 @@
 // Dados que as páginas do site usam: última análise, carteira e posições já calculadas.
-import { ultimaExecucao } from "./analise";
+import { modoIa, ultimaExecucao } from "./analise";
 import { query, type Analise, type Carteira, type Relatorio } from "./db";
 import { infoTipo } from "./tipos";
 import { proventosRecebidos } from "./proventos";
@@ -80,6 +80,7 @@ export async function carregarPainel() {
 
   return {
     exec,
+    modo: await modoIa(),
     classes: [...classes.keys()]
       .map((nome) => ({ nome, valor: classes.get(nome) ?? 0, peso: patrimonio > 0 ? (classes.get(nome) ?? 0) / patrimonio : 0 }))
       .filter((c) => c.valor > 0)

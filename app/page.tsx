@@ -63,8 +63,17 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 }
 
 export default async function Painel() {
-  const { exec, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel();
-  const botao = <BotaoAnalise status={exec?.status ?? null} inicio={exec?.inicio ?? null} erro={exec?.erro ?? null} />;
+  const { exec, modo, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel();
+  const botao = (
+    <BotaoAnalise
+      status={exec?.status ?? null}
+      inicio={exec?.inicio ?? null}
+      erro={exec?.erro ?? null}
+      modo={modo}
+      custo={exec?.custo_usd ?? null}
+      custoMes={exec?.custo_mes_usd ?? 0}
+    />
+  );
 
   if (!rel) {
     return (

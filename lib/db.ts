@@ -63,6 +63,7 @@ export type Relatorio = {
   acao_do_dia_geral: string | null;
   justificativa_geral: string | null;
   revisao: string | null; // o que a revisão final da IA mudou ou confirmou
+  pesquisa?: string | null; // pesquisa na web do dia (modo completo), reaproveitada se rodar de novo
 };
 
 const COLUNAS_ANALISE = [
@@ -97,13 +98,13 @@ export async function salvarAnalises(linhas: Analise[]) {
 
 export async function salvarRelatorio(r: Relatorio) {
   await query(
-    `insert into relatorio_diario (data, contexto_mercado, acao_do_dia_carteira, justificativa_carteira, acao_do_dia_geral, justificativa_geral, revisao)
-     values ($1, $2, $3, $4, $5, $6, $7)
+    `insert into relatorio_diario (data, contexto_mercado, acao_do_dia_carteira, justificativa_carteira, acao_do_dia_geral, justificativa_geral, revisao, pesquisa)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
      on conflict (data) do update set contexto_mercado = excluded.contexto_mercado,
        acao_do_dia_carteira = excluded.acao_do_dia_carteira, justificativa_carteira = excluded.justificativa_carteira,
        acao_do_dia_geral = excluded.acao_do_dia_geral, justificativa_geral = excluded.justificativa_geral,
-       revisao = excluded.revisao`,
-    [r.data, r.contexto_mercado, r.acao_do_dia_carteira, r.justificativa_carteira, r.acao_do_dia_geral, r.justificativa_geral, r.revisao],
+       revisao = excluded.revisao, pesquisa = coalesce(excluded.pesquisa, relatorio_diario.pesquisa)`,
+    [r.data, r.contexto_mercado, r.acao_do_dia_carteira, r.justificativa_carteira, r.acao_do_dia_geral, r.justificativa_geral, r.revisao, r.pesquisa ?? null],
   );
 }
 
@@ -161,6 +162,11 @@ export async function migrar() {
       valor  numeric not null,
       primary key (serie, data)
     );
+    -- Custo da IA por análise e configurações do app (modo da IA)
+    alter table execucoes add column if not exists custo_usd numeric;
+    alter table execucoes add column if not exists modelo text;
+    alter table relatorio_diario add column if not exists pesquisa text;
+    create table if not exists config (chave text primary key, valor text not null);
     -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
     insert into universo (ticker) values
       ('HGLG11'),('KNRI11'),('XPML11'),('BTLG11'),('VISC11'),('KNCR11'),('MXRF11'),('HGRU11'),('XPLG11'),('CPTS11'),
