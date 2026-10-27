@@ -5,6 +5,7 @@ import { carregarPainel } from "@/lib/painel";
 import { Logo } from "../Logo";
 import { Cartao, Variacao } from "../ui";
 import { removerAtivo, salvarAtivo } from "./actions";
+import { ImportadorB3 } from "./ImportadorB3";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Carteira" };
@@ -20,7 +21,11 @@ export default async function CarteiraPage() {
         <p className="mt-2 text-sm text-suave">As mudanças entram na próxima análise (às 7h ou pelo botão do painel).</p>
       </div>
 
-      <Cartao titulo="Adicionar ou atualizar ativo">
+      <Cartao titulo="Importar da B3">
+        <ImportadorB3 atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio }))} />
+      </Cartao>
+
+      <Cartao titulo="Adicionar ou atualizar à mão">
         <form action={salvarAtivo} className="flex flex-wrap items-end gap-3 p-4">
           <label className="flex flex-col gap-1">
             <span className="rotulo">Código</span>
