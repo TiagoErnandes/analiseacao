@@ -1,5 +1,5 @@
 import { brl } from "@/lib/format";
-import { db, type Carteira } from "@/lib/supabase";
+import { query, type Carteira } from "@/lib/db";
 import { removerAtivo, salvarAtivo } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -7,8 +7,7 @@ export const dynamic = "force-dynamic";
 const input = "rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm";
 
 export default async function CarteiraPage() {
-  const { data } = await db().from("carteira").select("ticker, quantidade, preco_medio").order("ticker");
-  const carteira = (data ?? []) as Carteira[];
+  const carteira = await query<Carteira>("select ticker, quantidade, preco_medio from carteira order by ticker");
 
   return (
     <div className="space-y-6">
