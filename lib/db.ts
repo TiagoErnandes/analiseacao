@@ -1,4 +1,5 @@
 import { Pool, types } from "pg";
+import type { Tipo } from "./tipos";
 
 // NUMERIC vem como texto no driver; aqui vira número. DATE fica como texto "AAAA-MM-DD".
 types.setTypeParser(1700, (v) => (v == null ? null : Number.parseFloat(v)));
@@ -20,7 +21,7 @@ export async function query<T = Record<string, unknown>>(sql: string, params: un
   return res.rows as T[];
 }
 
-export type Carteira = { ticker: string; quantidade: number; preco_medio: number };
+export type Carteira = { ticker: string; quantidade: number; preco_medio: number; tipo: Tipo | null };
 
 export type Analise = {
   data: string;
@@ -48,7 +49,9 @@ export type Analise = {
   qualidade: number | null; // 0 a 10, só balanço
   setor: string | null;
   alertas: string | null; // problemas de dados e de qualidade, separados por "; "
-  tipo: "acao" | "fii" | "etf";
+  tipo: Tipo;
+  moeda: "BRL" | "USD"; // moeda de preco, tetos e dividendos
+  cambio: number; // reais por unidade da moeda no dia
   indicadores: Record<string, unknown> | null; // extras de cada tipo (balanço da ação, dados do FII, histórico do ETF)
 };
 
@@ -65,7 +68,7 @@ export type Relatorio = {
 const COLUNAS_ANALISE = [
   "data", "ticker", "nome", "logo", "preco", "variacao_dia", "lpa", "vpa", "dpa_12m", "dpa_medio", "dy_12m", "roe",
   "teto_bazin", "teto_graham", "preco_teto", "margem", "nota_ia", "recomendacao", "resumo_ia", "riscos_ia", "score",
-  "na_carteira", "qualidade", "setor", "alertas", "tipo", "indicadores",
+  "na_carteira", "qualidade", "setor", "alertas", "tipo", "indicadores", "moeda", "cambio",
 ] as const satisfies readonly (keyof Analise)[];
 
 export async function salvarAnalises(linhas: Analise[]) {
@@ -131,6 +134,25 @@ export async function migrar() {
       quantidade  numeric not null check (quantidade > 0),
       preco       numeric not null check (preco >= 0),
       criado_em   timestamptz not null default now()
+    );
+    alter table analises add column if not exists moeda text not null default 'BRL';
+    alter table analises add column if not exists cambio numeric not null default 1;
+    alter table carteira add column if not exists tipo text; -- vazio: detecta sozinho (ação, FII ou ETF da B3)
+    alter table operacoes add column if not exists custos numeric not null default 0;
+    alter table operacoes add column if not exists tipo_ativo text;
+    -- Dividendos/JCP/rendimentos por ativo (Yahoo), para calcular os proventos recebidos
+    create table if not exists proventos (
+      ticker  text not null,
+      data    date not null,
+      valor   numeric not null,
+      primary key (ticker, data)
+    );
+    -- Uma foto da carteira por dia de análise, para o gráfico de evolução do patrimônio
+    create table if not exists patrimonio_diario (
+      data        date primary key,
+      investido   numeric not null,
+      patrimonio  numeric not null,
+      proventos   numeric not null default 0
     );
     -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
     insert into universo (ticker) values

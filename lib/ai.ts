@@ -18,7 +18,7 @@ export type LinhaParaIa = {
   [campo: string]: unknown;
 };
 
-const SYSTEM = `Você é um analista de ações, fundos imobiliários (FIIs) e ETFs brasileiros, focado em previdência privada e buy and hold.
+const SYSTEM = `Você é um analista de investimentos (ações, FIIs, ETFs, BDRs, ações e REITs americanos e cripto), focado em previdência privada e buy and hold.
 O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele valoriza:
 - empresas perenes, com lucro consistente, boa governança e dividendos estáveis;
 - comprar abaixo do preço teto. Cada linha tem um "tipo", e o preço teto já vem calculado de forma conservadora:
@@ -30,6 +30,9 @@ O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele val
   - etf: se paga dividendos relevantes, Bazin a 6%; senão a referência é a média de preço dos últimos 12 meses.
     "qualidade" vem do retorno de 5 anos, das quedas sofridas, da liquidez e da renda. Pese o índice que replica,
     a taxa de administração e se faz sentido como base de carteira de longo prazo.
+  - bdr, stock, etf_int, reit: mesma regra dos ETFs (Bazin se pagam dividendos, senão média de 12 meses), qualidade pelo histórico.
+    Stocks, REITs e ETFs internacionais estão em dólar (campo "moeda"; "cambio" = reais por dólar): pese também o câmbio.
+  - cripto: sem preço teto (não gera lucro nem renda). Para previdência, trate como parcela pequena e de alto risco.
   Os detalhes de cada tipo estão no campo "indicadores".
 - diversificação: nenhum setor deve passar de 30% da carteira;
 - setores perenes (energia, saneamento, seguros, telecom, bancos), sem descartar outros.
@@ -50,7 +53,7 @@ const Decisao = z.object({
   acoes: z.array(Acao).describe("uma entrada para CADA ticker da tabela"),
   acao_do_dia_carteira: z.string().describe("ticker da carteira mais indicado para aporte hoje"),
   justificativa_carteira: z.string(),
-  acao_do_dia_geral: z.string().describe("ticker mais indicado hoje entre todos os ativos analisados (ações, FIIs e ETFs)"),
+  acao_do_dia_geral: z.string().describe("ticker mais indicado hoje entre todos os ativos analisados"),
   justificativa_geral: z.string(),
 });
 

@@ -1,6 +1,7 @@
 // A análise do dia. Use rodarAnalise() (registra a execução e impede duas ao mesmo tempo).
 import { analisarComIa, type LinhaParaIa } from "./ai";
-import { buscarAcao, type DadosAcao } from "./mercado";
+import { buscarAcao, buscarExterior, cotacaoDolar, type DadosAcao } from "./mercado";
+import { SO_YAHOO, infoTipo } from "./tipos";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, type Qualidade } from "./qualidade";
 import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, scoreFinal, type Indicadores } from "./valuation";
@@ -24,7 +25,15 @@ function avaliar(d: DadosAcao): { ind: Indicadores; qual: Qualidade } {
     });
     return { ind, qual: calcularQualidadeFii(d.fii, ind.dpa12m) };
   }
-  if (d.tipo === "etf") {
+  if (d.tipo === "cripto") {
+    const ind = calcularIndicadoresEtf({ preco: d.preco, media12m: null, proventos: [] });
+    return {
+      ind: { ...ind, teto: null, margem: null, alertas: ["criptomoeda: sem preço teto (não gera lucro nem renda), alta volatilidade"] },
+      qual: { nota: null, pontos: [], alertas: [] },
+    };
+  }
+  if (d.tipo !== "acao") {
+    // ETF, BDR, stock, ETF internacional e REIT: Bazin se pagam dividendos, senão média de 12 meses
     const ind = calcularIndicadoresEtf({ preco: d.preco, media12m: d.historico?.media12m ?? null, proventos: d.proventos });
     return { ind, qual: calcularQualidadeEtf(d.historico, ind.dy12m) };
   }
@@ -37,7 +46,7 @@ export async function executarAnalise() {
   await migrar();
 
   const [carteira, universo] = await Promise.all([
-    query<Carteira>("select ticker, quantidade, preco_medio from carteira"),
+    query<Carteira>("select ticker, quantidade, preco_medio, tipo from carteira"),
     query<{ ticker: string }>("select ticker from universo where ativo"),
   ]);
 
@@ -47,9 +56,12 @@ export async function executarAnalise() {
 
   // 1) Dados de mercado (em sequência, para não sobrecarregar as fontes)
   const dados: DadosAcao[] = [];
+  const precisaDolar = carteira.some((c) => c.tipo && SO_YAHOO.includes(c.tipo) && c.tipo !== "bdr");
+  const dolar = precisaDolar ? await cotacaoDolar().catch((e) => (console.warn(`  ${e.message}`), null)) : null;
   for (const t of tickers) {
+    const tipo = minha.get(t)?.tipo;
     try {
-      dados.push(await buscarAcao(t));
+      dados.push(tipo && SO_YAHOO.includes(tipo) ? await buscarExterior(t, tipo, dolar) : await buscarAcao(t));
     } catch (err) {
       console.warn(`  pulando ${t}: ${(err as Error).message}`);
     }
@@ -57,15 +69,15 @@ export async function executarAnalise() {
   if (dados.length === 0) throw new Error("Nenhum dado de mercado obtido. Yahoo/Fundamentus podem estar fora do ar.");
 
   // 2) Preço teto, qualidade e pesos da carteira (por ação e por setor)
-  const valorPos = (d: DadosAcao) => (minha.get(d.ticker)?.quantidade ?? 0) * (d.preco ?? 0);
+  const valorPos = (d: DadosAcao) => (minha.get(d.ticker)?.quantidade ?? 0) * (d.preco ?? 0) * d.cambio; // em reais
   const totalCarteira = dados.reduce((s, d) => s + valorPos(d), 0);
   const pesoIdeal = minha.size > 0 ? 1 / minha.size : 0;
   const setorDe = (d: DadosAcao) =>
     d.tipo === "fii"
       ? `FII ${d.fii?.segmento ?? "sem segmento"}`
-      : d.tipo === "etf"
-        ? "ETF"
-        : (d.fundamentos?.subsetor ?? d.fundamentos?.setor ?? "Sem setor");
+      : d.tipo === "acao"
+        ? (d.fundamentos?.subsetor ?? d.fundamentos?.setor ?? "Sem setor")
+        : (infoTipo(d.tipo)?.nome ?? "Outros");
   const pesoSetor = new Map<string, number>();
   for (const d of dados) {
     if (totalCarteira > 0 && valorPos(d) > 0) {
@@ -89,6 +101,8 @@ export async function executarAnalise() {
     return {
       ticker: d.ticker,
       tipo: d.tipo,
+      moeda: d.moeda,
+      cambio: d.cambio,
       nome: d.nome,
       logo: d.logo,
       variacao_dia: d.variacaoDia,
@@ -104,7 +118,7 @@ export async function executarAnalise() {
       dy_12m: ind.dy12m,
       dpa_medio: ind.dpaMedio,
       roe: d.roe,
-      indicadores: d.tipo === "fii" ? d.fii : d.tipo === "etf" ? d.historico : d.fundamentos,
+      indicadores: d.tipo === "fii" ? d.fii : d.tipo === "acao" ? d.fundamentos : d.historico,
       qualidade: qual.nota,
       pontos_fortes: qual.pontos,
       teto_bazin: ind.bazin,
@@ -153,11 +167,32 @@ export async function executarAnalise() {
       setor: l.setor,
       alertas: l.alertas.length ? l.alertas.join("; ") : null,
       tipo: l.tipo,
+      moeda: l.moeda,
+      cambio: l.cambio,
       indicadores: (l.indicadores as Record<string, unknown> | null) ?? null,
     };
   });
 
   await salvarAnalises(registros);
+
+  // Histórico de proventos (para "proventos recebidos") e a foto do patrimônio do dia
+  for (const d of dados) {
+    for (const p of d.proventos) {
+      await query(
+        "insert into proventos (ticker, data, valor) values ($1, $2, $3) on conflict (ticker, data) do update set valor = excluded.valor",
+        [d.ticker, p.data.toISOString().slice(0, 10), p.valor],
+      );
+    }
+  }
+  const investido = dados.reduce((s, d) => {
+    const c = minha.get(d.ticker);
+    return s + (c ? c.quantidade * c.preco_medio * d.cambio : 0);
+  }, 0);
+  await query(
+    `insert into patrimonio_diario (data, investido, patrimonio) values ($1, $2, $3)
+     on conflict (data) do update set investido = excluded.investido, patrimonio = excluded.patrimonio`,
+    [hoje, investido, totalCarteira],
+  );
   await salvarRelatorio({
     data: hoje,
     contexto_mercado: ia.contexto_mercado,

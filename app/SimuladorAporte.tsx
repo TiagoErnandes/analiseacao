@@ -14,17 +14,18 @@ export type ItemAporte = {
   recomendacao: string | null;
   score: number | null;
   setor: string | null;
+  nova?: boolean; // oportunidade fora da carteira
 };
 
-type Props = { itens: ItemAporte[]; pesoSetor: Record<string, number>; limiteSetor: number };
+type Props = { itens: ItemAporte[]; novas?: ItemAporte[]; pesoSetor: Record<string, number>; limiteSetor: number };
 
 type Compra = { item: ItemAporte; qtd: number };
 
 /**
- * Divide o aporte entre as ações da carteira que estão abaixo do preço teto, sem sinal de "Evitar"
+ * Divide o aporte entre as ações (da carteira e, se pedido, as melhores oportunidades fora dela) que estão abaixo do preço teto, sem sinal de "Evitar"
  * e fora de setor concentrado, priorizando quem está mais longe do peso ideal e tem maior score.
  */
-function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor }: Props) {
+function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor }: Omit<Props, "novas">) {
   const patrimonio = itens.reduce((s, i) => s + i.valor, 0);
   const alvo = (patrimonio + valorAporte) / Math.max(1, itens.length);
   const elegiveis = itens
@@ -38,9 +39,18 @@ function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor }: Props)
   const compras = new Map<string, Compra>(elegiveis.map((i) => [i.ticker, { item: i, qtd: 0 }]));
   let resto = valorAporte;
 
-  // 1) Completa o peso ideal de cada uma, na ordem do score
-  for (const i of elegiveis) {
-    const falta = Math.max(0, alvo - i.valor);
+  // 0) Oportunidades fora da carteira ficam com até 30% do aporte (senão as da carteira, abaixo do peso ideal, levariam tudo)
+  const novas = elegiveis.filter((i) => i.nova);
+  const cotaNovas = novas.length ? valorAporte * COTA_NOVAS : 0;
+  for (const i of novas) {
+    const parte = cotaNovas / novas.length;
+    const qtd = Math.floor(Math.min(parte, alvo, resto) / i.preco!);
+    compras.get(i.ticker)!.qtd += qtd;
+    resto -= qtd * i.preco!;
+  }
+  // 1) Completa o peso ideal de cada uma da carteira, na ordem do score
+  for (const i of elegiveis.filter((e) => !e.nova)) {
+    const falta = Math.max(0, alvo - i.valor - compras.get(i.ticker)!.qtd * i.preco!);
     const qtd = Math.floor(Math.min(falta, resto) / i.preco!);
     compras.get(i.ticker)!.qtd += qtd;
     resto -= qtd * i.preco!;
@@ -63,11 +73,17 @@ function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor }: Props)
 }
 
 const ATALHOS = [500, 1000, 2000, 5000];
+const COTA_NOVAS = 0.3;
 
 export function SimuladorAporte(props: Props) {
   const [texto, setTexto] = useState("1000");
+  const [comNovas, setComNovas] = useState(true);
+  const novas = props.novas ?? [];
   const valor = Math.max(0, Number(texto.replace(/\./g, "").replace(",", ".")) || 0);
-  const r = useMemo(() => calcular(valor, props), [valor, props]);
+  const r = useMemo(
+    () => calcular(valor, { ...props, itens: comNovas ? [...props.itens, ...novas] : props.itens }),
+    [valor, props, comNovas, novas],
+  );
 
   return (
     <div className="space-y-4 p-4">
@@ -92,10 +108,17 @@ export function SimuladorAporte(props: Props) {
           ))}
         </div>
       </div>
+      {novas.length > 0 && (
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-suave">
+          <input type="checkbox" checked={comNovas} onChange={(e) => setComNovas(e.target.checked)} className="accent-[#199e70]" />
+          Incluir oportunidades fora da carteira
+          <span className="text-xs text-fraco">({novas.map((n) => n.ticker).join(", ")})</span>
+        </label>
+      )}
 
       {r.elegiveis === 0 ? (
         <p className="rounded-lg bg-amber-400/5 p-3 text-sm text-amber-200/90">
-          Hoje nenhuma ação da sua carteira está abaixo do preço teto com sinal favorável e fora de setor concentrado.
+          Hoje nenhuma ação está abaixo do preço teto com sinal favorável e fora de setor concentrado.
           Para previdência, vale guardar o aporte para o próximo mês ou olhar o{" "}
           <Link href="/ranking?filtro=comprar" className="underline">ranking</Link>.
         </p>
@@ -120,6 +143,9 @@ export function SimuladorAporte(props: Props) {
                     <Link href={`/acao/${c.item.ticker}`} className="flex items-center gap-2 font-medium hover:text-marca">
                       <Logo ticker={c.item.ticker} src={c.item.logo} tamanho={22} />
                       {c.item.ticker}
+                      {c.item.nova && (
+                        <span className="rounded bg-marca/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-marca" title="Fora da sua carteira hoje">nova</span>
+                      )}
                     </Link>
                   </td>
                   <td className="text-right">{c.qtd}</td>
@@ -134,7 +160,7 @@ export function SimuladorAporte(props: Props) {
       )}
       <div className="flex flex-wrap justify-between gap-2 text-xs text-suave tabular-nums">
         <span>Usado: <b className="text-texto">{brl(valor - r.resto)}</b> · Sobra: {brl(r.resto)}</span>
-        <span>Só entram ações abaixo do teto, sem “Evitar” e com setor até {pct(props.limiteSetor, 0)}.</span>
+        <span>Só entram ativos abaixo do teto, sem “Evitar” e com setor até {pct(props.limiteSetor, 0)}. Oportunidades novas (sinal “Comprar” e qualidade ≥ 6) ficam com até {pct(COTA_NOVAS, 0)} do aporte.</span>
       </div>
     </div>
   );

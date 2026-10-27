@@ -7,7 +7,8 @@ import { Logo } from "../Logo";
 import { Cartao, Variacao } from "../ui";
 import { removerAtivo, salvarAtivo } from "./actions";
 import { ImportadorB3 } from "./ImportadorB3";
-import { RegistrarOperacao } from "./RegistrarOperacao";
+import { FormLancamento } from "../Lancamento";
+import { TIPOS } from "@/lib/tipos";
 import { TipoAtivo } from "../TipoAtivo";
 
 export const dynamic = "force-dynamic";
@@ -15,9 +16,12 @@ export const metadata: Metadata = { title: "Carteira" };
 
 export default async function CarteiraPage() {
   const { posicoes, resumo } = await carregarPainel(); // também cria a tabela de operações
-  const operacoes = await query<{ id: number; data: string; ticker: string; tipo: "C" | "V"; quantidade: number; preco: number }>(
-    "select id, data, ticker, tipo, quantidade, preco from operacoes order by data desc, id desc limit 30",
+  const operacoes = await query<{ id: number; data: string; ticker: string; tipo: "C" | "V"; quantidade: number; preco: number; custos: number; moeda: string }>(
+    `select id, data::text, ticker, tipo, quantidade, preco, custos,
+            case when tipo_ativo in ('stock', 'etf_int', 'reit') then 'USD' else 'BRL' end as moeda
+       from operacoes order by data desc, id desc limit 30`,
   );
+  const dinheiro = (v: number, moeda: string) => v.toLocaleString("pt-BR", { style: "currency", currency: moeda });
   const importador = <ImportadorB3 atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio }))} />;
 
   return (
@@ -28,10 +32,12 @@ export default async function CarteiraPage() {
         <p className="mt-2 text-sm text-suave">As mudanças entram na próxima análise (às 7h ou pelo botão do painel).</p>
       </div>
 
-      <Cartao titulo="Registrar compra ou venda">
-        <RegistrarOperacao
-          atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio, preco: p.a?.preco ?? null }))}
-        />
+      <Cartao titulo="Adicionar lançamento">
+        <div className="p-4">
+          <FormLancamento
+            posicoes={posicoes.map((p) => ({ ticker: p.ticker, tipo: p.tipo, quantidade: p.quantidade, preco_medio: p.preco_medio, preco: p.a?.preco ?? null }))}
+          />
+        </div>
       </Cartao>
 
       <Cartao titulo={<>Ativos <span className="ml-1 font-normal text-fraco">{posicoes.length}</span></>}>
@@ -101,6 +107,7 @@ export default async function CarteiraPage() {
                   <th>Operação</th>
                   <th className="!text-right">Quantidade</th>
                   <th className="!text-right">Preço</th>
+                  <th className="!text-right">Custos</th>
                   <th className="!text-right">Total</th>
                 </tr>
               </thead>
@@ -111,8 +118,9 @@ export default async function CarteiraPage() {
                     <td className="font-medium">{o.ticker}</td>
                     <td className={o.tipo === "C" ? "text-alta" : "text-baixa"}>{o.tipo === "C" ? "Compra" : "Venda"}</td>
                     <td className="text-right">{o.quantidade}</td>
-                    <td className="text-right">{brl(o.preco)}</td>
-                    <td className="text-right">{brl(o.quantidade * o.preco)}</td>
+                    <td className="text-right">{dinheiro(o.preco, o.moeda)}</td>
+                    <td className="text-right text-suave">{o.custos ? dinheiro(o.custos, o.moeda) : "—"}</td>
+                    <td className="text-right">{dinheiro(o.quantidade * o.preco + (o.tipo === "C" ? 1 : -1) * o.custos, o.moeda)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -121,11 +129,17 @@ export default async function CarteiraPage() {
         </Cartao>
       )}
 
-      <Cartao titulo="Importar da B3">{importador}</Cartao>
+      <div id="b3" className="scroll-mt-20"><Cartao titulo="Importar da B3">{importador}</Cartao></div>
 
       <details className="cartao">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Corrigir posição à mão</summary>
         <form action={salvarAtivo} className="flex flex-wrap items-end gap-3 border-t border-borda p-4">
+          <label className="flex flex-col gap-1">
+            <span className="rotulo">Tipo</span>
+            <select name="tipo" className="campo">
+              {TIPOS.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+            </select>
+          </label>
           <label className="flex flex-col gap-1">
             <span className="rotulo">Código</span>
             <input name="ticker" placeholder="PETR4" required className="campo w-28 uppercase" />
@@ -135,7 +149,7 @@ export default async function CarteiraPage() {
             <input name="quantidade" inputMode="decimal" placeholder="100" required className="campo w-28" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="rotulo">Preço médio (R$)</span>
+            <span className="rotulo">Preço médio (na moeda do ativo)</span>
             <input name="preco_medio" inputMode="decimal" placeholder="25,40" required className="campo w-32" />
           </label>
           <button className="botao">Salvar</button>

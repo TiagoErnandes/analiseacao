@@ -3,20 +3,26 @@
 import { revalidatePath } from "next/cache";
 import { importarB3, type ResultadoB3 } from "@/lib/b3";
 import { pool, query } from "@/lib/db";
+import { infoTipo, type Tipo } from "@/lib/tipos";
 
-const numero = (v: FormDataEntryValue | null) => Number(String(v ?? "").replace(",", "."));
+const numero = (v: FormDataEntryValue | null) => {
+  const t = String(v ?? "").trim();
+  return Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t); // aceita 1.234,56 e 1234.56
+};
 
 export async function salvarAtivo(form: FormData) {
+  const info = infoTipo(String(form.get("tipo") ?? "acao"));
+  if (!info) throw new Error("Tipo de ativo inválido");
   const ticker = String(form.get("ticker") ?? "").trim().toUpperCase();
-  if (!/^[A-Z]{4}\d{1,2}$/.test(ticker)) throw new Error("Código inválido (ex.: PETR4)");
+  if (!info.formato.test(ticker)) throw new Error(`Código inválido para ${info.nome} (ex.: ${info.exemplo})`);
   const quantidade = numero(form.get("quantidade"));
   const preco_medio = numero(form.get("preco_medio"));
   if (!(quantidade >= 0) || !(preco_medio >= 0)) throw new Error("Quantidade e preço médio devem ser números");
 
   await query(
-    `insert into carteira (ticker, quantidade, preco_medio) values ($1, $2, $3)
-     on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio`,
-    [ticker, quantidade, preco_medio],
+    `insert into carteira (ticker, quantidade, preco_medio, tipo) values ($1, $2, $3, $4)
+     on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio, tipo = excluded.tipo`,
+    [ticker, quantidade, preco_medio, info.id],
   );
   revalidatePath("/carteira");
   revalidatePath("/");
@@ -55,7 +61,7 @@ export async function lerArquivosB3(form: FormData): Promise<{ ok: true; resulta
 }
 
 export async function aplicarImportacaoB3(
-  itens: { ticker: string; quantidade: number; preco_medio: number }[],
+  itens: { ticker: string; quantidade: number; preco_medio: number; tipo: Tipo | null }[],
   modo: "substituir" | "atualizar",
 ): Promise<{ ok: boolean; mensagem: string }> {
   const validos = itens.filter(
@@ -74,9 +80,10 @@ export async function aplicarImportacaoB3(
     }
     for (const i of validos) {
       await client.query(
-        `insert into carteira (ticker, quantidade, preco_medio) values ($1, $2, $3)
-         on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio`,
-        [i.ticker, i.quantidade, i.preco_medio],
+        `insert into carteira (ticker, quantidade, preco_medio, tipo) values ($1, $2, $3, $4)
+         on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio,
+           tipo = coalesce(excluded.tipo, carteira.tipo)`,
+        [i.ticker, i.quantidade, i.preco_medio, infoTipo(i.tipo)?.id ?? null],
       );
     }
     await client.query("commit");
@@ -98,37 +105,50 @@ export async function aplicarImportacaoB3(
 
 export async function registrarOperacao(dados: {
   ticker: string;
+  tipoAtivo: Tipo;
   tipo: "C" | "V";
   quantidade: number;
   preco: number;
+  custos: number;
   data: string;
 }): Promise<{ ok: boolean; mensagem: string }> {
-  const ticker = dados.ticker.trim().toUpperCase().replace(/F$/, "");
-  if (!/^[A-Z]{4}\d{1,2}$/.test(ticker)) return { ok: false, mensagem: "Código inválido (ex.: PETR4, MXRF11)." };
+  const info = infoTipo(dados.tipoAtivo);
+  if (!info) return { ok: false, mensagem: "Escolha o tipo de ativo." };
+  const ticker = dados.ticker.trim().toUpperCase().replace(/^([A-Z]{4}\d{1,2})F$/, "$1");
+  if (!info.formato.test(ticker)) return { ok: false, mensagem: `Código inválido para ${info.nome} (ex.: ${info.exemplo}).` };
   if (!(dados.quantidade > 0)) return { ok: false, mensagem: "Informe a quantidade." };
-  if (!(dados.preco > 0)) return { ok: false, mensagem: "Informe o preço pago por unidade." };
+  if (!(dados.preco > 0)) return { ok: false, mensagem: "Informe o preço por unidade." };
+  const custos = Number.isFinite(dados.custos) && dados.custos > 0 ? dados.custos : 0;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dados.data)) return { ok: false, mensagem: "Data inválida." };
+  const simbolo = info.moeda === "USD" ? "US$" : "R$";
+  const fmt = (v: number) => `${simbolo} ${v.toFixed(2).replace(".", ",")}`;
 
   const client = await pool().connect();
   try {
     await client.query("begin");
-    const { rows } = await client.query<{ quantidade: string; preco_medio: string }>(
-      "select quantidade::text, preco_medio::text from carteira where ticker = $1 for update",
+    const { rows } = await client.query<{ quantidade: string; preco_medio: string; tipo: string | null }>(
+      "select quantidade::text, preco_medio::text, tipo from carteira where ticker = $1 for update",
       [ticker],
     );
     const qtdAtual = rows[0] ? Number(rows[0].quantidade) : 0;
     const pmAtual = rows[0] ? Number(rows[0].preco_medio) : 0;
+    if (rows[0]?.tipo && rows[0].tipo !== info.id) {
+      await client.query("rollback");
+      return { ok: false, mensagem: `${ticker} já está na carteira como ${infoTipo(rows[0].tipo)?.nome ?? rows[0].tipo}.` };
+    }
     let mensagem: string;
 
     if (dados.tipo === "C") {
       const qtd = qtdAtual + dados.quantidade;
-      const pm = (qtdAtual * pmAtual + dados.quantidade * dados.preco) / qtd;
+      // Os custos (corretagem, taxas) entram no preço médio
+      const pm = (qtdAtual * pmAtual + dados.quantidade * dados.preco + custos) / qtd;
       await client.query(
-        `insert into carteira (ticker, quantidade, preco_medio) values ($1, $2, $3)
-         on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio`,
-        [ticker, qtd, pm],
+        `insert into carteira (ticker, quantidade, preco_medio, tipo) values ($1, $2, $3, $4)
+         on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio,
+           tipo = coalesce(carteira.tipo, excluded.tipo)`,
+        [ticker, qtd, pm, info.id],
       );
-      mensagem = `Compra registrada. ${ticker}: ${qtd} cotas a preço médio de R$ ${pm.toFixed(2).replace(".", ",")}.`;
+      mensagem = `Compra registrada. ${ticker}: ${qtd} a preço médio de ${fmt(pm)}.`;
     } else {
       if (dados.quantidade > qtdAtual) {
         await client.query("rollback");
@@ -137,16 +157,13 @@ export async function registrarOperacao(dados: {
       const qtd = qtdAtual - dados.quantidade;
       if (qtd === 0) await client.query("delete from carteira where ticker = $1", [ticker]);
       else await client.query("update carteira set quantidade = $2 where ticker = $1", [ticker, qtd]);
-      const resultado = (dados.preco - pmAtual) * dados.quantidade;
-      mensagem = `Venda registrada. ${resultado >= 0 ? "Lucro" : "Prejuízo"} de R$ ${Math.abs(resultado).toFixed(2).replace(".", ",")} sobre o preço médio.`;
+      const resultado = dados.preco * dados.quantidade - custos - pmAtual * dados.quantidade;
+      mensagem = `Venda registrada. ${resultado >= 0 ? "Lucro" : "Prejuízo"} de ${fmt(Math.abs(resultado))} sobre o preço médio.`;
     }
-    await client.query("insert into operacoes (data, ticker, tipo, quantidade, preco) values ($1, $2, $3, $4, $5)", [
-      dados.data,
-      ticker,
-      dados.tipo,
-      dados.quantidade,
-      dados.preco,
-    ]);
+    await client.query(
+      "insert into operacoes (data, ticker, tipo, quantidade, preco, custos, tipo_ativo) values ($1, $2, $3, $4, $5, $6, $7)",
+      [dados.data, ticker, dados.tipo, dados.quantidade, dados.preco, custos, info.id],
+    );
     await client.query("commit");
     revalidatePath("/carteira");
     revalidatePath("/");
