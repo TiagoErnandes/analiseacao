@@ -17,9 +17,8 @@ O app sobe 3 containers separados do Fresh Tech:
 bash deploy/configurar.sh
 ```
 
-Ele pergunta só duas coisas:
+Ele pergunta só uma coisa:
 - **Chave da API da Anthropic**: crie em https://console.anthropic.com/settings/keys (precisa ter crédito em Billing).
-- **Senha do site**: invente uma. É a que o navegador vai pedir para abrir o app.
 
 O resto é automático: gera a senha do banco, cria o `.env.production`, configura o Nginx com o endereço
 grátis `acoes.179.197.233.72.sslip.io`, tenta o HTTPS e sobe os containers. A VPS vai pedir a senha do
@@ -29,17 +28,13 @@ Quando tiver um domínio próprio, troque o `server_name` em `/etc/nginx/sites-a
 
 ## 2. Primeira análise (sem esperar as 7h)
 
-**[LOCAL]**
-
-```bash
-bash deploy/analisar-agora.sh
-```
+Clique em **Rodar análise agora** no site (ou, no Git Bash, `bash deploy/analisar-agora.sh`).
 
 Leva alguns minutos (a IA pesquisa notícias). Depois abra `https://SEU_SUBDOMINIO_AQUI`.
 
 ## Dia a dia
 
 - Mudou o código: `bash deploy/deploy.sh`
-- Rodar a análise na hora: `bash deploy/analisar-agora.sh`
+- Rodar a análise na hora: botão **Rodar análise agora** no site (uma por vez, no máximo a cada 15 min)
 - Ver o log do agendador: `ssh freshtech@179.197.233.72 "cd ~/analiseacao && docker compose -f docker-compose.prod.yml logs --tail 100 agendador"`
 - Abrir o banco: `ssh freshtech@179.197.233.72 "cd ~/analiseacao && docker compose -f docker-compose.prod.yml exec postgres psql -U analiseacao"`

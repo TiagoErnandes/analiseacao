@@ -2,7 +2,7 @@
 # Configuração da primeira vez na VPS, num comando só.
 # Uso (Git Bash, na raiz do repo): bash deploy/configurar.sh
 #
-# Pergunta só a chave da Anthropic e a senha do site. O resto é automático:
+# Pergunta só a chave da Anthropic. O resto é automático:
 # senha do banco, .env.production, Nginx, HTTPS (se der) e subida dos containers.
 # A VPS vai pedir a senha do freshtech algumas vezes (e a do sudo uma vez).
 set -euo pipefail
@@ -17,9 +17,7 @@ cd "$(dirname "$0")/.."
 
 echo "Chave da API da Anthropic (começa com sk-ant-). Crie em https://console.anthropic.com/settings/keys"
 read -r -p "> " ANTHROPIC_KEY
-echo "Escolha uma senha para abrir o site (não aparece enquanto digita):"
-read -r -s -p "> " APP_SENHA; echo
-[ -n "$ANTHROPIC_KEY" ] && [ -n "$APP_SENHA" ] || { echo "❌ As duas respostas são obrigatórias."; exit 1; }
+[ -n "$ANTHROPIC_KEY" ] || { echo "❌ A chave é obrigatória."; exit 1; }
 
 PG_SENHA="$(openssl rand -hex 24 2>/dev/null || (date +%s%N; echo $RANDOM$RANDOM) | sha256sum | cut -c1-48)"
 
@@ -38,7 +36,6 @@ POSTGRES_PASSWORD=${PG_SENHA}
 POSTGRES_DB=analiseacao
 DATABASE_URL=postgres://analiseacao:${PG_SENHA}@postgres:5432/analiseacao
 ANTHROPIC_API_KEY=${ANTHROPIC_KEY}
-APP_PASSWORD=${APP_SENHA}
 ANALISE_CRON=0 7 * * 1-5
 ENV
 
@@ -56,5 +53,4 @@ ssh "${VPS_USER}@${VPS_HOST}" "cd ~/${REMOTE_DIR} && docker compose -f docker-co
 
 echo
 echo "✅ Pronto! Abra: https://${DOMINIO}  (ou http:// se o HTTPS não foi possível)"
-echo "   Usuário: qualquer um. Senha: a que você escolheu."
-echo "   Para rodar a primeira análise agora: bash deploy/analisar-agora.sh"
+echo "   Para rodar a primeira análise, clique em \"Rodar análise agora\" no site."
