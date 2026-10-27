@@ -3,11 +3,15 @@
 // - Fundamentus: balanço das ações (LPA, VPA, ROE...) e indicadores dos FIIs (P/VP, FFO, vacância...).
 // ETFs não estão no Fundamentus: usam só o Yahoo.
 
-export type TipoAtivo = "acao" | "fii" | "etf";
+import { simboloYahoo, type Tipo } from "./tipos";
+
+export type TipoAtivo = Tipo;
 
 export type DadosAcao = {
   ticker: string;
   tipo: TipoAtivo;
+  moeda: "BRL" | "USD"; // moeda do preço e dos dividendos
+  cambio: number; // reais por unidade da moeda (1 para BRL)
   nome: string | null;
   logo: string | null;
   preco: number | null;
@@ -59,8 +63,8 @@ export function numeroBr(txt: string | undefined): number | null {
   return ehPct ? n / 100 : n;
 }
 
-async function yahoo(ticker: string) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}.SA?range=6y&interval=1mo&events=div`;
+async function yahoo(ticker: string, simbolo = `${ticker}.SA`) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=6y&interval=1mo&events=div`;
   const res = await fetch(url, { headers: UA });
   if (!res.ok) throw new Error(`Yahoo ${ticker}: HTTP ${res.status}`);
   const json = (await res.json()) as any;
@@ -204,6 +208,44 @@ async function fundamentus(ticker: string) {
   return extrairFundamentus(new TextDecoder("latin1").decode(await res.arrayBuffer()));
 }
 
+/** Cotação do dólar em reais (Yahoo). */
+export async function cotacaoDolar(): Promise<number> {
+  const res = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/USDBRL=X?range=5d&interval=1d", { headers: UA });
+  if (!res.ok) throw new Error(`Dólar: HTTP ${res.status}`);
+  const v = ((await res.json()) as any)?.chart?.result?.[0]?.meta?.regularMarketPrice;
+  if (typeof v !== "number" || v <= 0) throw new Error("Dólar: sem cotação");
+  return v;
+}
+
+/**
+ * Ativos fora do Fundamentus (BDR, stocks, ETFs internacionais, REITs e cripto): só o Yahoo.
+ * Stocks, REITs e ETFs internacionais ficam em dólar; cripto é convertida para reais.
+ */
+export async function buscarExterior(ticker: string, tipo: Tipo, dolar: number | null): Promise<DadosAcao> {
+  const y = await yahoo(ticker, simboloYahoo(ticker, tipo));
+  const emDolar = tipo === "stock" || tipo === "etf_int" || tipo === "reit";
+  if ((emDolar || tipo === "cripto") && !dolar) throw new Error(`${ticker}: sem cotação do dólar para converter`);
+  const fator = tipo === "cripto" ? dolar! : 1; // cripto vem em US$ e é guardada em R$
+  return {
+    ticker,
+    tipo,
+    moeda: emDolar ? "USD" : "BRL",
+    cambio: emDolar ? dolar! : 1,
+    nome: y.nome,
+    logo: tipo === "bdr" ? `https://icons.brapi.dev/icons/${ticker}.svg` : null,
+    preco: y.preco != null ? y.preco * fator : null,
+    variacaoDia: null,
+    lpa: null,
+    vpa: null,
+    roe: null,
+    dyFundamentus: null,
+    fundamentos: null,
+    fii: null,
+    historico: y.historico,
+    proventos: y.proventos,
+  };
+}
+
 export async function buscarAcao(ticker: string): Promise<DadosAcao> {
   const [y, f] = await Promise.allSettled([yahoo(ticker), fundamentus(ticker)]);
   if (y.status === "rejected" && f.status === "rejected") {
@@ -219,6 +261,8 @@ export async function buscarAcao(ticker: string): Promise<DadosAcao> {
   return {
     ticker,
     tipo,
+    moeda: "BRL",
+    cambio: 1,
     nome: fv?.nome ?? yv?.nome ?? null,
     logo: `https://icons.brapi.dev/icons/${ticker}.svg`,
     preco: yv?.preco ?? fv?.preco ?? null,

@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import type { ItemImportado, ResultadoB3 } from "@/lib/b3";
 import { brl } from "@/lib/format";
 import { aplicarImportacaoB3, lerArquivosB3 } from "./actions";
+import { TipoAtivo } from "../TipoAtivo";
 
 type Atual = { ticker: string; quantidade: number; preco_medio: number };
 type Linha = ItemImportado & { pmTexto: string; incluir: boolean };
@@ -56,7 +57,7 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
   function salvar() {
     startSalvar(async () => {
       const r = await aplicarImportacaoB3(
-        selecionadas.map((l) => ({ ticker: l.ticker, quantidade: l.quantidade, preco_medio: paraNumero(l.pmTexto) })),
+        selecionadas.map((l) => ({ ticker: l.ticker, tipo: l.tipo, quantidade: l.quantidade, preco_medio: paraNumero(l.pmTexto) })),
         modo,
       );
       if (r.ok) {
@@ -109,7 +110,7 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
 
           {linhas.length === 0 ? (
             <p className="rounded-lg bg-amber-400/5 p-3 text-sm text-amber-200/90">
-              Nenhum ativo encontrado nesse arquivo. O app analisa ações, FIIs e ETFs; veja abaixo o que ficou de fora.
+              Nenhum ativo encontrado nesse arquivo. Veja abaixo o que ficou de fora.
             </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-borda">
@@ -138,7 +139,7 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
                           />
                         </td>
                         <td className="!whitespace-normal">
-                          <p className="font-medium">{l.ticker}</p>
+                          <p className="flex items-center gap-1.5 font-medium">{l.ticker} <TipoAtivo tipo={l.tipo} /></p>
                           {l.aviso && <p className="max-w-80 text-[11px] text-amber-300/90">⚠ {l.aviso}</p>}
                         </td>
                         <td className="text-right">{l.quantidade}</td>

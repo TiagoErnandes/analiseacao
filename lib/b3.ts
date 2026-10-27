@@ -3,11 +3,13 @@
 // - "Negociação" (Extratos > Negociação > Baixar): compras e vendas, usadas para calcular o preço médio.
 import { numeroBr } from "./mercado";
 import { lerXlsx, type Aba, type Celula } from "./xlsx";
+import type { Tipo } from "./tipos";
 
 export type OrigemPm = "negociacoes" | "carteira" | "fechamento";
 
 export type ItemImportado = {
   ticker: string;
+  tipo: Tipo | null; // pela aba do arquivo; vazio quando não dá para saber (o app detecta na análise)
   produto: string | null;
   quantidade: number;
   precoMedio: number | null;
@@ -28,8 +30,9 @@ const numero = (v: Celula) => (typeof v === "number" ? v : typeof v === "string"
 /** Fracionário (PETR4F) vira o código normal (PETR4). */
 const codigoBase = (c: string) => c.trim().toUpperCase().replace(/^([A-Z]{4}\d{1,2})F$/, "$1");
 
-/** Ações, units, FIIs e ETFs (BDRs terminam em 32 a 35 e ficam de fora). */
+/** Ações, units, FIIs e ETFs da B3. */
 const ACAO = /^[A-Z]{4}(3|4|5|6|7|8|11)$/;
+const BDR = /^[A-Z]{4}3[1-5]$/;
 
 /** Acha a linha de cabeçalho e devolve as linhas como objetos { cabecalho normalizado: valor }. */
 function tabela(aba: Aba, obrigatorias: string[]): Record<string, Celula>[] | null {
@@ -39,15 +42,16 @@ function tabela(aba: Aba, obrigatorias: string[]): Record<string, Celula>[] | nu
   return aba.linhas.slice(idx + 1).map((l) => Object.fromEntries(cab.map((k, i) => [k, l[i] ?? null])));
 }
 
-const CATEGORIAS: [RegExp, string | null][] = [
-  [/^acoes?$/, null],
-  [/fundo|fii/, null],
-  [/etf/, null],
-  [/bdr/, "BDR (ainda não analisado pelo app)"],
-  [/rendafixa|tesouro|cdb|lci|lca|debenture/, "renda fixa ou Tesouro (fora do escopo do app)"],
+// Aba do arquivo de posição -> tipo de ativo (ou motivo para ficar de fora)
+const CATEGORIAS: [RegExp, Tipo | null, string | null][] = [
+  [/^acoes?$/, "acao", null],
+  [/fundo|fii/, "fii", null],
+  [/etf/, "etf", null],
+  [/bdr/, "bdr", null],
+  [/rendafixa|tesouro|cdb|lci|lca|debenture/, null, "renda fixa ou Tesouro (fora do escopo do app)"],
 ];
 
-type Posicao = { ticker: string; produto: string | null; quantidade: number; fechamento: number | null };
+type Posicao = { ticker: string; tipo: Tipo | null; produto: string | null; quantidade: number; fechamento: number | null };
 type Negocio = { data: string; tipo: "C" | "V"; ticker: string; quantidade: number; preco: number };
 
 function lerPosicao(abas: Aba[], ignorados: Ignorado[]): Posicao[] | null {
@@ -64,18 +68,19 @@ function lerPosicao(abas: Aba[], ignorados: Ignorado[]): Posicao[] | null {
       const produto = l.produto ? String(l.produto).trim() : null;
       const qtd = numero(l.quantidade);
       if ((!codigo && !produto) || qtd == null || qtd <= 0) continue; // linhas de total e vazias
-      if (!categoria || categoria[1]) {
-        ignorados.push({ codigo: codigo || produto!, motivo: categoria?.[1] ?? `aba "${aba.nome}" não é de ações` });
+      if (!categoria || !categoria[1]) {
+        ignorados.push({ codigo: codigo || produto!, motivo: categoria?.[2] ?? `aba "${aba.nome}" não reconhecida` });
         continue;
       }
       const ticker = codigoBase(codigo);
-      if (!ACAO.test(ticker)) {
+      if (!(categoria[1] === "bdr" ? BDR : ACAO).test(ticker)) {
         ignorados.push({ codigo: codigo || produto!, motivo: "código de negociação não reconhecido" });
         continue;
       }
       const atual = mapa.get(ticker);
       mapa.set(ticker, {
         ticker,
+        tipo: categoria[1],
         produto,
         quantidade: (atual?.quantidade ?? 0) + qtd, // soma a mesma ação em corretoras diferentes
         fechamento: numero(l.precodefechamento) ?? atual?.fechamento ?? null,
@@ -177,16 +182,17 @@ export function importarB3(arquivos: { nome: string; dados: Uint8Array }[], cart
         origem = "fechamento";
         aviso = "sem preço médio no arquivo; usei o preço de fechamento. Ajuste se souber o seu";
       }
-      itens.push({ ticker: p.ticker, produto: p.produto, quantidade: p.quantidade, precoMedio: precoMedioFinal, origemPm: origem, precoFechamento: p.fechamento, aviso });
+      itens.push({ ticker: p.ticker, tipo: p.tipo, produto: p.produto, quantidade: p.quantidade, precoMedio: precoMedioFinal, origemPm: origem, precoFechamento: p.fechamento, aviso });
     }
   } else {
     for (const [ticker, calc] of pms) {
       if (calc.quantidade <= 0) continue;
-      if (!ACAO.test(ticker)) {
-        ignorados.push({ codigo: ticker, motivo: "BDR ou código não reconhecido (fora do escopo do app)" });
+      const bdr = BDR.test(ticker);
+      if (!ACAO.test(ticker) && !bdr) {
+        ignorados.push({ codigo: ticker, motivo: "código não reconhecido" });
         continue;
       }
-      itens.push({ ticker, produto: null, quantidade: calc.quantidade, precoMedio: calc.pm, origemPm: "negociacoes", precoFechamento: null, aviso: null });
+      itens.push({ ticker, tipo: bdr ? "bdr" : null, produto: null, quantidade: calc.quantidade, precoMedio: calc.pm, origemPm: "negociacoes", precoFechamento: null, aviso: null });
     }
   }
 

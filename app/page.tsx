@@ -1,11 +1,14 @@
 import Link from "next/link";
-import { brl, brlCompacto, dataBr, pct } from "@/lib/format";
-import { carregarPainel, LIMITE_SETOR, type Posicao } from "@/lib/painel";
+import { brl, dataBr, pct } from "@/lib/format";
+import { carregarPainel, LIMITE_SETOR } from "@/lib/painel";
 import type { Analise } from "@/lib/db";
 import { BotaoAnalise } from "./BotaoAnalise";
 import { Logo } from "./Logo";
 import { TipoAtivo } from "./TipoAtivo";
 import { Rosca } from "./Rosca";
+import { GraficoEvolucao } from "./GraficoEvolucao";
+import { BotaoLancamento, type PosicaoLancamento } from "./Lancamento";
+import { MeusAtivos } from "./MeusAtivos";
 import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
 
@@ -56,53 +59,8 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
   );
 }
 
-function LinhaCarteira({ p, pesoIdeal }: { p: Posicao; pesoIdeal: number }) {
-  const a = p.a;
-  const desvio = p.peso != null ? p.peso - pesoIdeal : null;
-  return (
-    <tr>
-      <td>
-        <Link href={`/acao/${p.ticker}`} className="flex items-center gap-2.5 hover:text-marca">
-          <Logo ticker={p.ticker} src={a?.logo} />
-          <div>
-            <p className="flex items-center gap-1.5 font-medium">{p.ticker} <TipoAtivo tipo={a?.tipo} /></p>
-            <p className="max-w-36 truncate text-[11px] text-fraco">{a?.setor ?? ""}</p>
-          </div>
-        </Link>
-      </td>
-      <td className="text-right">{p.quantidade}</td>
-      <td className="text-right">{brl(p.preco_medio)}</td>
-      <td className="text-right">
-        <p>{brl(a?.preco)}</p>
-        <p className="text-[11px]"><Variacao v={a?.variacao_dia} casas={2} /></p>
-      </td>
-      <td className="text-right">
-        <p className="font-medium">{brl(p.valor)}</p>
-        <p className="text-[11px]"><Variacao v={p.rentabilidade} /></p>
-      </td>
-      <td>
-        <div className="flex items-center gap-2" title={`Ideal ${pct(pesoIdeal)}`}>
-          <div className="relative h-1.5 w-20 rounded-full bg-borda">
-            <div className="h-full rounded-full bg-[#3987e5]" style={{ width: `${Math.min(100, ((p.peso ?? 0) / (pesoIdeal * 2)) * 100)}%` }} />
-            <div className="absolute -top-0.5 left-1/2 h-2.5 w-px bg-suave" />
-          </div>
-          <span className="w-12 text-right text-xs">{pct(p.peso)}</span>
-        </div>
-        <p className={`text-[11px] ${desvio != null && desvio < 0 ? "text-[#6da7ec]" : "text-fraco"}`}>
-          {desvio == null ? "" : desvio < 0 ? `faltam ${pct(-desvio)}` : `acima ${pct(desvio)}`}
-        </p>
-      </td>
-      <td className="text-right">{brl(a?.preco_teto)}</td>
-      <td className="text-right"><Variacao v={a?.margem} /></td>
-      <td className="text-right">{brl(p.renda12m)}</td>
-      <td className="text-center"><Nota v={a?.qualidade} /></td>
-      <td><Sinal r={a?.recomendacao} /></td>
-    </tr>
-  );
-}
-
 export default async function Painel() {
-  const { exec, rel, analises, porTicker, posicoes, resumo, setores, classes } = await carregarPainel();
+  const { exec, rel, analises, porTicker, posicoes, evolucao, resumo, setores, classes } = await carregarPainel();
   const botao = <BotaoAnalise status={exec?.status ?? null} inicio={exec?.inicio ?? null} erro={exec?.erro ?? null} />;
 
   if (!rel) {
@@ -115,18 +73,39 @@ export default async function Painel() {
   }
 
   const pesoIdeal = posicoes.length ? 1 / posicoes.length : 0;
-  const ordenadas = [...posicoes].sort((x, y) => (y.a?.score ?? -1) - (x.a?.score ?? -1));
+  const paraLancamento: PosicaoLancamento[] = posicoes.map((p) => ({
+    ticker: p.ticker,
+    tipo: p.a?.tipo ?? p.tipo,
+    quantidade: p.quantidade,
+    preco_medio: p.preco_medio,
+    preco: p.a?.preco ?? null,
+  }));
   const pesoSetor = Object.fromEntries(setores.map((s) => [s.nome, s.peso]));
   const itensAporte: ItemAporte[] = posicoes.map((p) => ({
     ticker: p.ticker,
     logo: p.a?.logo ?? null,
-    preco: p.a?.preco ?? null,
+    preco: p.a?.preco != null ? p.a.preco * p.cambio : null, // em reais
     valor: p.valor,
     margem: p.a?.margem ?? null,
     recomendacao: p.a?.recomendacao ?? null,
     score: p.a?.score ?? null,
     setor: p.a?.setor ?? null,
   }));
+  const novasAporte: ItemAporte[] = analises
+    .filter((a) => !a.na_carteira && a.recomendacao === "COMPRAR" && (a.margem ?? -1) > 0 && (a.qualidade ?? 0) >= 6 && a.preco)
+    .sort((x, y) => (y.score ?? 0) - (x.score ?? 0))
+    .slice(0, 3)
+    .map((a) => ({
+      ticker: a.ticker,
+      logo: a.logo,
+      preco: a.preco! * (a.cambio ?? 1),
+      valor: 0,
+      margem: a.margem,
+      recomendacao: a.recomendacao,
+      score: a.score,
+      setor: a.setor,
+      nova: true,
+    }));
   const oportunidades = analises
     .filter((a) => !a.na_carteira && a.recomendacao === "COMPRAR" && (a.margem ?? -1) > 0)
     .sort((x, y) => (y.score ?? 0) - (x.score ?? 0))
@@ -139,32 +118,68 @@ export default async function Painel() {
           <p className="rotulo">Análise de {dataBr(rel.data)}</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">Painel da carteira</h1>
         </div>
-        {botao}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/carteira#b3" className="botao">Integração B3</Link>
+          <BotaoLancamento posicoes={paraLancamento} />
+          {botao}
+        </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
-          rotulo="Patrimônio"
-          valor={brlCompacto(resumo.patrimonio)}
-          detalhe={<>Hoje <Variacao v={resumo.variacaoDia} casas={2} seta /></>}
+          rotulo="Patrimônio total"
+          valor={brl(resumo.patrimonio)}
+          detalhe={
+            <div className="space-y-0.5">
+              <p>Hoje <Variacao v={resumo.variacaoDia} casas={2} seta /></p>
+              <p>Valor investido <b className="text-texto">{brl(resumo.investido)}</b></p>
+            </div>
+          }
         />
         <Kpi
-          rotulo="Rentabilidade"
-          valor={<Variacao v={resumo.rentabilidade} />}
-          detalhe={<>{resumo.lucro >= 0 ? "Lucro" : "Prejuízo"} de {brl(Math.abs(resumo.lucro))} sobre {brl(resumo.investido)}</>}
+          rotulo="Lucro total"
+          valor={<span className={resumo.lucroTotal >= 0 ? "text-alta" : "text-baixa"}>{brl(resumo.lucroTotal)}</span>}
+          detalhe={
+            <div className="space-y-0.5">
+              <p>Ganho de capital <b className={resumo.lucro >= 0 ? "text-alta" : "text-baixa"}>{brl(resumo.lucro)}</b></p>
+              <p>Dividendos recebidos <b className="text-alta">{brl(resumo.proventosTotal)}</b></p>
+            </div>
+          }
+          dica="Ganho de capital (cotação hoje menos preço médio) mais os proventos recebidos desde a compra"
         />
         <Kpi
-          rotulo="Renda passiva (12m)"
-          valor={brl(resumo.renda12m)}
-          detalhe={<>≈ {brl(resumo.renda12m / 12)}/mês · Yield on cost {pct(resumo.yieldOnCost)}</>}
-          dica="Dividendos e JCP pagos nos últimos 12 meses pela quantidade que você tem hoje"
+          rotulo="Proventos recebidos (12M)"
+          valor={brl(resumo.proventos12m)}
+          detalhe={
+            <div className="space-y-0.5">
+              <p>Total <b className="text-texto">{brl(resumo.proventosTotal)}</b></p>
+              <p>Renda prevista ≈ {brl(resumo.renda12m / 12)}/mês · DY {pct(resumo.dy)}</p>
+            </div>
+          }
+          dica="Dividendos, JCP e rendimentos pagos enquanto você tinha o ativo (estimado pela data de compra e pelo histórico do Yahoo)"
         />
         <Kpi
-          rotulo="Dividend yield"
-          valor={pct(resumo.dy)}
-          detalhe={<>Margem de segurança média <Variacao v={resumo.margemMedia} /></>}
-          dica="Dividendos dos últimos 12 meses sobre o valor atual da carteira"
+          rotulo="Rentabilidade (12M)"
+          valor={<Variacao v={resumo.rentabilidade12m.valor} casas={2} />}
+          detalhe={
+            <div className="space-y-0.5">
+              {resumo.rentabilidade12m.desde && <p>desde {dataBr(resumo.rentabilidade12m.desde)}</p>}
+              <p>Rentabilidade total <Variacao v={resumo.rentabilidadeTotal} casas={2} /></p>
+            </div>
+          }
+          dica="Inclui ganho de capital e proventos recebidos"
         />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-5">
+        <Cartao titulo="Evolução do patrimônio" className="lg:col-span-3">
+          <GraficoEvolucao fotos={evolucao} />
+        </Cartao>
+        <Cartao titulo="Ativos na carteira" className="lg:col-span-2">
+          <div className="p-4">
+            <Rosca fatias={classes} centro="tipos" />
+          </div>
+        </Cartao>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -188,62 +203,17 @@ export default async function Painel() {
 
       <section className="grid gap-4 lg:grid-cols-5">
         <Cartao titulo="Simulador de aporte" className="lg:col-span-3">
-          <SimuladorAporte itens={itensAporte} pesoSetor={pesoSetor} limiteSetor={LIMITE_SETOR} />
+          <SimuladorAporte itens={itensAporte} novas={novasAporte} pesoSetor={pesoSetor} limiteSetor={LIMITE_SETOR} />
         </Cartao>
-        <Cartao titulo="Alocação" className="lg:col-span-2">
+        <Cartao titulo="Alocação por setor" className="lg:col-span-2">
           <div className="p-4">
-            {classes.length > 1 && (
-              <div className="mb-5">
-                <p className="rotulo mb-2">Por classe</p>
-                <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full">
-                  {classes.map((c, i) => (
-                    <div key={c.nome} style={{ width: `${c.peso * 100}%`, background: ["#3987e5", "#9085e9", "#c98500"][i] }} title={`${c.nome}: ${pct(c.peso)}`} />
-                  ))}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-suave">
-                  {classes.map((c, i) => (
-                    <span key={c.nome} className="flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-sm" style={{ background: ["#3987e5", "#9085e9", "#c98500"][i] }} />
-                      {c.nome} <b className="text-texto tabular-nums">{pct(c.peso)}</b>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            <p className="rotulo mb-3">Por setor</p>
             <Rosca fatias={setores} centro="setores" limite={LIMITE_SETOR} />
             <p className="mt-4 text-xs text-fraco">Para previdência, o ideal é nenhum setor passar de {pct(LIMITE_SETOR, 0)} da carteira.</p>
           </div>
         </Cartao>
       </section>
 
-      <Cartao
-        titulo={<>Minha carteira <span className="ml-1 font-normal text-fraco">{posicoes.length} ativos</span></>}
-        acao={<Link href="/carteira" className="text-xs text-marca hover:underline">Editar carteira</Link>}
-      >
-        <div className="overflow-x-auto">
-          <table className="tabela">
-            <thead>
-              <tr>
-                <th>Ativo</th>
-                <th className="!text-right">Qtd.</th>
-                <th className="!text-right">Preço médio</th>
-                <th className="!text-right">Cotação</th>
-                <th className="!text-right">Posição</th>
-                <th>Peso (ideal {pct(pesoIdeal)})</th>
-                <th className="!text-right">Preço teto</th>
-                <th className="!text-right">Margem</th>
-                <th className="!text-right">Renda 12m</th>
-                <th className="!text-center">Qualidade</th>
-                <th>Sinal</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ordenadas.map((p) => <LinhaCarteira key={p.ticker} p={p} pesoIdeal={pesoIdeal} />)}
-            </tbody>
-          </table>
-        </div>
-      </Cartao>
+      <MeusAtivos posicoes={posicoes} patrimonio={resumo.patrimonio} pesoIdeal={pesoIdeal} paraLancamento={paraLancamento} />
 
       {oportunidades.length > 0 && (
         <Cartao

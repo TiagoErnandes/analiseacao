@@ -1,6 +1,18 @@
-// Etiqueta pequena com o tipo do ativo (ações não levam etiqueta).
+import { infoTipo } from "@/lib/tipos";
+
+// Cores por tipo (ações não levam etiqueta para não poluir as listas)
+const COR: Record<string, string> = {
+  fii: "bg-[#9085e9]/15 text-[#b1a9f0]",
+  etf: "bg-[#c98500]/15 text-[#e0a83a]",
+  bdr: "bg-[#199e70]/15 text-[#3fc795]",
+  stock: "bg-[#3987e5]/15 text-[#6da7ec]",
+  etf_int: "bg-[#d95926]/15 text-[#ef8a5c]",
+  reit: "bg-[#d55181]/15 text-[#e98aad]",
+  cripto: "bg-[#e66767]/15 text-[#f09a9a]",
+};
+
 export function TipoAtivo({ tipo }: { tipo: string | null | undefined }) {
-  if (tipo === "fii") return <span className="rounded bg-[#9085e9]/15 px-1 text-[10px] font-semibold text-[#b1a9f0]">FII</span>;
-  if (tipo === "etf") return <span className="rounded bg-[#c98500]/15 px-1 text-[10px] font-semibold text-[#e0a83a]">ETF</span>;
-  return null;
+  const info = infoTipo(tipo);
+  if (!info || info.id === "acao") return null;
+  return <span className={`whitespace-nowrap rounded px-1 text-[10px] font-semibold uppercase ${COR[info.id]}`}>{info.curto}</span>;
 }
