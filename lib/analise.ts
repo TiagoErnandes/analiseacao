@@ -1,8 +1,8 @@
-// A análise do dia. Chamada pelo agendador (7h) ou na mão: `npm run analise`.
-import { analisarComIa, type LinhaParaIa } from "../lib/ai";
-import { buscarAcao, type DadosAcao } from "../lib/mercado";
-import { query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "../lib/db";
-import { calcularDpa, margem, precoTeto, scoreFinal, tetoBazin, tetoGraham } from "../lib/valuation";
+// A análise do dia. Use rodarAnalise() (registra a execução e impede duas ao mesmo tempo).
+import { analisarComIa, type LinhaParaIa } from "./ai";
+import { buscarAcao, type DadosAcao } from "./mercado";
+import { query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
+import { calcularDpa, margem, precoTeto, scoreFinal, tetoBazin, tetoGraham } from "./valuation";
 
 function hojeSaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
@@ -111,4 +111,85 @@ export async function executarAnalise() {
   });
 
   console.log(`Pronto. Ação do dia (carteira): ${ia.acao_do_dia_carteira} | (geral): ${ia.acao_do_dia_geral}`);
+}
+
+export type Execucao = {
+  id: number;
+  origem: string;
+  status: "rodando" | "ok" | "erro";
+  inicio: string;
+  fim: string | null;
+  erro: string | null;
+};
+
+/** Intervalo mínimo entre duas análises disparadas pelo botão. */
+export const INTERVALO_MINIMO_MIN = 15;
+/** Uma execução "rodando" há mais que isso é considerada travada (container reiniciou, etc.). */
+const TIMEOUT_MIN = 30;
+
+async function garantirTabela() {
+  await query(`create table if not exists execucoes (
+    id      bigserial primary key,
+    origem  text not null,
+    status  text not null,
+    inicio  timestamptz not null default now(),
+    fim     timestamptz,
+    erro    text
+  )`);
+}
+
+export async function ultimaExecucao(): Promise<Execucao | null> {
+  await garantirTabela();
+  const [e] = await query<Execucao>(
+    `select id, origem,
+            case when status = 'rodando' and inicio < now() - interval '${TIMEOUT_MIN} minutes' then 'erro' else status end as status,
+            inicio::text, fim::text, erro
+       from execucoes order by inicio desc limit 1`,
+  );
+  return e ?? null;
+}
+
+/**
+ * Registra o início se não houver outra análise rodando (e, para o botão, se a última que não falhou
+ * começou há mais de INTERVALO_MINIMO_MIN). Devolve o id, ou um motivo quando não pode rodar.
+ */
+async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id: number } | { motivo: string }> {
+  await garantirTabela();
+  const intervalo = origem === "botao" ? INTERVALO_MINIMO_MIN : 0;
+  const [r] = await query<{ id: number }>(
+    `insert into execucoes (origem, status)
+     select $1, 'rodando'
+     where not exists (
+       select 1 from execucoes
+        where (status = 'rodando' and inicio > now() - interval '${TIMEOUT_MIN} minutes')
+           or (status <> 'erro' and inicio > now() - make_interval(mins => $2::int))
+     )
+     returning id`,
+    [origem, intervalo],
+  );
+  if (r) return { id: r.id };
+  const ultima = await ultimaExecucao();
+  return {
+    motivo:
+      ultima?.status === "rodando"
+        ? "Já tem uma análise rodando. Aguarde terminar."
+        : `Aguarde ${INTERVALO_MINIMO_MIN} minutos entre uma análise e outra.`,
+  };
+}
+
+/** Roda a análise registrando início, fim e erro. Usado pelo agendador, pelo botão e pelo `npm run analise`. */
+export async function rodarAnalise(origem: "agendador" | "botao" | "manual") {
+  const reserva = await reservar(origem);
+  if ("motivo" in reserva) return reserva;
+
+  const termino = executarAnalise()
+    .then(() => query("update execucoes set status = 'ok', fim = now() where id = $1", [reserva.id]))
+    .catch(async (err) => {
+      console.error("Falha na análise:", err);
+      await query("update execucoes set status = 'erro', fim = now(), erro = $2 where id = $1", [
+        reserva.id,
+        String((err as Error)?.message ?? err).slice(0, 1000),
+      ]);
+    });
+  return { id: reserva.id, termino };
 }

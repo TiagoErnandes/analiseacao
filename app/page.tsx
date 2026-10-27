@@ -1,5 +1,7 @@
 import { brl, dataBr, pct } from "@/lib/format";
+import { ultimaExecucao } from "@/lib/analise";
 import { query, type Analise, type Carteira, type Relatorio } from "@/lib/db";
+import { BotaoAnalise } from "./BotaoAnalise";
 
 export const dynamic = "force-dynamic";
 
@@ -7,7 +9,8 @@ async function carregar() {
   const [rel] = await query<Relatorio>("select * from relatorio_diario order by data desc limit 1");
   const carteira = await query<Carteira>("select ticker, quantidade, preco_medio from carteira");
   const analises = rel ? await query<Analise>("select * from analises where data = $1", [rel.data]) : [];
-  return { rel: rel ?? null, analises, carteira };
+  const exec = await ultimaExecucao();
+  return { rel: rel ?? null, analises, carteira, exec };
 }
 
 function Rec({ r }: { r: string | null }) {
@@ -61,13 +64,14 @@ function CardDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 }
 
 export default async function Home() {
-  const { rel, analises, carteira } = await carregar();
+  const { rel, analises, carteira, exec } = await carregar();
+  const botao = <BotaoAnalise status={exec?.status ?? null} inicio={exec?.inicio ?? null} erro={exec?.erro ?? null} />;
 
   if (!rel) {
     return (
-      <div className="rounded-xl border border-neutral-800 p-8 text-center text-neutral-400">
-        Ainda não há análise. Ela roda automaticamente às 7h em dias úteis, ou rode agora com{" "}
-        <code className="text-neutral-200">bash deploy/analisar-agora.sh</code>.
+      <div className="flex flex-col items-center gap-4 rounded-xl border border-neutral-800 p-8 text-center text-neutral-400">
+        <p>Ainda não há análise. Ela roda sozinha às 7h em dias úteis, ou clique para rodar agora.</p>
+        {botao}
       </div>
     );
   }
@@ -82,9 +86,12 @@ export default async function Home() {
 
   return (
     <div className="space-y-8">
-      <section>
-        <h1 className="text-xl font-semibold">Análise de {dataBr(rel.data)}</h1>
-        {rel.contexto_mercado && <p className="mt-2 max-w-3xl text-sm text-neutral-300">{rel.contexto_mercado}</p>}
+      <section className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+        <div>
+          <h1 className="text-xl font-semibold">Análise de {dataBr(rel.data)}</h1>
+          {rel.contexto_mercado && <p className="mt-2 max-w-3xl text-sm text-neutral-300">{rel.contexto_mercado}</p>}
+        </div>
+        {botao}
       </section>
 
       <section className="grid gap-4 md:grid-cols-2">
