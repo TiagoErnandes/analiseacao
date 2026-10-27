@@ -1,17 +1,24 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { brl, pct } from "@/lib/format";
+import { brl, dataBr, pct } from "@/lib/format";
 import { carregarPainel } from "@/lib/painel";
+import { query } from "@/lib/db";
 import { Logo } from "../Logo";
 import { Cartao, Variacao } from "../ui";
 import { removerAtivo, salvarAtivo } from "./actions";
 import { ImportadorB3 } from "./ImportadorB3";
+import { RegistrarOperacao } from "./RegistrarOperacao";
+import { TipoAtivo } from "../TipoAtivo";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Carteira" };
 
 export default async function CarteiraPage() {
-  const { posicoes, resumo } = await carregarPainel();
+  const { posicoes, resumo } = await carregarPainel(); // também cria a tabela de operações
+  const operacoes = await query<{ id: number; data: string; ticker: string; tipo: "C" | "V"; quantidade: number; preco: number }>(
+    "select id, data, ticker, tipo, quantidade, preco from operacoes order by data desc, id desc limit 30",
+  );
+  const importador = <ImportadorB3 atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio }))} />;
 
   return (
     <div className="space-y-5">
@@ -21,27 +28,10 @@ export default async function CarteiraPage() {
         <p className="mt-2 text-sm text-suave">As mudanças entram na próxima análise (às 7h ou pelo botão do painel).</p>
       </div>
 
-      <Cartao titulo="Importar da B3">
-        <ImportadorB3 atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio }))} />
-      </Cartao>
-
-      <Cartao titulo="Adicionar ou atualizar à mão">
-        <form action={salvarAtivo} className="flex flex-wrap items-end gap-3 p-4">
-          <label className="flex flex-col gap-1">
-            <span className="rotulo">Código</span>
-            <input name="ticker" placeholder="PETR4" required className="campo w-28 uppercase" />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="rotulo">Quantidade</span>
-            <input name="quantidade" inputMode="decimal" placeholder="100" required className="campo w-28" />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="rotulo">Preço médio (R$)</span>
-            <input name="preco_medio" inputMode="decimal" placeholder="25,40" required className="campo w-32" />
-          </label>
-          <button className="botao">Salvar</button>
-          <p className="w-full text-xs text-fraco">Para editar, digite o mesmo código com os novos valores.</p>
-        </form>
+      <Cartao titulo="Registrar compra ou venda">
+        <RegistrarOperacao
+          atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio, preco: p.a?.preco ?? null }))}
+        />
       </Cartao>
 
       <Cartao titulo={<>Ativos <span className="ml-1 font-normal text-fraco">{posicoes.length}</span></>}>
@@ -66,6 +56,7 @@ export default async function CarteiraPage() {
                     <Link href={`/acao/${p.ticker}`} className="flex items-center gap-2.5 font-medium hover:text-marca">
                       <Logo ticker={p.ticker} src={p.a?.logo} />
                       {p.ticker}
+                      <TipoAtivo tipo={p.a?.tipo} />
                     </Link>
                   </td>
                   <td className="text-right">{p.quantidade}</td>
@@ -98,6 +89,61 @@ export default async function CarteiraPage() {
           </table>
         </div>
       </Cartao>
+
+      {operacoes.length > 0 && (
+        <Cartao titulo="Últimas compras e vendas">
+          <div className="max-h-80 overflow-auto">
+            <table className="tabela">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Ativo</th>
+                  <th>Operação</th>
+                  <th className="!text-right">Quantidade</th>
+                  <th className="!text-right">Preço</th>
+                  <th className="!text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {operacoes.map((o) => (
+                  <tr key={o.id}>
+                    <td>{dataBr(o.data)}</td>
+                    <td className="font-medium">{o.ticker}</td>
+                    <td className={o.tipo === "C" ? "text-alta" : "text-baixa"}>{o.tipo === "C" ? "Compra" : "Venda"}</td>
+                    <td className="text-right">{o.quantidade}</td>
+                    <td className="text-right">{brl(o.preco)}</td>
+                    <td className="text-right">{brl(o.quantidade * o.preco)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Cartao>
+      )}
+
+      <Cartao titulo="Importar da B3">{importador}</Cartao>
+
+      <details className="cartao">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Corrigir posição à mão</summary>
+        <form action={salvarAtivo} className="flex flex-wrap items-end gap-3 border-t border-borda p-4">
+          <label className="flex flex-col gap-1">
+            <span className="rotulo">Código</span>
+            <input name="ticker" placeholder="PETR4" required className="campo w-28 uppercase" />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="rotulo">Quantidade total</span>
+            <input name="quantidade" inputMode="decimal" placeholder="100" required className="campo w-28" />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="rotulo">Preço médio (R$)</span>
+            <input name="preco_medio" inputMode="decimal" placeholder="25,40" required className="campo w-32" />
+          </label>
+          <button className="botao">Salvar</button>
+          <p className="w-full text-xs text-fraco">
+            Substitui a quantidade e o preço médio do ativo. Para uma compra nova, use “Registrar compra”, que calcula o preço médio sozinho.
+          </p>
+        </form>
+      </details>
     </div>
   );
 }

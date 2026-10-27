@@ -18,12 +18,19 @@ export type LinhaParaIa = {
   [campo: string]: unknown;
 };
 
-const SYSTEM = `Você é um analista de ações brasileiras focado em previdência privada e buy and hold.
+const SYSTEM = `Você é um analista de ações, fundos imobiliários (FIIs) e ETFs brasileiros, focado em previdência privada e buy and hold.
 O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele valoriza:
 - empresas perenes, com lucro consistente, boa governança e dividendos estáveis;
-- comprar abaixo do preço teto. O preço teto já vem calculado de forma conservadora: Bazin = o MENOR entre o
-  dividendo dos últimos 12 meses e a média de 5 anos, dividido por 6%; sem dividendos relevantes, Graham = raiz(22,5 x LPA x VPA);
-- qualidade do negócio: o campo "qualidade" (0 a 10) vem só do balanço (ROE, payout, dívida, margem, crescimento);
+- comprar abaixo do preço teto. Cada linha tem um "tipo", e o preço teto já vem calculado de forma conservadora:
+  - acao: Bazin = o MENOR entre o dividendo dos últimos 12 meses e a média de 5 anos, dividido por 6%;
+    sem dividendos relevantes, Graham = raiz(22,5 x LPA x VPA). "qualidade" vem do balanço (ROE, payout, dívida, margem, crescimento).
+  - fii: o MENOR entre o rendimento de 12 meses, o FFO por cota e a média de 5 anos, dividido por 8%. "vpa" é o valor
+    patrimonial por cota. "qualidade" vem de P/VP, rendimento coberto pelo FFO, vacância, nº de imóveis, liquidez e tamanho.
+    Pese também segmento (tijolo, papel, híbrido), gestão, inadimplência dos recebíveis, vencimento de contratos e efeito dos juros.
+  - etf: se paga dividendos relevantes, Bazin a 6%; senão a referência é a média de preço dos últimos 12 meses.
+    "qualidade" vem do retorno de 5 anos, das quedas sofridas, da liquidez e da renda. Pese o índice que replica,
+    a taxa de administração e se faz sentido como base de carteira de longo prazo.
+  Os detalhes de cada tipo estão no campo "indicadores".
 - diversificação: nenhum setor deve passar de 30% da carteira;
 - setores perenes (energia, saneamento, seguros, telecom, bancos), sem descartar outros.
 Seja direto, em português do Brasil, e não invente números: use os dados fornecidos e o que encontrar na pesquisa.
@@ -43,7 +50,7 @@ const Decisao = z.object({
   acoes: z.array(Acao).describe("uma entrada para CADA ticker da tabela"),
   acao_do_dia_carteira: z.string().describe("ticker da carteira mais indicado para aporte hoje"),
   justificativa_carteira: z.string(),
-  acao_do_dia_geral: z.string().describe("ticker mais indicado hoje entre todas as ações analisadas"),
+  acao_do_dia_geral: z.string().describe("ticker mais indicado hoje entre todos os ativos analisados (ações, FIIs e ETFs)"),
   justificativa_geral: z.string(),
 });
 
@@ -116,11 +123,13 @@ export async function analisarComIa(linhas: LinhaParaIa[], hoje: string): Promis
 
 1. Cenário: Ibovespa, Selic e próxima reunião do Copom, dólar, inflação e notícias que mexeram com a bolsa nos últimos dias.
 2. Para CADA uma destas ações (${foco.join(", ")}), procure:
-   - o último resultado trimestral: data, lucro e variação no ano, e o que surpreendeu;
+   - ações: o último resultado trimestral (data, lucro, variação no ano e o que surpreendeu);
+   - FIIs: o último relatório gerencial (rendimento, vacância, inadimplência, emissões, vendas de imóveis, guidance);
+   - ETFs: taxa de administração, índice de referência e desempenho recente;
    - proventos anunciados recentemente ou previstos, e mudanças na política de dividendos;
    - fatos relevantes, mudanças de governo/controle, regulação, processos;
    - mudanças recentes de recomendação ou preço-alvo dos analistas;
-   - a data do próximo resultado.
+   - a data do próximo resultado (ações).
 3. Confira se algum número da tabela parece errado (por exemplo LPA ou DY muito diferentes do que as fontes mostram) e diga qual.
 
 Regras: cite a fonte e a data de cada fato; prefira fontes primárias (RI da empresa, B3, Banco Central) e grandes veículos;

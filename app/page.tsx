@@ -4,6 +4,7 @@ import { carregarPainel, LIMITE_SETOR, type Posicao } from "@/lib/painel";
 import type { Analise } from "@/lib/db";
 import { BotaoAnalise } from "./BotaoAnalise";
 import { Logo } from "./Logo";
+import { TipoAtivo } from "./TipoAtivo";
 import { Rosca } from "./Rosca";
 import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
@@ -22,6 +23,7 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xl font-semibold group-hover:text-marca">{a.ticker}</span>
+                <TipoAtivo tipo={a.tipo} />
                 <Sinal r={a.recomendacao} />
               </div>
               <p className="truncate text-xs text-suave">{a.nome}</p>
@@ -63,7 +65,7 @@ function LinhaCarteira({ p, pesoIdeal }: { p: Posicao; pesoIdeal: number }) {
         <Link href={`/acao/${p.ticker}`} className="flex items-center gap-2.5 hover:text-marca">
           <Logo ticker={p.ticker} src={a?.logo} />
           <div>
-            <p className="font-medium">{p.ticker}</p>
+            <p className="flex items-center gap-1.5 font-medium">{p.ticker} <TipoAtivo tipo={a?.tipo} /></p>
             <p className="max-w-36 truncate text-[11px] text-fraco">{a?.setor ?? ""}</p>
           </div>
         </Link>
@@ -100,7 +102,7 @@ function LinhaCarteira({ p, pesoIdeal }: { p: Posicao; pesoIdeal: number }) {
 }
 
 export default async function Painel() {
-  const { exec, rel, analises, porTicker, posicoes, resumo, setores } = await carregarPainel();
+  const { exec, rel, analises, porTicker, posicoes, resumo, setores, classes } = await carregarPainel();
   const botao = <BotaoAnalise status={exec?.status ?? null} inicio={exec?.inicio ?? null} erro={exec?.erro ?? null} />;
 
   if (!rel) {
@@ -166,8 +168,8 @@ export default async function Painel() {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <AcaoDoDia titulo="Ação do dia na sua carteira" a={porTicker.get(rel.acao_do_dia_carteira ?? "")} justificativa={rel.justificativa_carteira} />
-        <AcaoDoDia titulo="Ação do dia no Ibovespa" a={porTicker.get(rel.acao_do_dia_geral ?? "")} justificativa={rel.justificativa_geral} />
+        <AcaoDoDia titulo="Melhor compra na sua carteira" a={porTicker.get(rel.acao_do_dia_carteira ?? "")} justificativa={rel.justificativa_carteira} />
+        <AcaoDoDia titulo="Melhor compra entre todos os ativos" a={porTicker.get(rel.acao_do_dia_geral ?? "")} justificativa={rel.justificativa_geral} />
       </section>
 
       {(rel.contexto_mercado || rel.revisao) && (
@@ -188,8 +190,27 @@ export default async function Painel() {
         <Cartao titulo="Simulador de aporte" className="lg:col-span-3">
           <SimuladorAporte itens={itensAporte} pesoSetor={pesoSetor} limiteSetor={LIMITE_SETOR} />
         </Cartao>
-        <Cartao titulo="Alocação por setor" className="lg:col-span-2">
+        <Cartao titulo="Alocação" className="lg:col-span-2">
           <div className="p-4">
+            {classes.length > 1 && (
+              <div className="mb-5">
+                <p className="rotulo mb-2">Por classe</p>
+                <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full">
+                  {classes.map((c, i) => (
+                    <div key={c.nome} style={{ width: `${c.peso * 100}%`, background: ["#3987e5", "#9085e9", "#c98500"][i] }} title={`${c.nome}: ${pct(c.peso)}`} />
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-suave">
+                  {classes.map((c, i) => (
+                    <span key={c.nome} className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-sm" style={{ background: ["#3987e5", "#9085e9", "#c98500"][i] }} />
+                      {c.nome} <b className="text-texto tabular-nums">{pct(c.peso)}</b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <p className="rotulo mb-3">Por setor</p>
             <Rosca fatias={setores} centro="setores" limite={LIMITE_SETOR} />
             <p className="mt-4 text-xs text-fraco">Para previdência, o ideal é nenhum setor passar de {pct(LIMITE_SETOR, 0)} da carteira.</p>
           </div>
