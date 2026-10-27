@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: analiseacao_postgres
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    volumes:
+      - analiseacao_postgres_data:/var/lib/postgresql/data
+      # Cria as tabelas, sua carteira e a lista das 30 na primeira subida
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+  web:
+    build: .
+    container_name: analiseacao_web
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      - postgres
+    ports:
+      # Só o Nginx da VPS acessa (porta 3010 para não brigar com o backend do Fresh Tech na 3000)
+      - "127.0.0.1:3010:3000"
+
+  agendador:
+    build: .
+    container_name: analiseacao_agendador
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      - postgres
+    command: ["npm", "run", "agendador"]
+
+volumes:
+  analiseacao_postgres_data:

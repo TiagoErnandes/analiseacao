@@ -1,4 +1,4 @@
--- Rode este arquivo no Supabase: SQL Editor > New query > colar > Run.
+-- Criado automaticamente pelo container do Postgres na primeira subida (docker-entrypoint-initdb.d).
 
 -- Sua carteira
 create table if not exists carteira (
@@ -54,13 +54,6 @@ create table if not exists relatorio_diario (
   justificativa_geral     text,
   criado_em               timestamptz not null default now()
 );
-
--- O site e o robô usam a service role key (só no servidor).
--- RLS ligado sem políticas = ninguém acessa com a chave pública.
-alter table carteira enable row level security;
-alter table universo enable row level security;
-alter table analises enable row level security;
-alter table relatorio_diario enable row level security;
 
 -- Carteira inicial (da sua foto)
 insert into carteira (ticker, quantidade, preco_medio) values

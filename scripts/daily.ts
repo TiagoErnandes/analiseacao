@@ -1,25 +1,23 @@
-// Roda toda manhã (GitHub Actions) ou na mão: `npm run analise`.
+// A análise do dia. Chamada pelo agendador (7h) ou na mão: `npm run analise`.
 import { analisarComIa, type LinhaParaIa } from "../lib/ai";
 import { buscarAcao, type DadosAcao } from "../lib/mercado";
-import { db, type Carteira } from "../lib/supabase";
+import { query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "../lib/db";
 import { calcularDpa, margem, precoTeto, scoreFinal, tetoBazin, tetoGraham } from "../lib/valuation";
 
 function hojeSaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 }
 
-async function main() {
-  const supa = db();
+export async function executarAnalise() {
   const hoje = hojeSaoPaulo();
 
-  const [{ data: carteira, error: e1 }, { data: universo, error: e2 }] = await Promise.all([
-    supa.from("carteira").select("ticker, quantidade, preco_medio"),
-    supa.from("universo").select("ticker").eq("ativo", true),
+  const [carteira, universo] = await Promise.all([
+    query<Carteira>("select ticker, quantidade, preco_medio from carteira"),
+    query<{ ticker: string }>("select ticker from universo where ativo"),
   ]);
-  if (e1 || e2) throw e1 ?? e2;
 
-  const minha = new Map((carteira as Carteira[]).map((c) => [c.ticker.toUpperCase(), c]));
-  const tickers = [...new Set([...minha.keys(), ...(universo ?? []).map((u) => u.ticker.toUpperCase())])];
+  const minha = new Map(carteira.map((c) => [c.ticker.toUpperCase(), c]));
+  const tickers = [...new Set([...minha.keys(), ...universo.map((u) => u.ticker.toUpperCase())])];
   console.log(`Analisando ${tickers.length} ações em ${hoje}`);
 
   // 1) Dados de mercado (em sequência, para não sobrecarregar as fontes)
@@ -73,7 +71,7 @@ async function main() {
   const porTicker = new Map(ia.acoes.map((a) => [a.ticker.toUpperCase(), a]));
 
   // 4) Salva
-  const registros = linhas.map((l) => {
+  const registros: Analise[] = linhas.map((l) => {
     const a = porTicker.get(l.ticker);
     const falta = l.na_carteira && l.peso_atual != null ? pesoIdeal - l.peso_atual : null;
     return {
@@ -102,10 +100,8 @@ async function main() {
     };
   });
 
-  const { error: e3 } = await supa.from("analises").upsert(registros, { onConflict: "data,ticker" });
-  if (e3) throw e3;
-
-  const { error: e4 } = await supa.from("relatorio_diario").upsert({
+  await salvarAnalises(registros);
+  await salvarRelatorio({
     data: hoje,
     contexto_mercado: ia.contexto_mercado,
     acao_do_dia_carteira: ia.acao_do_dia_carteira.toUpperCase(),
@@ -113,12 +109,6 @@ async function main() {
     acao_do_dia_geral: ia.acao_do_dia_geral.toUpperCase(),
     justificativa_geral: ia.justificativa_geral,
   });
-  if (e4) throw e4;
 
   console.log(`Pronto. Ação do dia (carteira): ${ia.acao_do_dia_carteira} | (geral): ${ia.acao_do_dia_geral}`);
 }
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});

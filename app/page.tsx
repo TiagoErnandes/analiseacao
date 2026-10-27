@@ -1,20 +1,13 @@
 import { brl, dataBr, pct } from "@/lib/format";
-import { db, type Analise, type Carteira, type Relatorio } from "@/lib/supabase";
+import { query, type Analise, type Carteira, type Relatorio } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 async function carregar() {
-  const supa = db();
-  const { data: rel } = await supa
-    .from("relatorio_diario")
-    .select("*")
-    .order("data", { ascending: false })
-    .limit(1)
-    .maybeSingle<Relatorio>();
-  const { data: carteira } = await supa.from("carteira").select("ticker, quantidade, preco_medio");
-  if (!rel) return { rel: null, analises: [] as Analise[], carteira: (carteira ?? []) as Carteira[] };
-  const { data: analises } = await supa.from("analises").select("*").eq("data", rel.data);
-  return { rel, analises: (analises ?? []) as Analise[], carteira: (carteira ?? []) as Carteira[] };
+  const [rel] = await query<Relatorio>("select * from relatorio_diario order by data desc limit 1");
+  const carteira = await query<Carteira>("select ticker, quantidade, preco_medio from carteira");
+  const analises = rel ? await query<Analise>("select * from analises where data = $1", [rel.data]) : [];
+  return { rel: rel ?? null, analises, carteira };
 }
 
 function Rec({ r }: { r: string | null }) {
@@ -74,7 +67,7 @@ export default async function Home() {
     return (
       <div className="rounded-xl border border-neutral-800 p-8 text-center text-neutral-400">
         Ainda não há análise. Ela roda automaticamente às 7h em dias úteis, ou rode agora com{" "}
-        <code className="text-neutral-200">npm run analise</code> / botão &quot;Run workflow&quot; no GitHub Actions.
+        <code className="text-neutral-200">bash deploy/analisar-agora.sh</code>.
       </div>
     );
   }
