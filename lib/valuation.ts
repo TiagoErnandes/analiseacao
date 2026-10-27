@@ -29,19 +29,22 @@ export function margem(preco: number | null, teto: number | null): number | null
 }
 
 /**
- * Nota final de 0 a 100 para ordenar as ações do dia.
- * 50% desconto em relação ao teto, 35% nota da IA, 15% quanto falta para o peso ideal na carteira.
+ * Nota final de 0 a 100 para ordenar as ações do dia:
+ * 40% desconto em relação ao teto, 25% qualidade do balanço, 25% nota da IA, 10% peso faltando na carteira.
+ * Sem nota de qualidade ou da IA, a parte que falta conta como zero (melhor errar para baixo).
  */
 export function scoreFinal(opts: {
   margem: number | null;
+  qualidade?: number | null;
   notaIa: number | null;
   faltaParaIdeal?: number | null; // fração: 0.05 = está 5 pontos percentuais abaixo do ideal
 }): number {
   const m = Math.max(-0.3, Math.min(0.5, opts.margem ?? -0.3));
   const parteMargem = (m + 0.3) / 0.8; // 0..1
+  const parteQualidade = Math.max(0, Math.min(10, opts.qualidade ?? 0)) / 10;
   const parteIa = Math.max(0, Math.min(10, opts.notaIa ?? 0)) / 10;
   const falta = Math.max(0, Math.min(0.1, opts.faltaParaIdeal ?? 0)) / 0.1;
-  return Math.round((parteMargem * 0.5 + parteIa * 0.35 + falta * 0.15) * 100);
+  return Math.round((parteMargem * 0.4 + parteQualidade * 0.25 + parteIa * 0.25 + falta * 0.1) * 100);
 }
 
 /** Soma os dividendos por ano e devolve DPA dos últimos 12 meses e a média anual (até 5 anos completos). */

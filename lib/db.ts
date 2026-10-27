@@ -45,6 +45,9 @@ export type Analise = {
   riscos_ia: string | null;
   score: number | null;
   na_carteira: boolean;
+  qualidade: number | null; // 0 a 10, só balanço
+  setor: string | null;
+  alertas: string | null; // problemas de dados e de qualidade, separados por "; "
 };
 
 export type Relatorio = {
@@ -54,12 +57,13 @@ export type Relatorio = {
   justificativa_carteira: string | null;
   acao_do_dia_geral: string | null;
   justificativa_geral: string | null;
+  revisao: string | null; // o que a revisão final da IA mudou ou confirmou
 };
 
 const COLUNAS_ANALISE = [
   "data", "ticker", "nome", "logo", "preco", "variacao_dia", "lpa", "vpa", "dpa_12m", "dpa_medio", "dy_12m", "roe",
   "teto_bazin", "teto_graham", "preco_teto", "margem", "nota_ia", "recomendacao", "resumo_ia", "riscos_ia", "score",
-  "na_carteira",
+  "na_carteira", "qualidade", "setor", "alertas",
 ] as const satisfies readonly (keyof Analise)[];
 
 export async function salvarAnalises(linhas: Analise[]) {
@@ -88,11 +92,33 @@ export async function salvarAnalises(linhas: Analise[]) {
 
 export async function salvarRelatorio(r: Relatorio) {
   await query(
-    `insert into relatorio_diario (data, contexto_mercado, acao_do_dia_carteira, justificativa_carteira, acao_do_dia_geral, justificativa_geral)
-     values ($1, $2, $3, $4, $5, $6)
+    `insert into relatorio_diario (data, contexto_mercado, acao_do_dia_carteira, justificativa_carteira, acao_do_dia_geral, justificativa_geral, revisao)
+     values ($1, $2, $3, $4, $5, $6, $7)
      on conflict (data) do update set contexto_mercado = excluded.contexto_mercado,
        acao_do_dia_carteira = excluded.acao_do_dia_carteira, justificativa_carteira = excluded.justificativa_carteira,
-       acao_do_dia_geral = excluded.acao_do_dia_geral, justificativa_geral = excluded.justificativa_geral`,
-    [r.data, r.contexto_mercado, r.acao_do_dia_carteira, r.justificativa_carteira, r.acao_do_dia_geral, r.justificativa_geral],
+       acao_do_dia_geral = excluded.acao_do_dia_geral, justificativa_geral = excluded.justificativa_geral,
+       revisao = excluded.revisao`,
+    [r.data, r.contexto_mercado, r.acao_do_dia_carteira, r.justificativa_carteira, r.acao_do_dia_geral, r.justificativa_geral, r.revisao],
   );
+}
+
+let migrado = false;
+/** Cria tabelas e colunas novas em bancos que já existiam antes delas (roda uma vez por processo). */
+export async function migrar() {
+  if (migrado) return;
+  await query(`
+    create table if not exists execucoes (
+      id      bigserial primary key,
+      origem  text not null,
+      status  text not null,
+      inicio  timestamptz not null default now(),
+      fim     timestamptz,
+      erro    text
+    );
+    alter table analises add column if not exists qualidade numeric;
+    alter table analises add column if not exists setor text;
+    alter table analises add column if not exists alertas text;
+    alter table relatorio_diario add column if not exists revisao text;
+  `);
+  migrado = true;
 }

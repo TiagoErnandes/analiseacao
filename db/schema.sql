@@ -39,6 +39,9 @@ create table if not exists analises (
   riscos_ia       text,
   score           numeric,           -- nota final usada no ranking
   na_carteira     boolean not null default false,
+  qualidade       numeric,           -- 0 a 10, só balanço
+  setor           text,
+  alertas         text,
   criado_em       timestamptz not null default now(),
   unique (data, ticker)
 );
@@ -52,6 +55,7 @@ create table if not exists relatorio_diario (
   justificativa_carteira  text,
   acao_do_dia_geral       text,
   justificativa_geral     text,
+  revisao                 text,
   criado_em               timestamptz not null default now()
 );
 
