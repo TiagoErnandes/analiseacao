@@ -1,68 +1,54 @@
-// Análise diária com o Claude, em 3 etapas (prioriza acertar, não velocidade):
-// 1) pesquisa na web: resultados, proventos, fatos relevantes e cenário, com fonte e data;
-// 2) decisão: nota e sinal por ação + ação do dia;
-// 3) revisão: confere a decisão contra os números e a pesquisa e devolve a versão final.
+// Análise com o Claude, pensada para custar pouco:
+// - só os ativos que importam vão para a IA (sua carteira + os melhores de fora pelo cálculo);
+// - modo "economico": Claude Haiku, uma chamada só, sem busca na web (centavos por análise);
+// - modo "completo": Claude Sonnet com poucas buscas na web + decisão (a pesquisa do dia fica guardada e é reaproveitada);
+// - modo "sem_ia": nenhuma chamada (o app decide só pelo cálculo).
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod/v4";
 
-const MODELO = "claude-opus-5-5";
-// Se o modelo recusar por política, a própria API tenta outro modelo.
-const FALLBACK = { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const };
+import type { ModoIa } from "./modos";
+export type { ModoIa };
 
-/** Uma linha da tabela enviada à IA (números em R$; dy, margem, roe e pesos em fração). */
-export type LinhaParaIa = {
-  ticker: string;
-  na_carteira: boolean;
-  score_sem_ia: number;
-  [campo: string]: unknown;
+const CONFIG = {
+  economico: { modelo: "claude-haiku-5-5", esforco: "low" as const, buscas: 0 },
+  completo: { modelo: "claude-sonnet-5-5", esforco: "medium" as const, buscas: 5 },
 };
+// Preço por milhão de tokens (entrada, saída) em dólar, e por busca na web
+const PRECO: Record<string, [number, number]> = { "claude-haiku-5-5": [0.1, 0.5], "claude-sonnet-5-5": [2, 10] };
+const PRECO_BUSCA = 10 / 1000;
+/** Quantos ativos de fora da carteira vão para a IA (os de melhor score pelo cálculo). */
+export const MAX_FORA_DA_CARTEIRA = 8;
 
-const SYSTEM = `Você é um analista de investimentos (ações, FIIs, ETFs, BDRs, ações e REITs americanos e cripto), focado em previdência privada e buy and hold.
-O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele valoriza:
-- empresas perenes, com lucro consistente, boa governança e dividendos estáveis;
-- comprar abaixo do preço teto. Cada linha tem um "tipo", e o preço teto já vem calculado de forma conservadora:
-  - acao: Bazin = o MENOR entre o dividendo dos últimos 12 meses e a média de 5 anos, dividido por 6%;
-    sem dividendos relevantes, Graham = raiz(22,5 x LPA x VPA). "qualidade" vem do balanço (ROE, payout, dívida, margem, crescimento).
-  - fii: o MENOR entre o rendimento de 12 meses, o FFO por cota e a média de 5 anos, dividido por 8%. "vpa" é o valor
-    patrimonial por cota. "qualidade" vem de P/VP, rendimento coberto pelo FFO, vacância, nº de imóveis, liquidez e tamanho.
-    Pese também segmento (tijolo, papel, híbrido), gestão, inadimplência dos recebíveis, vencimento de contratos e efeito dos juros.
-  - etf: se paga dividendos relevantes, Bazin a 6%; senão a referência é a média de preço dos últimos 12 meses.
-    "qualidade" vem do retorno de 5 anos, das quedas sofridas, da liquidez e da renda. Pese o índice que replica,
-    a taxa de administração e se faz sentido como base de carteira de longo prazo.
-  - bdr, stock, etf_int, reit: mesma regra dos ETFs (Bazin se pagam dividendos, senão média de 12 meses), qualidade pelo histórico.
-    Stocks, REITs e ETFs internacionais estão em dólar (campo "moeda"; "cambio" = reais por dólar): pese também o câmbio.
-  - cripto: sem preço teto (não gera lucro nem renda). Para previdência, trate como parcela pequena e de alto risco.
-  Os detalhes de cada tipo estão no campo "indicadores".
-- diversificação: nenhum setor deve passar de 30% da carteira;
-- setores perenes (energia, saneamento, seguros, telecom, bancos), sem descartar outros.
-Seja direto, em português do Brasil, e não invente números: use os dados fornecidos e o que encontrar na pesquisa.
-O campo "alertas" de cada ação lista problemas de dados ou de qualidade já detectados; leve-os em conta.
-Ao citar números da pesquisa (resultado de eleição, Selic, cotações, lucros), use a fonte original e diga a data.`;
+/** Uma linha da tabela enviada à IA (números em R$ ou US$ conforme "moeda"; dy, margem, roe e pesos em fração). */
+export type LinhaParaIa = { ticker: string; na_carteira: boolean; score_sem_ia: number; [campo: string]: unknown };
+
+const SYSTEM = `Você é um analista de investimentos focado em previdência privada e buy and hold (ações, FIIs, ETFs, BDRs, ações e REITs americanos e cripto).
+O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele valoriza empresas perenes, lucro consistente, dividendos estáveis,
+comprar abaixo do preço teto e diversificação (nenhum setor acima de 30%).
+O preço teto já vem calculado de forma conservadora: ações por Bazin (dividendo ÷ 6%) ou Graham; FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ 8%;
+ETFs, BDRs, stocks e REITs por Bazin se pagam dividendos, senão pela média de 12 meses; cripto não tem teto (trate como parcela pequena e de alto risco).
+"margem" > 0 significa abaixo do teto. "qualidade" (0 a 10) vem do balanço ou do histórico. "alertas" lista problemas já detectados; leve-os em conta.
+Ativos em dólar têm "moeda" USD e "cambio" em reais por dólar.
+Seja direto, em português do Brasil, e não invente números: use a tabela e, quando houver, a pesquisa.`;
 
 const Acao = z.object({
   ticker: z.string(),
   nota: z.number().describe("0 a 10: qualidade do negócio + momento para compra de longo prazo"),
   recomendacao: z.enum(["COMPRAR", "AGUARDAR", "EVITAR"]),
-  resumo: z.string().describe("1 a 2 frases: por que essa nota, citando os números decisivos"),
+  resumo: z.string().describe("1 a 2 frases citando os números decisivos"),
   riscos: z.string().describe("principal risco em 1 frase"),
 });
-
 const Decisao = z.object({
-  contexto_mercado: z.string().describe("2 a 4 frases sobre o mercado hoje (Ibovespa, juros, dólar, notícias relevantes), com datas"),
+  contexto_mercado: z.string().describe("2 a 3 frases sobre o momento (use a pesquisa se houver; sem pesquisa, comente a tabela e não cite notícias)"),
   acoes: z.array(Acao).describe("uma entrada para CADA ticker da tabela"),
   acao_do_dia_carteira: z.string().describe("ticker da carteira mais indicado para aporte hoje"),
   justificativa_carteira: z.string(),
-  acao_do_dia_geral: z.string().describe("ticker mais indicado hoje entre todos os ativos analisados"),
+  acao_do_dia_geral: z.string().describe("ticker mais indicado hoje entre todos da tabela"),
   justificativa_geral: z.string(),
 });
-
-const Final = Decisao.extend({
-  revisao: z
-    .string()
-    .describe("2 a 4 frases: o que a revisão conferiu, o que mudou em relação à decisão inicial e por quê (ou que nada mudou)"),
-});
-export type SaidaIa = z.infer<typeof Final>;
+export type SaidaIa = z.infer<typeof Decisao> & { revisao: string | null };
+export type CustoIa = { usd: number; modelo: string; entrada: number; saida: number; buscas: number };
 
 function textoDe(content: Anthropic.Beta.BetaContentBlock[]): string {
   return content
@@ -72,126 +58,99 @@ function textoDe(content: Anthropic.Beta.BetaContentBlock[]): string {
     .trim();
 }
 
-/** Chamada com saída JSON validada. Usa streaming porque, com esforço alto, pode levar vários minutos. */
-async function chamarEstruturado<T extends z.ZodType>(
-  client: Anthropic,
-  schema: T,
-  conteudo: string,
-  etapa: string,
-): Promise<z.infer<T>> {
-  const msg = await client.beta.messages
-    .stream({
-      model: MODELO,
-      max_tokens: 64000,
-      system: SYSTEM,
-      output_config: { effort: "xhigh", format: betaZodOutputFormat(schema) },
-      ...FALLBACK,
-      messages: [{ role: "user", content: conteudo }],
-    })
-    .finalMessage();
-  if (msg.stop_reason === "refusal") throw new Error(`A IA recusou a etapa de ${etapa}.`);
-  if (msg.stop_reason === "max_tokens") throw new Error(`A resposta da etapa de ${etapa} foi cortada (max_tokens).`);
-  const texto = textoDe(msg.content);
-  try {
-    return schema.parse(JSON.parse(texto));
-  } catch (err) {
-    throw new Error(`JSON inválido na etapa de ${etapa}: ${(err as Error).message}`.slice(0, 500));
-  }
+function somarCusto(custo: CustoIa, msg: Anthropic.Beta.BetaMessage) {
+  const u = msg.usage;
+  const [pe, ps] = PRECO[custo.modelo] ?? [2, 10];
+  const entrada = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) * 1.25 + (u.cache_read_input_tokens ?? 0) * 0.1;
+  const buscas = u.server_tool_use?.web_search_requests ?? 0;
+  custo.entrada += u.input_tokens ?? 0;
+  custo.saida += u.output_tokens ?? 0;
+  custo.buscas += buscas;
+  custo.usd += (entrada * pe + (u.output_tokens ?? 0) * ps) / 1e6 + buscas * PRECO_BUSCA;
 }
 
-export async function analisarComIa(linhas: LinhaParaIa[], hoje: string): Promise<SaidaIa> {
-  const client = new Anthropic({ timeout: 30 * 60 * 1000 });
-  const tabela = JSON.stringify(linhas);
-  const foco = [
-    ...linhas.filter((l) => l.na_carteira).map((l) => l.ticker),
-    ...linhas.filter((l) => !l.na_carteira).slice(0, 12).map((l) => l.ticker),
-  ];
-  console.log(`  IA 1/3: pesquisa (foco em ${foco.join(", ")})`);
+/**
+ * Envia à IA só os ativos da carteira e os melhores de fora, com os campos essenciais.
+ * `pesquisaGuardada`: pesquisa já feita hoje (modo completo), para não pagar de novo.
+ */
+export async function analisarComIa(
+  linhas: LinhaParaIa[],
+  hoje: string,
+  modo: Exclude<ModoIa, "sem_ia">,
+  pesquisaGuardada: string | null,
+): Promise<{ saida: SaidaIa; custo: CustoIa; pesquisa: string | null }> {
+  const cfg = CONFIG[modo];
+  const client = new Anthropic({ timeout: 15 * 60 * 1000 });
+  const custo: CustoIa = { usd: 0, modelo: cfg.modelo, entrada: 0, saida: 0, buscas: 0 };
+  const fallback = cfg.modelo.startsWith("claude-sonnet")
+    ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
+    : {};
 
-  // 1) Pesquisa
-  const pesquisa = await client.beta.messages
+  const selecao = [
+    ...linhas.filter((l) => l.na_carteira),
+    ...linhas.filter((l) => !l.na_carteira).sort((a, b) => b.score_sem_ia - a.score_sem_ia).slice(0, MAX_FORA_DA_CARTEIRA),
+  ];
+  const tabela = JSON.stringify(selecao);
+  console.log(`  IA (${modo}, ${cfg.modelo}): ${selecao.length} ativos`);
+
+  // 1) Pesquisa curta na web (só no modo completo e só uma vez por dia)
+  let pesquisa = pesquisaGuardada;
+  if (cfg.buscas > 0 && !pesquisa) {
+    const foco = selecao.map((l) => l.ticker).join(", ");
+    const msg = await client.beta.messages
+      .stream({
+        model: cfg.modelo,
+        max_tokens: 16000,
+        system: SYSTEM,
+        output_config: { effort: "low" },
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: cfg.buscas, user_location: { type: "approximate", country: "BR" } }],
+        ...fallback,
+        messages: [
+          {
+            role: "user",
+            content: `Hoje é ${hoje}. Use no máximo ${cfg.buscas} buscas, agrupando vários ativos por busca.
+Procure: (1) Selic, Ibovespa e dólar hoje; (2) fatos relevantes, resultados e proventos anunciados nos últimos 30 dias para: ${foco}.
+Responda em tópicos curtos, um por ticker com novidade (com data e fonte). Tickers sem novidade: não mencione.`,
+          },
+        ],
+      })
+      .finalMessage();
+    somarCusto(custo, msg);
+    if (msg.stop_reason === "refusal") throw new Error("A IA recusou a pesquisa do dia.");
+    pesquisa = textoDe(msg.content) || null;
+  }
+
+  // 2) Decisão com saída JSON validada
+  const msg = await client.beta.messages
     .stream({
-      model: MODELO,
-      max_tokens: 64000,
+      model: cfg.modelo,
+      max_tokens: 32000,
       system: SYSTEM,
-      output_config: { effort: "high" },
-      tools: [
-        { type: "web_search_20260209", name: "web_search", max_uses: 30, user_location: { type: "approximate", country: "BR" } },
-      ],
-      ...FALLBACK,
+      output_config: { effort: cfg.esforco, format: betaZodOutputFormat(Decisao) },
+      ...fallback,
       messages: [
         {
           role: "user",
-          content: `Hoje é ${hoje}. Faça uma pesquisa cuidadosa na web para apoiar a decisão de aporte de hoje.
+          content: `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia.
+Regras: prefira margem > 0, qualidade >= 6, sem alerta grave; na carteira, prefira quem está abaixo do peso ideal (falta_para_ideal > 0)
+e de setor até 30%. Não recomende COMPRAR com prejuízo, payout insustentável ou dado claramente errado. Se nenhum atender, escolha o mais próximo e diga isso.
 
-1. Cenário: Ibovespa, Selic e próxima reunião do Copom, dólar, inflação e notícias que mexeram com a bolsa nos últimos dias.
-2. Para CADA uma destas ações (${foco.join(", ")}), procure:
-   - ações: o último resultado trimestral (data, lucro, variação no ano e o que surpreendeu);
-   - FIIs: o último relatório gerencial (rendimento, vacância, inadimplência, emissões, vendas de imóveis, guidance);
-   - ETFs: taxa de administração, índice de referência e desempenho recente;
-   - proventos anunciados recentemente ou previstos, e mudanças na política de dividendos;
-   - fatos relevantes, mudanças de governo/controle, regulação, processos;
-   - mudanças recentes de recomendação ou preço-alvo dos analistas;
-   - a data do próximo resultado (ações).
-3. Confira se algum número da tabela parece errado (por exemplo LPA ou DY muito diferentes do que as fontes mostram) e diga qual.
-
-Regras: cite a fonte e a data de cada fato; prefira fontes primárias (RI da empresa, B3, Banco Central) e grandes veículos;
-se não encontrar nada recente, escreva "sem novidades relevantes". Termine com um resumo por ticker.
-
-Tabela de hoje, já ordenada pela nota sem IA (score_sem_ia):
-${tabela}`,
+Tabela (ordenada pela nota do cálculo, score_sem_ia):
+${tabela}
+${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: decida só pelos números.)"}`,
         },
       ],
     })
     .finalMessage();
-  if (pesquisa.stop_reason === "refusal") throw new Error("A IA recusou a pesquisa do dia.");
-  const notas = textoDe(pesquisa.content) || "(sem resultados de pesquisa)";
-
-  // 2) Decisão
-  console.log("  IA 2/3: decisão");
-  const decisao = await chamarEstruturado(
-    client,
-    Decisao,
-    `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia.
-Regras:
-- A ação do dia deve, de preferência, estar abaixo do preço teto (margem > 0), ter qualidade >= 6 e nota alta.
-- Na carteira, prefira ações abaixo do peso ideal (falta_para_ideal > 0) e de setores que não passem de 30%.
-- Não recomende COMPRAR ação com prejuízo, payout insustentável ou dado claramente errado sem dizer o motivo.
-- Se nenhuma atender às regras, escolha a mais próxima e diga isso na justificativa.
-
-Tabela:
-${tabela}
-
-Pesquisa do dia:
-${notas}`,
-    "decisão",
-  );
-
-  // 3) Revisão
-  console.log("  IA 3/3: revisão");
-  const final = await chamarEstruturado(
-    client,
-    Final,
-    `Hoje é ${hoje}. Você é o revisor. Confira a decisão abaixo antes de ela ir para o investidor e devolva a versão final.
-Verifique, um a um:
-1. Todo ticker da tabela tem uma entrada em "acoes" (complete os que faltarem).
-2. Cada número citado nos textos bate com a tabela ou com a pesquisa (corrija os que não baterem).
-3. As ações do dia seguem as regras: margem > 0, qualidade >= 6, sem alerta grave e setor da carteira até 30%.
-   Se não seguirem, troque pela melhor alternativa ou justifique claramente a exceção.
-4. A nota e o sinal de cada ação são coerentes com margem, qualidade, alertas e pesquisa
-   (por exemplo, COMPRAR com margem muito negativa ou qualidade baixa precisa de motivo forte).
-5. O contexto de mercado não afirma nada que a pesquisa não sustente.
-No campo "revisao", diga o que conferiu e o que mudou.
-
-Tabela:
-${tabela}
-
-Pesquisa do dia:
-${notas}
-
-Decisão a revisar:
-${JSON.stringify(decisao)}`,
-    "revisão",
-  );
-  return final;
+  somarCusto(custo, msg);
+  if (msg.stop_reason === "refusal") throw new Error("A IA recusou a decisão.");
+  if (msg.stop_reason === "max_tokens") throw new Error("A resposta da IA foi cortada (max_tokens).");
+  let saida: z.infer<typeof Decisao>;
+  try {
+    saida = Decisao.parse(JSON.parse(textoDe(msg.content)));
+  } catch (err) {
+    throw new Error(`JSON inválido da IA: ${(err as Error).message}`.slice(0, 500));
+  }
+  console.log(`  IA: US$ ${custo.usd.toFixed(4)} (${custo.entrada} tokens de entrada, ${custo.saida} de saída, ${custo.buscas} buscas)`);
+  return { saida: { ...saida, revisao: null }, custo, pesquisa };
 }

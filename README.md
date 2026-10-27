@@ -12,17 +12,18 @@ Todo dia útil às 7h o agendador:
    - Dados que não batem entre as fontes viram **alertas** (e são descartados do cálculo).
 3. Dá uma **nota de qualidade** (0 a 10) só com o balanço: ROE, payout sustentável, dívida, margem, liquidez e crescimento.
 4. Mede o **peso de cada setor** na carteira. Setor acima de 30% não ganha bônus de "peso faltando" e recebe alerta.
-5. O **Claude** trabalha em 3 etapas (leva de 20 a 40 minutos; a prioridade é acertar):
-   1. **Pesquisa** na web: último resultado trimestral, proventos, fatos relevantes, recomendações e cenário, com fonte e data.
-   2. **Decisão**: nota (0 a 10) e sinal (Comprar / Aguardar / Evitar) para cada ação, e a **ação do dia** (na carteira e no geral).
-   3. **Revisão**: confere a decisão contra os números e a pesquisa e corrige o que não bater. O site mostra o que foi revisado.
+5. A **IA é opcional e barata**. O modo é escolhido no painel, ao lado do botão "Rodar análise agora":
+   - **Sem IA** (grátis): o app decide só pelo cálculo (preço teto, qualidade e score).
+   - **Econômico** (padrão, ≈ US$ 0,01 por análise): o Claude Haiku dá nota e sinal aos ativos da carteira e aos 8 melhores de fora, sem pesquisa na web.
+   - **Completo** (≈ US$ 0,20 a 0,40): o Claude Sonnet faz até 5 buscas na web e decide. A pesquisa do dia fica guardada e não é paga de novo se você rodar outra vez.
+   - Se a IA falhar (por exemplo, sem créditos), a análise termina mesmo assim, só pelo cálculo. O custo de cada análise e do mês aparece no painel.
 6. Salva tudo no Postgres. O site mostra o resultado:
    - **Painel**: patrimônio, rentabilidade, renda passiva e DY da carteira, ações do dia, cenário, simulador de aporte, alocação por setor e pontos de atenção.
    - **Ranking**: as ações analisadas com filtros, busca, ordenação por qualquer coluna e o comentário da IA.
    - **Carteira**: **registro de compras e vendas** (o preço médio é recalculado sozinho), histórico das operações, correção à mão ou **importação da B3** (arquivos de Posição e Negociação da Área do Investidor; o preço médio é calculado pelas negociações).
    - **Página de cada ação**: preço teto (Bazin e Graham), indicadores, análise da IA, sua posição e o histórico de cotação × preço teto.
 
-Score do ranking: 40% desconto ao teto, 25% qualidade, 25% nota da IA, 10% quanto falta para o peso ideal na carteira (pesos iguais).
+Score do ranking: 40% desconto ao teto, 25% qualidade, 25% nota da IA, 10% quanto falta para o peso ideal na carteira (pesos iguais). Sem nota da IA, os outros três pesos são reescalados.
 
 ## Como colocar no ar
 

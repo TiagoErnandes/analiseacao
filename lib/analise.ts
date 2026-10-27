@@ -1,6 +1,6 @@
 // A análise do dia. Use rodarAnalise() (registra a execução e impede duas ao mesmo tempo).
 import { atualizarIndices } from "./indices";
-import { analisarComIa, type LinhaParaIa } from "./ai";
+import { analisarComIa, type CustoIa, type LinhaParaIa, type ModoIa, type SaidaIa } from "./ai";
 import { buscarAcao, buscarExterior, cotacaoDolar, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
@@ -42,7 +42,51 @@ function avaliar(d: DadosAcao): { ind: Indicadores; qual: Qualidade } {
   return { ind, qual: calcularQualidade({ roe: d.roe, lpa: d.lpa, dpa12m: ind.dpa12m, fundamentos: d.fundamentos }) };
 }
 
+let custoDaExecucao: CustoIa | null = null;
+let pesquisaDoDia: string | null = null;
+
+export async function modoIa(): Promise<ModoIa> {
+  const [c] = await query<{ valor: string }>("select valor from config where chave = 'modo_ia'");
+  const v = c?.valor ?? process.env.MODO_IA ?? "economico";
+  return v === "sem_ia" || v === "completo" ? v : "economico";
+}
+
+/** Sinal sem IA: comprar abaixo do teto com qualidade boa; evitar bem acima do teto ou com qualidade baixa. */
+function sinalPorCalculo(l: { margem: number | null; qualidade: number | null; tipo: string }): string | null {
+  if (l.tipo === "cripto" || l.margem == null) return null;
+  if (l.margem > 0 && (l.qualidade ?? 0) >= 6) return "COMPRAR";
+  if (l.margem < -0.2 || (l.qualidade != null && l.qualidade < 4)) return "EVITAR";
+  return "AGUARDAR";
+}
+
+/** Escolhas do dia sem IA: maior score com margem positiva (na carteira e no geral). */
+function decisaoPorCalculo(
+  linhas: { ticker: string; na_carteira: boolean; score_sem_ia: number; margem: number | null; qualidade: number | null }[],
+  contexto: string,
+): SaidaIa {
+  const ordem = [...linhas].sort((a, b) => b.score_sem_ia - a.score_sem_ia);
+  const boas = ordem.filter((l) => (l.margem ?? -1) > 0 && (l.qualidade ?? 0) >= 6);
+  const cart = boas.find((l) => l.na_carteira) ?? ordem.find((l) => l.na_carteira) ?? ordem[0];
+  const geral = boas[0] ?? ordem[0];
+  const porque = (l: typeof cart) =>
+    l
+      ? `Maior nota do cálculo (${l.score_sem_ia}): margem de ${Math.round((l.margem ?? 0) * 100)}% até o preço teto e qualidade ${l.qualidade ?? "—"}.` +
+        ((l.margem ?? -1) > 0 && (l.qualidade ?? 0) >= 6 ? "" : " Nenhum ativo cumpre todas as regras hoje; este é o mais próximo.")
+      : "";
+  return {
+    contexto_mercado: contexto,
+    acoes: [],
+    acao_do_dia_carteira: cart?.ticker ?? "",
+    justificativa_carteira: porque(cart),
+    acao_do_dia_geral: geral?.ticker ?? "",
+    justificativa_geral: porque(geral),
+    revisao: null,
+  };
+}
+
 export async function executarAnalise() {
+  custoDaExecucao = null;
+  pesquisaDoDia = null;
   const hoje = hojeSaoPaulo();
   await migrar();
 
@@ -131,11 +175,30 @@ export async function executarAnalise() {
     };
   });
 
-  // 3) IA: pesquisa, decisão e revisão
+  // 3) IA (opcional e barata). Sem créditos ou com erro, o app decide só pelo cálculo.
   const paraIa: LinhaParaIa[] = linhas
-    .map(({ logo, variacao_dia, ...resto }) => resto)
+    .map(({ logo, variacao_dia, indicadores, pontos_fortes, nome, ...resto }) => resto)
     .sort((a, b) => b.score_sem_ia - a.score_sem_ia);
-  const ia = await analisarComIa(paraIa, hoje);
+  const modo = await modoIa();
+  let ia: SaidaIa;
+  let custo: CustoIa | null = null;
+  if (modo === "sem_ia") {
+    ia = decisaoPorCalculo(linhas, "Análise feita só pelo cálculo (modo sem IA).");
+  } else {
+    try {
+      const [guardada] = await query<{ pesquisa: string | null }>("select pesquisa from relatorio_diario where data = $1", [hoje]);
+      const r = await analisarComIa(paraIa, hoje, modo, guardada?.pesquisa ?? null);
+      ia = r.saida;
+      custo = r.custo;
+      pesquisaDoDia = r.pesquisa;
+    } catch (err) {
+      const bruto = (err as Error).message ?? String(err);
+      const motivo = /credit balance/i.test(bruto) ? "sem créditos na conta da Anthropic" : bruto;
+      console.warn(`  IA indisponível, usando só o cálculo: ${motivo}`);
+      ia = decisaoPorCalculo(linhas, `A IA não respondeu (${motivo.slice(0, 160)}). Análise feita só pelo cálculo.`);
+    }
+  }
+  custoDaExecucao = custo;
   const porTicker = new Map(ia.acoes.map((a) => [a.ticker.toUpperCase(), a]));
 
   // 4) Salva
@@ -159,7 +222,7 @@ export async function executarAnalise() {
       preco_teto: l.preco_teto,
       margem: l.margem,
       nota_ia: a?.nota ?? null,
-      recomendacao: a?.recomendacao ?? null,
+      recomendacao: a?.recomendacao ?? sinalPorCalculo(l),
       resumo_ia: a?.resumo ?? null,
       riscos_ia: a?.riscos ?? null,
       score: scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: a?.nota ?? null, faltaParaIdeal: l.falta_para_ideal }),
@@ -204,6 +267,7 @@ export async function executarAnalise() {
     acao_do_dia_geral: ia.acao_do_dia_geral.toUpperCase(),
     justificativa_geral: ia.justificativa_geral,
     revisao: ia.revisao,
+    pesquisa: pesquisaDoDia,
   });
 
   console.log(`Pronto. Ação do dia (carteira): ${ia.acao_do_dia_carteira} | (geral): ${ia.acao_do_dia_geral}`);
@@ -216,12 +280,15 @@ export type Execucao = {
   inicio: string;
   fim: string | null;
   erro: string | null;
+  custo_usd: number | null;
+  custo_mes_usd: number;
+  modo: ModoIa;
 };
 
 /** Intervalo mínimo entre duas análises disparadas pelo botão. */
 export const INTERVALO_MINIMO_MIN = 15;
 /** Uma execução "rodando" há mais que isso é considerada travada (container reiniciou, etc.). */
-const TIMEOUT_MIN = 90; // a análise completa (3 etapas de IA) pode levar uns 20 a 40 minutos
+const TIMEOUT_MIN = 60; // a coleta de dados e a IA levam alguns minutos
 
 const garantirTabela = migrar;
 
@@ -230,10 +297,11 @@ export async function ultimaExecucao(): Promise<Execucao | null> {
   const [e] = await query<Execucao>(
     `select id, origem,
             case when status = 'rodando' and inicio < now() - interval '${TIMEOUT_MIN} minutes' then 'erro' else status end as status,
-            inicio::text, fim::text, erro
+            inicio::text, fim::text, erro, custo_usd,
+            (select coalesce(sum(custo_usd), 0) from execucoes where inicio >= date_trunc('month', now())) as custo_mes_usd
        from execucoes order by inicio desc limit 1`,
   );
-  return e ?? null;
+  return e ? { ...e, modo: await modoIa() } : null;
 }
 
 /**
@@ -270,7 +338,13 @@ export async function rodarAnalise(origem: "agendador" | "botao" | "manual") {
   if ("motivo" in reserva) return reserva;
 
   const termino = executarAnalise()
-    .then(() => query("update execucoes set status = 'ok', fim = now() where id = $1", [reserva.id]))
+    .then(() =>
+      query("update execucoes set status = 'ok', fim = now(), custo_usd = $2, modelo = $3 where id = $1", [
+        reserva.id,
+        custoDaExecucao?.usd ?? 0,
+        custoDaExecucao?.modelo ?? null,
+      ]),
+    )
     .catch(async (err) => {
       console.error("Falha na análise:", err);
       await query("update execucoes set status = 'erro', fim = now(), erro = $2 where id = $1", [

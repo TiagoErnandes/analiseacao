@@ -42,8 +42,10 @@ export function scoreFinal(opts: {
   const m = Math.max(-0.3, Math.min(0.5, opts.margem ?? -0.3));
   const parteMargem = (m + 0.3) / 0.8; // 0..1
   const parteQualidade = Math.max(0, Math.min(10, opts.qualidade ?? 0)) / 10;
-  const parteIa = Math.max(0, Math.min(10, opts.notaIa ?? 0)) / 10;
   const falta = Math.max(0, Math.min(0.1, opts.faltaParaIdeal ?? 0)) / 0.1;
+  // Sem nota da IA (modo sem IA ou ativo que não foi para a IA), os outros pesos são reescalados
+  if (opts.notaIa == null) return Math.round(((parteMargem * 0.4 + parteQualidade * 0.25 + falta * 0.1) / 0.75) * 100);
+  const parteIa = Math.max(0, Math.min(10, opts.notaIa)) / 10;
   return Math.round((parteMargem * 0.4 + parteQualidade * 0.25 + parteIa * 0.25 + falta * 0.1) * 100);
 }
 
