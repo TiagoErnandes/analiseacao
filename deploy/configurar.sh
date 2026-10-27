@@ -22,14 +22,14 @@ read -r -p "> " ANTHROPIC_KEY
 PG_SENHA="$(openssl rand -hex 24 2>/dev/null || (date +%s%N; echo $RANDOM$RANDOM) | sha256sum | cut -c1-48)"
 
 echo "==> [1/4] Enviando o código..."
-tar --exclude='node_modules' --exclude='.next' --exclude='.git' --exclude='.env' --exclude='.env.local' \
-  --exclude='.env.production' --exclude='*.tar.gz' -czf analiseacao.tar.gz .
+# Empacota só o que está commitado (sem node_modules, .env etc.).
+git archive --format=tar.gz -o analiseacao.tar.gz HEAD
 scp analiseacao.tar.gz "${VPS_USER}@${VPS_HOST}:~/"
 rm -f analiseacao.tar.gz
 
 echo "==> [2/4] Criando o .env.production (se ainda não existir)..."
 # O conteúdo vai pela entrada padrão, para os segredos não aparecerem em linha de comando.
-cat <<ENV | ssh "${VPS_USER}@${VPS_HOST}" "mkdir -p ~/${REMOTE_DIR} && tar xzf ~/analiseacao.tar.gz -C ~/${REMOTE_DIR} && rm ~/analiseacao.tar.gz && cd ~/${REMOTE_DIR} && if [ -f .env.production ] && ! grep -q troque_por_uma_senha_forte .env.production; then cat > /dev/null; echo '   já existe, mantido como está'; else umask 077; cat > .env.production; chmod 600 .env.production; echo '   criado'; fi"
+cat <<ENV | ssh "${VPS_USER}@${VPS_HOST}" "mkdir -p ~/${REMOTE_DIR} && find ~/${REMOTE_DIR} -mindepth 1 -maxdepth 1 ! -name .env.production -exec rm -rf {} + && tar xzf ~/analiseacao.tar.gz -C ~/${REMOTE_DIR} && rm ~/analiseacao.tar.gz && cd ~/${REMOTE_DIR} && if [ -f .env.production ] && ! grep -q troque_por_uma_senha_forte .env.production; then cat > /dev/null; echo '   já existe, mantido como está'; else umask 077; cat > .env.production; chmod 600 .env.production; echo '   criado'; fi"
 TZ=America/Sao_Paulo
 POSTGRES_USER=analiseacao
 POSTGRES_PASSWORD=${PG_SENHA}
