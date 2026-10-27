@@ -11,6 +11,7 @@ export type DadosAcao = {
   lpa: number | null;
   vpa: number | null;
   roe: number | null; // fração
+  dyFundamentus: number | null; // dividend yield 12m (fração), do Fundamentus
   proventos: { valor: number; data: Date }[];
 };
 
@@ -60,6 +61,7 @@ async function fundamentus(ticker: string) {
     lpa: numeroBr(campoFundamentus(html, "LPA")),
     vpa: numeroBr(campoFundamentus(html, "VPA")),
     roe: numeroBr(campoFundamentus(html, "ROE")),
+    dy: numeroBr(campoFundamentus(html, "Div. Yield")),
     variacaoDia: numeroBr(campoFundamentus(html, "Dia")),
   };
 }
@@ -83,6 +85,7 @@ export async function buscarAcao(ticker: string): Promise<DadosAcao> {
     lpa: fv?.lpa ?? null,
     vpa: fv?.vpa ?? null,
     roe: fv?.roe ?? null,
+    dyFundamentus: fv?.dy ?? null,
     proventos: yv?.proventos ?? [],
   };
 }

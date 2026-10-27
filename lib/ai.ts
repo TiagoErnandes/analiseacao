@@ -22,14 +22,18 @@ export type LinhaParaIa = {
   teto_graham: number | null;
   preco_teto: number | null;
   margem: number | null;
+  alertas: string[]; // problemas de dados detectados no cálculo
 };
 
 const SYSTEM = `Você é um analista de ações brasileiras focado em previdência privada e buy and hold.
 O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele valoriza:
 - empresas perenes, com lucro consistente, boa governança e dividendos estáveis;
-- comprar abaixo do preço teto (Bazin: dividendo médio / 6%; Graham: raiz(22,5 x LPA x VPA));
+- comprar abaixo do preço teto. O preço teto já vem calculado de forma conservadora: Bazin = o MENOR entre o
+  dividendo dos últimos 12 meses e a média de 5 anos, dividido por 6%; sem dividendos relevantes, Graham = raiz(22,5 x LPA x VPA);
 - setores "à prova de crise" (bancos, energia, saneamento, seguros, telecom), sem descartar outros.
-Seja direto, em português do Brasil, e não invente números: use os dados fornecidos e o que encontrar na pesquisa.`;
+Seja direto, em português do Brasil, e não invente números: use os dados fornecidos e o que encontrar na pesquisa.
+Leve em conta o campo "alertas" de cada ação: são problemas de dados já detectados; se um número parecer errado, diga isso.
+Ao citar números da pesquisa (resultado de eleição, Selic, cotações), confira na fonte e prefira a fonte oficial.`;
 
 const Saida = z.object({
   contexto_mercado: z.string().describe("2 a 4 frases sobre o mercado hoje (Ibovespa, juros, dólar, notícias relevantes)"),
