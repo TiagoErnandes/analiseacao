@@ -1,4 +1,5 @@
 // A análise do dia. Use rodarAnalise() (registra a execução e impede duas ao mesmo tempo).
+import { atualizarIndices } from "./indices";
 import { analisarComIa, type LinhaParaIa } from "./ai";
 import { buscarAcao, buscarExterior, cotacaoDolar, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
@@ -193,6 +194,8 @@ export async function executarAnalise() {
      on conflict (data) do update set investido = excluded.investido, patrimonio = excluded.patrimonio`,
     [hoje, investido, totalCarteira],
   );
+  const errosIndices = await atualizarIndices();
+  if (errosIndices.length) console.warn(`  Índices de referência: ${errosIndices.join("; ")}`);
   await salvarRelatorio({
     data: hoje,
     contexto_mercado: ia.contexto_mercado,

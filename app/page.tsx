@@ -9,6 +9,9 @@ import { Rosca } from "./Rosca";
 import { GraficoEvolucao } from "./GraficoEvolucao";
 import { BotaoLancamento, type PosicaoLancamento } from "./Lancamento";
 import { MeusAtivos } from "./MeusAtivos";
+import { Comparativo } from "./Comparativo";
+import { ProventosMes } from "./ProventosMes";
+import { Projecao } from "./Projecao";
 import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
 
@@ -60,7 +63,7 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 }
 
 export default async function Painel() {
-  const { exec, rel, analises, porTicker, posicoes, evolucao, resumo, setores, classes } = await carregarPainel();
+  const { exec, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel();
   const botao = <BotaoAnalise status={exec?.status ?? null} inicio={exec?.inicio ?? null} erro={exec?.erro ?? null} />;
 
   if (!rel) {
@@ -182,6 +185,15 @@ export default async function Painel() {
         </Cartao>
       </section>
 
+      <section className="grid gap-4 lg:grid-cols-5">
+        <Cartao titulo="Proventos recebidos por mês" className="lg:col-span-3">
+          <ProventosMes meses={proventosPorMes} />
+        </Cartao>
+        <Cartao titulo="Carteira × CDI, inflação e Ibovespa" className="lg:col-span-2">
+          <Comparativo carteira={resumo.rentabilidade12m.valor} dados={comparativo} />
+        </Cartao>
+      </section>
+
       <section className="grid gap-4 lg:grid-cols-2">
         <AcaoDoDia titulo="Melhor compra na sua carteira" a={porTicker.get(rel.acao_do_dia_carteira ?? "")} justificativa={rel.justificativa_carteira} />
         <AcaoDoDia titulo="Melhor compra entre todos os ativos" a={porTicker.get(rel.acao_do_dia_geral ?? "")} justificativa={rel.justificativa_geral} />
@@ -212,6 +224,10 @@ export default async function Painel() {
           </div>
         </Cartao>
       </section>
+
+      <Cartao titulo="Projeção para a aposentadoria">
+        <Projecao patrimonio={resumo.patrimonio} />
+      </Cartao>
 
       <MeusAtivos posicoes={posicoes} patrimonio={resumo.patrimonio} pesoIdeal={pesoIdeal} paraLancamento={paraLancamento} />
 

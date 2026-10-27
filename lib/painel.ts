@@ -3,6 +3,7 @@ import { ultimaExecucao } from "./analise";
 import { query, type Analise, type Carteira, type Relatorio } from "./db";
 import { infoTipo } from "./tipos";
 import { proventosRecebidos } from "./proventos";
+import { compararDesde } from "./indices";
 
 /** Limite de concentração por setor usado no app inteiro. */
 export const LIMITE_SETOR = 0.3;
@@ -54,6 +55,13 @@ export async function carregarPainel() {
   );
 
   const investido = posicoes.reduce((s, p) => s + p.investido, 0);
+  const rent12 = rentabilidade12m(evolucao, patrimonio, investido, recebidos);
+  // Mesma janela da rentabilidade: a foto mais antiga dos últimos 12 meses ou, sem fotos, a primeira compra
+  const umAno = new Date();
+  umAno.setFullYear(umAno.getFullYear() - 1);
+  const primeira = carteira.map((c) => c.desde).sort()[0];
+  const janela = rent12.desde ?? (primeira && primeira > umAno.toISOString().slice(0, 10) ? primeira : umAno.toISOString().slice(0, 10));
+  const comparativo = await compararDesde(janela).catch(() => null);
   const renda12m = posicoes.reduce((s, p) => s + (p.renda12m ?? 0), 0);
   const comMargem = posicoes.filter((p) => p.a?.margem != null);
   const pesoMargem = comMargem.reduce((s, p) => s + p.valor, 0);
@@ -81,6 +89,8 @@ export async function carregarPainel() {
     porTicker,
     posicoes,
     evolucao,
+    comparativo,
+    proventosPorMes: recebidos.porMes,
     resumo: {
       patrimonio,
       investido,
@@ -90,7 +100,7 @@ export async function carregarPainel() {
       proventos12m: recebidos.ultimos12m,
       lucroTotal: patrimonio - investido + recebidos.total,
       rentabilidadeTotal: investido > 0 ? (patrimonio + recebidos.total) / investido - 1 : null,
-      rentabilidade12m: rentabilidade12m(evolucao, patrimonio, investido, recebidos),
+      rentabilidade12m: rent12,
       renda12m,
       dy: patrimonio > 0 ? renda12m / patrimonio : null,
       yieldOnCost: investido > 0 ? renda12m / investido : null,
