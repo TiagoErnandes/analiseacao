@@ -2,7 +2,7 @@
 import { analisarComIa, type LinhaParaIa } from "./ai";
 import { buscarAcao, type DadosAcao } from "./mercado";
 import { query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
-import { calcularDpa, margem, precoTeto, scoreFinal, tetoBazin, tetoGraham } from "./valuation";
+import { calcularIndicadores, scoreFinal } from "./valuation";
 
 function hojeSaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
@@ -37,10 +37,8 @@ export async function executarAnalise() {
 
   const linhas: (LinhaParaIa & { logo: string | null; variacao_dia: number | null; dpa_12m: number | null })[] =
     dados.map((d) => {
-      const { dpa12m, dpaMedio } = calcularDpa(d.proventos);
-      const bazin = tetoBazin(dpaMedio);
-      const graham = tetoGraham(d.lpa, d.vpa);
-      const teto = precoTeto(bazin, graham);
+      const ind = calcularIndicadores(d);
+      if (ind.alertas.length) console.warn(`  ${d.ticker}: ${ind.alertas.join("; ")}`);
       const pos = minha.get(d.ticker);
       return {
         ticker: d.ticker,
@@ -52,14 +50,15 @@ export async function executarAnalise() {
         preco: d.preco,
         lpa: d.lpa,
         vpa: d.vpa,
-        dpa_12m: dpa12m,
-        dy_12m: dpa12m && d.preco ? dpa12m / d.preco : null,
-        dpa_medio: dpaMedio,
+        dpa_12m: ind.dpa12m,
+        dy_12m: ind.dy12m,
+        dpa_medio: ind.dpaMedio,
         roe: d.roe,
-        teto_bazin: bazin,
-        teto_graham: graham,
-        preco_teto: teto,
-        margem: margem(d.preco, teto),
+        teto_bazin: ind.bazin,
+        teto_graham: ind.graham,
+        preco_teto: ind.teto,
+        margem: ind.margem,
+        alertas: ind.alertas,
       };
     });
 

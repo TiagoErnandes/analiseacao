@@ -69,3 +69,70 @@ export function calcularDpa(
 
   return { dpa12m: dpa12m || null, dpaMedio };
 }
+
+/** Abaixo disso de dividend yield, a empresa é tratada como "não pagadora" e o teto vem do Graham. */
+export const DY_MINIMO_PAGADORA = 0.02;
+/** Diferença máxima aceitável entre o DPA 12m do Yahoo e o do Fundamentus antes de desconfiar do histórico. */
+const TOLERANCIA_FONTES = 0.35;
+
+export type Indicadores = {
+  dpa12m: number | null;
+  dpaMedio: number | null;
+  dy12m: number | null;
+  bazin: number | null;
+  graham: number | null;
+  teto: number | null;
+  margem: number | null;
+  alertas: string[];
+};
+
+/**
+ * Junta as duas fontes e calcula o preço teto de forma conservadora (foco em previdência):
+ * - DPA 12m vem do DY do Fundamentus (mais confiável); o Yahoo só entra no histórico de 5 anos,
+ *   e só se o 12m dele bater com o do Fundamentus.
+ * - Bazin usa o MENOR entre o DPA 12m e a média de 5 anos, para não pagar caro por dividendos
+ *   extraordinários do passado (ex.: Petrobras 2022) nem por um pico pontual recente.
+ * - LPA claramente errado (ROE implícito < 1%) invalida o Graham.
+ */
+export function calcularIndicadores(d: {
+  preco: number | null;
+  lpa: number | null;
+  vpa: number | null;
+  dyFundamentus: number | null;
+  proventos: { valor: number; data: Date }[];
+}, hoje = new Date()): Indicadores {
+  const alertas: string[] = [];
+  const yahoo = calcularDpa(d.proventos, hoje);
+  const dpa12mFund = d.dyFundamentus != null && d.preco ? d.dyFundamentus * d.preco : null;
+
+  let dpa12m = dpa12mFund ?? yahoo.dpa12m;
+  let dpaMedio = yahoo.dpaMedio;
+  if (dpa12mFund != null && dpa12mFund > 0) {
+    const y = yahoo.dpa12m ?? 0;
+    if (Math.abs(y - dpa12mFund) / dpa12mFund > TOLERANCIA_FONTES) {
+      alertas.push("histórico de dividendos do Yahoo não bate com o DY do Fundamentus; média de 5 anos ignorada");
+      dpaMedio = null;
+    }
+  } else if (dpa12mFund == null) {
+    alertas.push("sem DY do Fundamentus; DPA 12m vem só do Yahoo");
+  }
+
+  const dy12m = dpa12m && d.preco ? dpa12m / d.preco : null;
+  let bazin: number | null = null;
+  if (dy12m != null && dy12m >= DY_MINIMO_PAGADORA) {
+    const base = Math.min(dpa12m ?? Infinity, dpaMedio ?? Infinity);
+    bazin = tetoBazin(Number.isFinite(base) ? base : null);
+  } else {
+    alertas.push("paga pouco ou nenhum dividendo; teto pelo Graham");
+    if (!dpa12m) dpa12m = null;
+  }
+
+  let graham = tetoGraham(d.lpa, d.vpa);
+  if (d.lpa != null && d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01) {
+    alertas.push(`LPA ${d.lpa} parece errado (ROE implícito < 1%); Graham ignorado`);
+    graham = null;
+  }
+
+  const teto = precoTeto(bazin, graham);
+  return { dpa12m, dpaMedio, dy12m, bazin, graham, teto, margem: margem(d.preco, teto), alertas };
+}
