@@ -14,7 +14,10 @@ Todo dia útil às 7h o agendador:
    1. **Pesquisa** na web: último resultado trimestral, proventos, fatos relevantes, recomendações e cenário, com fonte e data.
    2. **Decisão**: nota (0 a 10) e sinal (Comprar / Aguardar / Evitar) para cada ação, e a **ação do dia** (na carteira e no geral).
    3. **Revisão**: confere a decisão contra os números e a pesquisa e corrige o que não bater. O site mostra o que foi revisado.
-6. Salva tudo no Postgres. O site mostra o resultado.
+6. Salva tudo no Postgres. O site mostra o resultado:
+   - **Painel**: patrimônio, rentabilidade, renda passiva e DY da carteira, ações do dia, cenário, simulador de aporte, alocação por setor e pontos de atenção.
+   - **Ranking**: as ações analisadas com filtros, busca, ordenação por qualquer coluna e o comentário da IA.
+   - **Página de cada ação**: preço teto (Bazin e Graham), indicadores, análise da IA, sua posição e o histórico de cotação × preço teto.
 
 Score do ranking: 40% desconto ao teto, 25% qualidade, 25% nota da IA, 10% quanto falta para o peso ideal na carteira (pesos iguais).
 
