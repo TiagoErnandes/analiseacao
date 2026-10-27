@@ -37,14 +37,15 @@ export function BotaoAnalise({ status, inicio, erro }: Props) {
             router.refresh();
           })
         }
-        className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+        className="botao"
       >
+        {(rodando || pendente) && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-fundo/30 border-t-fundo" />}
         {rodando ? "Analisando…" : pendente ? "Iniciando…" : "Rodar análise agora"}
       </button>
-      <p className="text-xs text-neutral-400">
+      <p className="max-w-72 text-xs text-suave sm:text-right">
         {mensagem ??
           (rodando && inicio
-            ? `Rodando desde ${hora(inicio)}. Leva alguns minutos.`
+            ? `Rodando desde ${hora(inicio)}. Leva de 20 a 40 minutos.`
             : status === "erro"
               ? `A última análise falhou${erro ? `: ${erro}` : "."}`
               : inicio

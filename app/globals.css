@@ -2,4 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-body { @apply bg-neutral-950 text-neutral-100 antialiased; }
+:root { color-scheme: dark; }
+body { @apply bg-fundo text-texto antialiased; font-feature-settings: "cv11", "ss01"; }
+
+@layer components {
+  .cartao { @apply min-w-0 rounded-xl border border-borda bg-painel; }
+  .rotulo { @apply text-[11px] font-medium uppercase tracking-wider text-fraco; }
+  .tabela { @apply w-full text-sm tabular-nums; }
+  .tabela thead th { @apply whitespace-nowrap bg-painel2 px-3 py-2.5 text-left text-xs font-medium text-suave; }
+  .tabela tbody td { @apply whitespace-nowrap border-t border-borda px-3 py-2.5; }
+  .tabela tbody tr { @apply transition-colors hover:bg-painel2/60; }
+  .campo { @apply rounded-lg border border-borda bg-fundo px-3 py-2 text-sm outline-none placeholder:text-fraco focus:border-marca; }
+  .botao { @apply inline-flex items-center justify-center gap-2 rounded-lg bg-marca px-4 py-2 text-sm font-semibold text-fundo transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60; }
+  .chip { @apply rounded-full border border-borda px-3 py-1 text-xs text-suave transition hover:border-suave hover:text-texto; }
+  .chip-ativo { @apply border-marca/60 bg-marca/10 text-marca; }
+}

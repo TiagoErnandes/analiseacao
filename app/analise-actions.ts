@@ -7,5 +7,5 @@ export async function iniciarAnalise(): Promise<{ ok: boolean; mensagem: string 
   if ("motivo" in r) return { ok: false, mensagem: r.motivo };
   // Não espera terminar: a análise leva alguns minutos e continua rodando no servidor.
   void r.termino;
-  return { ok: true, mensagem: "Análise iniciada. Leva alguns minutos; a página atualiza sozinha." };
+  return { ok: true, mensagem: "Análise iniciada. Leva de 20 a 40 minutos; a página atualiza sozinha." };
 }
