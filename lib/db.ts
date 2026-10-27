@@ -154,6 +154,13 @@ export async function migrar() {
       patrimonio  numeric not null,
       proventos   numeric not null default 0
     );
+    -- CDI e IPCA (Banco Central) e Ibovespa, para comparar a carteira
+    create table if not exists indices (
+      serie  text not null,
+      data   date not null,
+      valor  numeric not null,
+      primary key (serie, data)
+    );
     -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
     insert into universo (ticker) values
       ('HGLG11'),('KNRI11'),('XPML11'),('BTLG11'),('VISC11'),('KNCR11'),('MXRF11'),('HGRU11'),('XPLG11'),('CPTS11'),

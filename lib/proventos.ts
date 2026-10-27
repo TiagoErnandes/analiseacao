@@ -9,6 +9,7 @@ export type ProventosRecebidos = {
   total: number; // em reais
   ultimos12m: number;
   porTicker: Map<string, { total: number; ultimos12m: number }>;
+  porMes: { mes: string; valor: number; itens: { ticker: string; valor: number }[] }[]; // últimos 12 meses, "AAAA-MM" pela data com
 };
 
 export async function proventosRecebidos(
@@ -16,7 +17,13 @@ export async function proventosRecebidos(
   hoje = new Date(),
 ): Promise<ProventosRecebidos> {
   const porTicker = new Map<string, { total: number; ultimos12m: number }>();
-  if (posicoes.length === 0) return { total: 0, ultimos12m: 0, porTicker };
+  const meses: string[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - i, 1));
+    meses.push(d.toISOString().slice(0, 7));
+  }
+  const porMes = meses.map((mes) => ({ mes, valor: 0, itens: [] as { ticker: string; valor: number }[] }));
+  if (posicoes.length === 0) return { total: 0, ultimos12m: 0, porTicker, porMes };
   const tickers = posicoes.map((p) => p.ticker);
   const [ops, divs] = await Promise.all([
     query<Op>("select ticker, data::text, tipo, quantidade from operacoes where ticker = any($1) order by data, id", [tickers]),
@@ -48,10 +55,18 @@ export async function proventosRecebidos(
       const v = qtd * d.valor * p.cambio;
       t += v;
       if (d.data >= limite12m) t12 += v;
+      const m = porMes.find((x) => x.mes === d.data.slice(0, 7));
+      if (m) {
+        m.valor += v;
+        const it = m.itens.find((i) => i.ticker === p.ticker);
+        if (it) it.valor += v;
+        else m.itens.push({ ticker: p.ticker, valor: v });
+      }
     }
     porTicker.set(p.ticker, { total: t, ultimos12m: t12 });
     total += t;
     ultimos12m += t12;
   }
-  return { total, ultimos12m, porTicker };
+  for (const m of porMes) m.itens.sort((a, b) => b.valor - a.valor);
+  return { total, ultimos12m, porTicker, porMes };
 }
