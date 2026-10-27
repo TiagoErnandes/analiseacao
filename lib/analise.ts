@@ -1,8 +1,12 @@
 // A análise do dia. Use rodarAnalise() (registra a execução e impede duas ao mesmo tempo).
 import { analisarComIa, type LinhaParaIa } from "./ai";
 import { buscarAcao, type DadosAcao } from "./mercado";
-import { query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
+import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
+import { calcularQualidade } from "./qualidade";
 import { calcularIndicadores, scoreFinal } from "./valuation";
+
+/** Acima disso, um setor é considerado concentrado e não recebe bônus de "peso faltando". */
+const LIMITE_SETOR = 0.3;
 
 function hojeSaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
@@ -10,6 +14,7 @@ function hojeSaoPaulo(): string {
 
 export async function executarAnalise() {
   const hoje = hojeSaoPaulo();
+  await migrar();
 
   const [carteira, universo] = await Promise.all([
     query<Carteira>("select ticker, quantidade, preco_medio from carteira"),
@@ -31,48 +36,71 @@ export async function executarAnalise() {
   }
   if (dados.length === 0) throw new Error("Nenhum dado de mercado obtido. Yahoo/Fundamentus podem estar fora do ar.");
 
-  // 2) Preço teto e pesos da carteira
-  const totalCarteira = dados.reduce((s, d) => s + (minha.get(d.ticker)?.quantidade ?? 0) * (d.preco ?? 0), 0);
+  // 2) Preço teto, qualidade e pesos da carteira (por ação e por setor)
+  const valorPos = (d: DadosAcao) => (minha.get(d.ticker)?.quantidade ?? 0) * (d.preco ?? 0);
+  const totalCarteira = dados.reduce((s, d) => s + valorPos(d), 0);
   const pesoIdeal = minha.size > 0 ? 1 / minha.size : 0;
+  const setorDe = (d: DadosAcao) => d.fundamentos?.subsetor ?? d.fundamentos?.setor ?? "Sem setor";
+  const pesoSetor = new Map<string, number>();
+  for (const d of dados) {
+    if (totalCarteira > 0 && valorPos(d) > 0) {
+      pesoSetor.set(setorDe(d), (pesoSetor.get(setorDe(d)) ?? 0) + valorPos(d) / totalCarteira);
+    }
+  }
 
-  const linhas: (LinhaParaIa & { logo: string | null; variacao_dia: number | null; dpa_12m: number | null })[] =
-    dados.map((d) => {
-      const ind = calcularIndicadores(d);
-      if (ind.alertas.length) console.warn(`  ${d.ticker}: ${ind.alertas.join("; ")}`);
-      const pos = minha.get(d.ticker);
-      return {
-        ticker: d.ticker,
-        nome: d.nome,
-        logo: d.logo,
-        variacao_dia: d.variacaoDia,
-        na_carteira: !!pos,
-        peso_atual: pos && totalCarteira > 0 ? (pos.quantidade * (d.preco ?? 0)) / totalCarteira : null,
-        preco: d.preco,
-        lpa: d.lpa,
-        vpa: d.vpa,
-        dpa_12m: ind.dpa12m,
-        dy_12m: ind.dy12m,
-        dpa_medio: ind.dpaMedio,
-        roe: d.roe,
-        teto_bazin: ind.bazin,
-        teto_graham: ind.graham,
-        preco_teto: ind.teto,
-        margem: ind.margem,
-        alertas: ind.alertas,
-      };
-    });
+  const linhas = dados.map((d) => {
+    const ind = calcularIndicadores(d);
+    const qual = calcularQualidade({ roe: d.roe, lpa: d.lpa, dpa12m: ind.dpa12m, fundamentos: d.fundamentos });
+    const pos = minha.get(d.ticker);
+    const setor = setorDe(d);
+    const pesoAtual = pos && totalCarteira > 0 ? valorPos(d) / totalCarteira : null;
+    const pesoDoSetor = pesoSetor.get(setor) ?? 0;
+    const alertas = [...ind.alertas, ...qual.alertas];
+    if (pesoDoSetor > LIMITE_SETOR) {
+      alertas.push(`setor ${setor} já é ${Math.round(pesoDoSetor * 100)}% da carteira (limite ${LIMITE_SETOR * 100}%)`);
+    }
+    // Peso faltando só conta se o setor ainda não estiver concentrado
+    const falta = pos && pesoAtual != null && pesoDoSetor <= LIMITE_SETOR ? pesoIdeal - pesoAtual : null;
+    if (alertas.length) console.warn(`  ${d.ticker}: ${alertas.join("; ")}`);
+    return {
+      ticker: d.ticker,
+      nome: d.nome,
+      logo: d.logo,
+      variacao_dia: d.variacaoDia,
+      setor,
+      peso_setor_na_carteira: pesoDoSetor || null,
+      na_carteira: !!pos,
+      peso_atual: pesoAtual,
+      falta_para_ideal: falta,
+      preco: d.preco,
+      lpa: d.lpa,
+      vpa: d.vpa,
+      dpa_12m: ind.dpa12m,
+      dy_12m: ind.dy12m,
+      dpa_medio: ind.dpaMedio,
+      roe: d.roe,
+      fundamentos: d.fundamentos,
+      qualidade: qual.nota,
+      pontos_fortes: qual.pontos,
+      teto_bazin: ind.bazin,
+      teto_graham: ind.graham,
+      preco_teto: ind.teto,
+      margem: ind.margem,
+      score_sem_ia: scoreFinal({ margem: ind.margem, qualidade: qual.nota, notaIa: null, faltaParaIdeal: falta }),
+      alertas,
+    };
+  });
 
-  // 3) IA: pesquisa de notícias + nota por ação + ação do dia
-  const ia = await analisarComIa(
-    linhas.map(({ logo, variacao_dia, dpa_12m, ...resto }) => resto),
-    hoje,
-  );
+  // 3) IA: pesquisa, decisão e revisão
+  const paraIa: LinhaParaIa[] = linhas
+    .map(({ logo, variacao_dia, ...resto }) => resto)
+    .sort((a, b) => b.score_sem_ia - a.score_sem_ia);
+  const ia = await analisarComIa(paraIa, hoje);
   const porTicker = new Map(ia.acoes.map((a) => [a.ticker.toUpperCase(), a]));
 
   // 4) Salva
   const registros: Analise[] = linhas.map((l) => {
     const a = porTicker.get(l.ticker);
-    const falta = l.na_carteira && l.peso_atual != null ? pesoIdeal - l.peso_atual : null;
     return {
       data: hoje,
       ticker: l.ticker,
@@ -94,8 +122,11 @@ export async function executarAnalise() {
       recomendacao: a?.recomendacao ?? null,
       resumo_ia: a?.resumo ?? null,
       riscos_ia: a?.riscos ?? null,
-      score: scoreFinal({ margem: l.margem, notaIa: a?.nota ?? null, faltaParaIdeal: falta }),
+      score: scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: a?.nota ?? null, faltaParaIdeal: l.falta_para_ideal }),
       na_carteira: l.na_carteira,
+      qualidade: l.qualidade,
+      setor: l.setor,
+      alertas: l.alertas.length ? l.alertas.join("; ") : null,
     };
   });
 
@@ -107,6 +138,7 @@ export async function executarAnalise() {
     justificativa_carteira: ia.justificativa_carteira,
     acao_do_dia_geral: ia.acao_do_dia_geral.toUpperCase(),
     justificativa_geral: ia.justificativa_geral,
+    revisao: ia.revisao,
   });
 
   console.log(`Pronto. Ação do dia (carteira): ${ia.acao_do_dia_carteira} | (geral): ${ia.acao_do_dia_geral}`);
@@ -124,18 +156,9 @@ export type Execucao = {
 /** Intervalo mínimo entre duas análises disparadas pelo botão. */
 export const INTERVALO_MINIMO_MIN = 15;
 /** Uma execução "rodando" há mais que isso é considerada travada (container reiniciou, etc.). */
-const TIMEOUT_MIN = 30;
+const TIMEOUT_MIN = 90; // a análise completa (3 etapas de IA) pode levar uns 20 a 40 minutos
 
-async function garantirTabela() {
-  await query(`create table if not exists execucoes (
-    id      bigserial primary key,
-    origem  text not null,
-    status  text not null,
-    inicio  timestamptz not null default now(),
-    fim     timestamptz,
-    erro    text
-  )`);
-}
+const garantirTabela = migrar;
 
 export async function ultimaExecucao(): Promise<Execucao | null> {
   await garantirTabela();

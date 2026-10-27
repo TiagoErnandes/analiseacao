@@ -6,10 +6,10 @@ import { BotaoAnalise } from "./BotaoAnalise";
 export const dynamic = "force-dynamic";
 
 async function carregar() {
+  const exec = await ultimaExecucao(); // também garante as colunas novas no banco
   const [rel] = await query<Relatorio>("select * from relatorio_diario order by data desc limit 1");
   const carteira = await query<Carteira>("select ticker, quantidade, preco_medio from carteira");
   const analises = rel ? await query<Analise>("select * from analises where data = $1", [rel.data]) : [];
-  const exec = await ultimaExecucao();
   return { rel: rel ?? null, analises, carteira, exec };
 }
 
@@ -27,6 +27,23 @@ function Rec({ r }: { r: string | null }) {
 function Margem({ v }: { v: number | null }) {
   if (v == null) return <span className="text-neutral-500">—</span>;
   return <span className={v >= 0 ? "text-emerald-400" : "text-red-400"}>{pct(v)}</span>;
+}
+
+function Qualidade({ v }: { v: number | null | undefined }) {
+  if (v == null) return <span className="text-neutral-500">—</span>;
+  const cor = v >= 7 ? "text-emerald-400" : v >= 5 ? "text-amber-300" : "text-red-400";
+  return <span className={cor}>{v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>;
+}
+
+function Alertas({ txt }: { txt: string | null | undefined }) {
+  if (!txt) return null;
+  return (
+    <ul className="mt-1 space-y-0.5 text-xs text-orange-300/80">
+      {txt.split("; ").map((t) => (
+        <li key={t}>⚠ {t}</li>
+      ))}
+    </ul>
+  );
 }
 
 function Logo({ a }: { a: Pick<Analise, "logo" | "ticker"> }) {
@@ -49,10 +66,11 @@ function CardDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
             <span className="text-2xl font-semibold">{a.ticker}</span>
             <Rec r={a.recomendacao} />
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <div><p className="text-neutral-400">Preço</p><p>{brl(a.preco)}</p></div>
             <div><p className="text-neutral-400">Preço teto</p><p>{brl(a.preco_teto)}</p></div>
             <div><p className="text-neutral-400">Margem</p><p><Margem v={a.margem} /></p></div>
+            <div><p className="text-neutral-400">Qualidade</p><p><Qualidade v={a.qualidade} /></p></div>
           </div>
         </>
       ) : (
@@ -90,6 +108,11 @@ export default async function Home() {
         <div>
           <h1 className="text-xl font-semibold">Análise de {dataBr(rel.data)}</h1>
           {rel.contexto_mercado && <p className="mt-2 max-w-3xl text-sm text-neutral-300">{rel.contexto_mercado}</p>}
+          {rel.revisao && (
+            <p className="mt-2 max-w-3xl text-xs text-neutral-400">
+              <span className="font-medium text-neutral-300">Revisão da IA:</span> {rel.revisao}
+            </p>
+          )}
         </div>
         {botao}
       </section>
@@ -113,7 +136,7 @@ export default async function Home() {
           <table className="w-full text-sm">
             <thead className="bg-neutral-900 text-left text-neutral-400">
               <tr>
-                {["Ativo", "Qtd.", "Preço médio", "Preço atual", "Rentab.", "% Carteira", "% Ideal", "Preço teto", "Margem", "Nota IA", "Comprar?"].map((h) => (
+                {["Ativo", "Qtd.", "Preço médio", "Preço atual", "Rentab.", "% Carteira", "% Ideal", "Setor", "Preço teto", "Margem", "Qualidade", "Nota IA", "Comprar?"].map((h) => (
                   <th key={h} className="whitespace-nowrap px-3 py-2 font-medium">{h}</th>
                 ))}
               </tr>
@@ -131,8 +154,10 @@ export default async function Home() {
                     <td className="px-3 py-2"><Margem v={rent} /></td>
                     <td className="px-3 py-2">{pct(peso)}</td>
                     <td className="px-3 py-2">{pct(pesoIdeal)}</td>
+                    <td className="px-3 py-2 text-xs text-neutral-400">{a?.setor ?? "—"}</td>
                     <td className="px-3 py-2">{brl(a?.preco_teto)}</td>
                     <td className="px-3 py-2"><Margem v={a?.margem ?? null} /></td>
+                    <td className="px-3 py-2"><Qualidade v={a?.qualidade} /></td>
                     <td className="px-3 py-2">{a?.nota_ia ?? "—"}</td>
                     <td className="px-3 py-2"><Rec r={a?.recomendacao ?? null} /></td>
                   </tr>
@@ -146,14 +171,16 @@ export default async function Home() {
       <section>
         <h2 className="mb-1 font-semibold">Ranking do dia</h2>
         <p className="mb-3 text-xs text-neutral-400">
-          Preço teto = Bazin (dividendo médio ÷ 6%) quando a empresa paga dividendos; senão Graham (√22,5 × LPA × VPA).
-          Ordenado pela nota final: 50% desconto, 35% nota da IA, 15% peso faltando na carteira.
+          Preço teto = Bazin (o menor entre o dividendo de 12 meses e a média de 5 anos, ÷ 6%) quando a empresa paga
+          dividendos; senão Graham (√22,5 × LPA × VPA). Qualidade (0 a 10) vem do balanço: ROE, payout, dívida, margem e
+          crescimento. Ordenado pelo score: 40% desconto, 25% qualidade, 25% nota da IA, 10% peso faltando na carteira
+          (só se o setor não passar de 30%).
         </p>
         <div className="overflow-x-auto rounded-xl border border-neutral-800">
           <table className="w-full text-sm">
             <thead className="bg-neutral-900 text-left text-neutral-400">
               <tr>
-                {["#", "Ativo", "Preço", "Teto Bazin", "Teto Graham", "Margem", "DY 12m", "Nota IA", "Score", "Sinal", "Por quê"].map((h) => (
+                {["#", "Ativo", "Preço", "Teto Bazin", "Teto Graham", "Margem", "DY 12m", "Qualidade", "Nota IA", "Score", "Sinal", "Por quê"].map((h) => (
                   <th key={h} className="whitespace-nowrap px-3 py-2 font-medium">{h}</th>
                 ))}
               </tr>
@@ -168,18 +195,21 @@ export default async function Home() {
                       <span>{a.ticker}</span>
                       {a.na_carteira && <span className="whitespace-nowrap text-xs text-sky-400">● carteira</span>}
                     </div>
+                    {a.setor && <p className="mt-0.5 text-xs text-neutral-500">{a.setor}</p>}
                   </td>
                   <td className="px-3 py-2">{brl(a.preco)}</td>
                   <td className="px-3 py-2">{brl(a.teto_bazin)}</td>
                   <td className="px-3 py-2">{brl(a.teto_graham)}</td>
                   <td className="px-3 py-2"><Margem v={a.margem} /></td>
                   <td className="px-3 py-2">{pct(a.dy_12m)}</td>
+                  <td className="px-3 py-2"><Qualidade v={a.qualidade} /></td>
                   <td className="px-3 py-2">{a.nota_ia ?? "—"}</td>
                   <td className="px-3 py-2 font-medium">{a.score ?? "—"}</td>
                   <td className="px-3 py-2"><Rec r={a.recomendacao} /></td>
                   <td className="min-w-72 px-3 py-2 text-neutral-300">
                     {a.resumo_ia}
                     {a.riscos_ia && <p className="mt-1 text-xs text-amber-400/80">Risco: {a.riscos_ia}</p>}
+                    <Alertas txt={a.alertas} />
                   </td>
                 </tr>
               ))}
