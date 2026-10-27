@@ -5,6 +5,7 @@ import { Fragment, useMemo, useState } from "react";
 import type { Analise } from "@/lib/db";
 import { brl, num, pct } from "@/lib/format";
 import { Logo } from "../Logo";
+import { TipoAtivo } from "../TipoAtivo";
 import { Alertas, Nota, Score, Sinal, Variacao } from "../ui";
 
 type Filtro = "todas" | "carteira" | "comprar" | "abaixo";
@@ -32,6 +33,7 @@ const COLUNAS: Coluna[] = [
 export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]; filtroInicial?: string }) {
   const [filtro, setFiltro] = useState<Filtro>(FILTROS.some((f) => f.id === filtroInicial) ? (filtroInicial as Filtro) : "todas");
   const [setor, setSetor] = useState("");
+  const [tipo, setTipo] = useState("");
   const [busca, setBusca] = useState("");
   const [ordem, setOrdem] = useState<{ col: string; desc: boolean }>({ col: "score", desc: true });
   const [aberto, setAberto] = useState<string | null>(null);
@@ -46,6 +48,7 @@ export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]
         filtro === "carteira" ? a.na_carteira : filtro === "comprar" ? a.recomendacao === "COMPRAR" : filtro === "abaixo" ? (a.margem ?? -1) > 0 : true,
       )
       .filter((a) => !setor || a.setor === setor)
+      .filter((a) => !tipo || a.tipo === tipo)
       .filter((a) => !termo || a.ticker.includes(termo) || (a.nome ?? "").toUpperCase().includes(termo))
       .sort((x, y) => {
         const vx = col.valor(x) as number | null;
@@ -54,7 +57,7 @@ export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]
         if (vy == null) return -1;
         return ordem.desc ? vy - vx : vx - vy;
       });
-  }, [analises, filtro, setor, busca, ordem]);
+  }, [analises, filtro, setor, tipo, busca, ordem]);
 
   const fmt = (id: string, a: Analise) => {
     switch (id) {
@@ -80,7 +83,13 @@ export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]
             </button>
           ))}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="campo">
+            <option value="">Ações, FIIs e ETFs</option>
+            <option value="acao">Só ações</option>
+            <option value="fii">Só FIIs</option>
+            <option value="etf">Só ETFs</option>
+          </select>
           <select value={setor} onChange={(e) => setSetor(e.target.value)} className="campo min-w-0 flex-1 lg:w-52">
             <option value="">Todos os setores</option>
             {setores.map((s) => <option key={s}>{s}</option>)}
@@ -120,6 +129,7 @@ export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]
                       <div>
                         <p className="flex items-center gap-1.5 font-medium">
                           <Link href={`/acao/${a.ticker}`} onClick={(e) => e.stopPropagation()} className="hover:text-marca">{a.ticker}</Link>
+                          <TipoAtivo tipo={a.tipo} />
                           {a.na_carteira && <span className="rounded bg-[#3987e5]/15 px-1 text-[10px] font-semibold text-[#6da7ec]">CARTEIRA</span>}
                           {a.alertas && <span className="text-[11px] text-amber-300" title={a.alertas}>⚠</span>}
                         </p>

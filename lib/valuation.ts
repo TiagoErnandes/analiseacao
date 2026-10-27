@@ -113,7 +113,7 @@ export function calcularIndicadores(d: {
   if (dpa12mFund != null && dpa12mFund > 0) {
     const y = yahoo.dpa12m ?? 0;
     if (Math.abs(y - dpa12mFund) / dpa12mFund > TOLERANCIA_FONTES) {
-      alertas.push("histórico de dividendos do Yahoo não bate com o DY do Fundamentus; média de 5 anos ignorada");
+      alertas.push("histórico de dividendos do Yahoo não bate com o DY do Fundamentus, média de 5 anos ignorada");
       dpaMedio = null;
     }
   } else if (dpa12mFund == null) {
@@ -126,16 +126,74 @@ export function calcularIndicadores(d: {
     const base = Math.min(dpa12m ?? Infinity, dpaMedio ?? Infinity);
     bazin = tetoBazin(Number.isFinite(base) ? base : null);
   } else {
-    alertas.push("paga pouco ou nenhum dividendo; teto pelo Graham");
+    alertas.push("paga pouco ou nenhum dividendo, teto pelo Graham");
     if (!dpa12m) dpa12m = null;
   }
 
   let graham = tetoGraham(d.lpa, d.vpa);
   if (d.lpa != null && d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01) {
-    alertas.push(`LPA ${d.lpa} parece errado (ROE implícito < 1%); Graham ignorado`);
+    alertas.push(`LPA ${d.lpa} parece errado (ROE implícito < 1%), Graham ignorado`);
     graham = null;
   }
 
   const teto = precoTeto(bazin, graham);
   return { dpa12m, dpaMedio, dy12m, bazin, graham, teto, margem: margem(d.preco, teto), alertas };
+}
+
+/** FIIs pagam mais que ações; para valer a pena frente à renda fixa, exigimos pelo menos 8% ao ano. */
+export const YIELD_MINIMO_FII = 0.08;
+
+/**
+ * Preço teto de FII (Bazin adaptado): o dividendo sustentável ÷ 8%.
+ * Dividendo sustentável = o menor entre o pago nos últimos 12 meses, o FFO por cota (o que o fundo de fato gera)
+ * e a média de 5 anos — para não pagar caro por rendimento extraordinário (venda de imóveis, por exemplo).
+ */
+export function calcularIndicadoresFii(d: {
+  preco: number | null;
+  dividendoCota: number | null;
+  ffoCota: number | null;
+  dyFundamentus: number | null;
+  proventos: { valor: number; data: Date }[];
+}, hoje = new Date()): Indicadores {
+  const alertas: string[] = [];
+  const yahoo = calcularDpa(d.proventos, hoje);
+  const dpa12m = d.dividendoCota ?? (d.dyFundamentus != null && d.preco ? d.dyFundamentus * d.preco : yahoo.dpa12m);
+  let dpaMedio = yahoo.dpaMedio;
+  if (dpa12m && yahoo.dpa12m && Math.abs(yahoo.dpa12m - dpa12m) / dpa12m > TOLERANCIA_FONTES) {
+    alertas.push("histórico de rendimentos do Yahoo não bate com o Fundamentus, média de 5 anos ignorada");
+    dpaMedio = null;
+  }
+  const candidatos = [dpa12m, d.ffoCota && d.ffoCota > 0 ? d.ffoCota : null, dpaMedio].filter((v): v is number => v != null && v > 0);
+  const base = candidatos.length ? Math.min(...candidatos) : null;
+  if (dpa12m && d.ffoCota && d.ffoCota > 0 && dpa12m > d.ffoCota * 1.3) {
+    alertas.push(`distribui ${Math.round((dpa12m / d.ffoCota) * 100)}% do FFO (rendimento acima do que gera, pode cair)`);
+  }
+  const bazin = base ? base / YIELD_MINIMO_FII : null;
+  return {
+    dpa12m: dpa12m || null,
+    dpaMedio,
+    dy12m: dpa12m && d.preco ? dpa12m / d.preco : null,
+    bazin,
+    graham: null,
+    teto: bazin,
+    margem: margem(d.preco, bazin),
+    alertas,
+  };
+}
+
+/**
+ * ETF não tem lucro nem balanço. Se paga dividendos relevantes (ex.: DIVO11), usa Bazin;
+ * senão a referência é a média de preço dos últimos 12 meses: comprar abaixo dela é comprar "na baixa".
+ */
+export function calcularIndicadoresEtf(d: {
+  preco: number | null;
+  media12m: number | null;
+  proventos: { valor: number; data: Date }[];
+}, hoje = new Date()): Indicadores {
+  const { dpa12m, dpaMedio } = calcularDpa(d.proventos, hoje);
+  const dy12m = dpa12m && d.preco ? dpa12m / d.preco : null;
+  const bazin = dy12m != null && dy12m >= DY_MINIMO_PAGADORA ? tetoBazin(Math.min(dpa12m!, dpaMedio ?? Infinity)) : null;
+  const teto = bazin ?? d.media12m;
+  const alertas = teto == null ? ["sem histórico de preço suficiente para referência"] : [];
+  return { dpa12m, dpaMedio, dy12m, bazin, graham: null, teto, margem: margem(d.preco, teto), alertas };
 }

@@ -8,7 +8,7 @@ create table if not exists carteira (
   criado_em    timestamptz not null default now()
 );
 
--- Ações acompanhadas (as ~30 maiores do Ibovespa). Edite à vontade.
+-- Ativos acompanhados (as ~30 maiores ações do Ibovespa; FIIs e ETFs entram pela migração em lib/db.ts). Edite à vontade.
 create table if not exists universo (
   ticker  text primary key,
   ativo   boolean not null default true
@@ -42,6 +42,8 @@ create table if not exists analises (
   qualidade       numeric,           -- 0 a 10, só balanço
   setor           text,
   alertas         text,
+  tipo            text not null default 'acao',  -- acao, fii ou etf
+  indicadores     jsonb,                         -- extras de cada tipo
   criado_em       timestamptz not null default now(),
   unique (data, ticker)
 );

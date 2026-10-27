@@ -43,14 +43,10 @@ export async function lerArquivosB3(form: FormData): Promise<{ ok: true; resulta
       return { ok: false, erro: "Use o arquivo em Excel (.xlsx) baixado da B3." };
     }
 
-    const [carteira, universo] = await Promise.all([
-      query<{ ticker: string; preco_medio: number }>("select ticker, preco_medio from carteira"),
-      query<{ ticker: string }>("select ticker from universo"),
-    ]);
+    const carteira = await query<{ ticker: string; preco_medio: number }>("select ticker, preco_medio from carteira");
     const resultado = importarB3(
       await Promise.all(arquivos.map(async (f) => ({ nome: f.name, dados: new Uint8Array(await f.arrayBuffer()) }))),
       new Map(carteira.map((c) => [c.ticker, c.preco_medio])),
-      new Set(universo.map((u) => u.ticker)),
     );
     return { ok: true, resultado };
   } catch (err) {
@@ -66,7 +62,7 @@ export async function aplicarImportacaoB3(
     (i) => /^[A-Z]{4}\d{1,2}$/.test(i.ticker) && Number.isFinite(i.quantidade) && i.quantidade > 0 && Number.isFinite(i.preco_medio) && i.preco_medio >= 0,
   );
   if (validos.length !== itens.length) return { ok: false, mensagem: "Há linhas com código, quantidade ou preço médio inválidos." };
-  if (validos.length === 0) return { ok: false, mensagem: "Nenhuma ação para importar." };
+  if (validos.length === 0) return { ok: false, mensagem: "Nenhum ativo para importar." };
 
   const client = await pool().connect();
   try {
@@ -88,8 +84,73 @@ export async function aplicarImportacaoB3(
     revalidatePath("/");
     return {
       ok: true,
-      mensagem: `${validos.length} ações importadas${removidas ? `, ${removidas} removidas` : ""}. Elas entram na próxima análise.`,
+      mensagem: `${validos.length} ativos importados${removidas ? `, ${removidas} removidos` : ""}. Eles entram na próxima análise.`,
     };
+  } catch (err) {
+    await client.query("rollback");
+    return { ok: false, mensagem: `Erro ao salvar: ${(err as Error).message}` };
+  } finally {
+    client.release();
+  }
+}
+
+// ---------- Compra e venda ----------
+
+export async function registrarOperacao(dados: {
+  ticker: string;
+  tipo: "C" | "V";
+  quantidade: number;
+  preco: number;
+  data: string;
+}): Promise<{ ok: boolean; mensagem: string }> {
+  const ticker = dados.ticker.trim().toUpperCase().replace(/F$/, "");
+  if (!/^[A-Z]{4}\d{1,2}$/.test(ticker)) return { ok: false, mensagem: "Código inválido (ex.: PETR4, MXRF11)." };
+  if (!(dados.quantidade > 0)) return { ok: false, mensagem: "Informe a quantidade." };
+  if (!(dados.preco > 0)) return { ok: false, mensagem: "Informe o preço pago por unidade." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dados.data)) return { ok: false, mensagem: "Data inválida." };
+
+  const client = await pool().connect();
+  try {
+    await client.query("begin");
+    const { rows } = await client.query<{ quantidade: string; preco_medio: string }>(
+      "select quantidade::text, preco_medio::text from carteira where ticker = $1 for update",
+      [ticker],
+    );
+    const qtdAtual = rows[0] ? Number(rows[0].quantidade) : 0;
+    const pmAtual = rows[0] ? Number(rows[0].preco_medio) : 0;
+    let mensagem: string;
+
+    if (dados.tipo === "C") {
+      const qtd = qtdAtual + dados.quantidade;
+      const pm = (qtdAtual * pmAtual + dados.quantidade * dados.preco) / qtd;
+      await client.query(
+        `insert into carteira (ticker, quantidade, preco_medio) values ($1, $2, $3)
+         on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio`,
+        [ticker, qtd, pm],
+      );
+      mensagem = `Compra registrada. ${ticker}: ${qtd} cotas a preço médio de R$ ${pm.toFixed(2).replace(".", ",")}.`;
+    } else {
+      if (dados.quantidade > qtdAtual) {
+        await client.query("rollback");
+        return { ok: false, mensagem: `Você tem ${qtdAtual} de ${ticker}; não dá para vender ${dados.quantidade}.` };
+      }
+      const qtd = qtdAtual - dados.quantidade;
+      if (qtd === 0) await client.query("delete from carteira where ticker = $1", [ticker]);
+      else await client.query("update carteira set quantidade = $2 where ticker = $1", [ticker, qtd]);
+      const resultado = (dados.preco - pmAtual) * dados.quantidade;
+      mensagem = `Venda registrada. ${resultado >= 0 ? "Lucro" : "Prejuízo"} de R$ ${Math.abs(resultado).toFixed(2).replace(".", ",")} sobre o preço médio.`;
+    }
+    await client.query("insert into operacoes (data, ticker, tipo, quantidade, preco) values ($1, $2, $3, $4, $5)", [
+      dados.data,
+      ticker,
+      dados.tipo,
+      dados.quantidade,
+      dados.preco,
+    ]);
+    await client.query("commit");
+    revalidatePath("/carteira");
+    revalidatePath("/");
+    return { ok: true, mensagem };
   } catch (err) {
     await client.query("rollback");
     return { ok: false, mensagem: `Erro ao salvar: ${(err as Error).message}` };

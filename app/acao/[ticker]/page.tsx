@@ -5,6 +5,8 @@ import { brl, dataBr, num, pct } from "@/lib/format";
 import { carregarPainel, historicoDe } from "@/lib/painel";
 import { query, type Analise } from "@/lib/db";
 import { Logo } from "../../Logo";
+import { TipoAtivo } from "../../TipoAtivo";
+import type { DadosFii, Fundamentos, HistoricoPreco } from "@/lib/mercado";
 import { Alertas, Cartao, Nota, ReguaTeto, Score, Sinal, Variacao } from "../../ui";
 import { GraficoHistorico } from "./GraficoHistorico";
 
@@ -39,7 +41,16 @@ export default async function AcaoPage({ params }: Params) {
   const pl = a.preco && a.lpa && a.lpa > 0 ? a.preco / a.lpa : null;
   const pvp = a.preco && a.vpa && a.vpa > 0 ? a.preco / a.vpa : null;
   const payout = a.dpa_12m && a.lpa && a.lpa > 0 ? a.dpa_12m / a.lpa : null;
-  const metodo = a.teto_bazin != null && a.preco_teto === a.teto_bazin ? "Bazin" : a.preco_teto != null ? "Graham" : null;
+  const tipo = a.tipo ?? "acao";
+  const metodo =
+    a.preco_teto == null
+      ? null
+      : a.teto_bazin != null && a.preco_teto === a.teto_bazin
+        ? tipo === "fii" ? "Rendimento sustentável ÷ 8%" : "Bazin"
+        : tipo === "etf" ? "Média de preço de 12 meses" : "Graham";
+  const fii = tipo === "fii" ? (a.indicadores as DadosFii | null) : null;
+  const etf = tipo === "etf" ? (a.indicadores as HistoricoPreco | null) : null;
+  const fund = tipo === "acao" ? (a.indicadores as Fundamentos | null) : null;
   const ehDoDia = rel && (rel.acao_do_dia_carteira === ticker || rel.acao_do_dia_geral === ticker);
 
   return (
@@ -52,6 +63,7 @@ export default async function AcaoPage({ params }: Params) {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-semibold tracking-tight">{a.ticker}</h1>
+              <TipoAtivo tipo={tipo} />
               <Sinal r={a.recomendacao} />
               {a.na_carteira && <span className="rounded bg-[#3987e5]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#6da7ec]">NA CARTEIRA</span>}
               {ehDoDia && <span className="rounded bg-marca/15 px-1.5 py-0.5 text-[10px] font-semibold text-marca">AÇÃO DO DIA</span>}
@@ -79,7 +91,7 @@ export default async function AcaoPage({ params }: Params) {
             <div className="flex items-end justify-between">
               <div>
                 <p className="text-3xl font-semibold tabular-nums">{brl(a.preco_teto)}</p>
-                <p className="text-xs text-suave">{metodo ? `Método ${metodo}` : "Sem dados suficientes"}</p>
+                <p className="text-xs text-suave">{metodo ?? "Sem dados suficientes"}</p>
               </div>
               <div className="text-right">
                 <p className="rotulo">Margem</p>
@@ -87,18 +99,26 @@ export default async function AcaoPage({ params }: Params) {
               </div>
             </div>
             <ReguaTeto preco={a.preco} teto={a.preco_teto} />
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div className={`rounded-lg border p-3 ${metodo === "Bazin" ? "border-marca/40" : "border-borda"}`}>
-                <p className="text-xs text-suave">Bazin</p>
-                <p className="font-semibold tabular-nums">{brl(a.teto_bazin)}</p>
-                <p className="mt-1 text-[11px] leading-snug text-fraco">Dividendo conservador ÷ 6%</p>
+            {tipo === "acao" ? (
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className={`rounded-lg border p-3 ${metodo === "Bazin" ? "border-marca/40" : "border-borda"}`}>
+                  <p className="text-xs text-suave">Bazin</p>
+                  <p className="font-semibold tabular-nums">{brl(a.teto_bazin)}</p>
+                  <p className="mt-1 text-[11px] leading-snug text-fraco">Dividendo conservador ÷ 6%</p>
+                </div>
+                <div className={`rounded-lg border p-3 ${metodo === "Graham" ? "border-marca/40" : "border-borda"}`}>
+                  <p className="text-xs text-suave">Graham</p>
+                  <p className="font-semibold tabular-nums">{brl(a.teto_graham)}</p>
+                  <p className="mt-1 text-[11px] leading-snug text-fraco">√(22,5 × LPA × VPA)</p>
+                </div>
               </div>
-              <div className={`rounded-lg border p-3 ${metodo === "Graham" ? "border-marca/40" : "border-borda"}`}>
-                <p className="text-xs text-suave">Graham</p>
-                <p className="font-semibold tabular-nums">{brl(a.teto_graham)}</p>
-                <p className="mt-1 text-[11px] leading-snug text-fraco">√(22,5 × LPA × VPA)</p>
-              </div>
-            </div>
+            ) : (
+              <p className="rounded-lg border border-borda p-3 text-xs leading-relaxed text-suave">
+                {tipo === "fii"
+                  ? "Para FIIs: o menor entre o rendimento de 12 meses, o FFO por cota e a média de 5 anos, dividido por 8% (o rendimento mínimo que compensa frente à renda fixa)."
+                  : "Para ETFs: se paga dividendos relevantes, Bazin (÷ 6%); senão, a média de preço dos últimos 12 meses. Abaixo dela, você compra mais barato que a média do ano."}
+              </p>
+            )}
           </div>
         </Cartao>
 
@@ -122,15 +142,46 @@ export default async function AcaoPage({ params }: Params) {
 
       <Cartao titulo="Indicadores">
         <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-6">
-          <Indicador rotulo="DY 12m" valor={pct(a.dy_12m)} dica="Dividendos e JCP dos últimos 12 meses sobre o preço" />
-          <Indicador rotulo="DPA 12m" valor={brl(a.dpa_12m)} />
-          <Indicador rotulo="DPA médio 5a" valor={brl(a.dpa_medio)} />
-          <Indicador rotulo="Payout" valor={pct(payout, 0)} dica="Parte do lucro paga em dividendos" />
-          <Indicador rotulo="P/L" valor={num(pl)} />
-          <Indicador rotulo="P/VP" valor={num(pvp)} />
-          <Indicador rotulo="ROE" valor={pct(a.roe)} />
-          <Indicador rotulo="LPA" valor={brl(a.lpa)} />
-          <Indicador rotulo="VPA" valor={brl(a.vpa)} />
+          {tipo === "fii" ? (
+            <>
+              <Indicador rotulo="Segmento" valor={<span className="text-sm">{fii?.segmento ?? "—"}</span>} />
+              <Indicador rotulo="Gestão" valor={<span className="text-sm">{fii?.gestao ?? "—"}</span>} />
+              <Indicador rotulo="DY 12m" valor={pct(a.dy_12m)} />
+              <Indicador rotulo="Rendimento 12m" valor={brl(a.dpa_12m)} dica="Por cota, últimos 12 meses" />
+              <Indicador rotulo="P/VP" valor={num(pvp)} dica="Preço sobre o valor patrimonial da cota" />
+              <Indicador rotulo="VP por cota" valor={brl(a.vpa)} />
+              <Indicador rotulo="FFO por cota" valor={brl(fii?.ffoCota)} dica="Quanto o fundo gera de caixa por cota em 12 meses" />
+              <Indicador rotulo="FFO yield" valor={pct(fii?.ffoYield)} />
+              <Indicador rotulo="Vacância" valor={pct(fii?.vacancia)} />
+              <Indicador rotulo="Imóveis" valor={fii?.qtdImoveis ?? "—"} />
+              <Indicador rotulo="Cap rate" valor={pct(fii?.capRate)} />
+              <Indicador rotulo="Liquidez/dia" valor={brl(fii?.volumeMedio)} />
+            </>
+          ) : tipo === "etf" ? (
+            <>
+              <Indicador rotulo="Média 12m" valor={brl(etf?.media12m)} />
+              <Indicador rotulo="Retorno anual" valor={<Variacao v={etf?.retornoAnual5a} />} dica={`Retorno de preço por ano em ${etf?.anos ?? "?"} anos`} />
+              <Indicador rotulo="Maior queda" valor={pct(etf?.quedaMaxima5a ? -etf.quedaMaxima5a : null)} dica="Maior queda do topo ao fundo em até 5 anos" />
+              <Indicador rotulo="Volume/mês" valor={brl(etf?.volumeMensalMedio)} />
+              <Indicador rotulo="DY 12m" valor={pct(a.dy_12m)} />
+              <Indicador rotulo="Dividendos 12m" valor={brl(a.dpa_12m)} />
+            </>
+          ) : (
+            <>
+              <Indicador rotulo="DY 12m" valor={pct(a.dy_12m)} dica="Dividendos e JCP dos últimos 12 meses sobre o preço" />
+              <Indicador rotulo="DPA 12m" valor={brl(a.dpa_12m)} />
+              <Indicador rotulo="DPA médio 5a" valor={brl(a.dpa_medio)} />
+              <Indicador rotulo="Payout" valor={pct(payout, 0)} dica="Parte do lucro paga em dividendos" />
+              <Indicador rotulo="P/L" valor={num(pl)} />
+              <Indicador rotulo="P/VP" valor={num(pvp)} />
+              <Indicador rotulo="ROE" valor={pct(a.roe)} />
+              <Indicador rotulo="Margem líquida" valor={pct(fund?.margemLiquida)} />
+              <Indicador rotulo="Dív. líq./PL" valor={num(fund?.divLiqPatrim)} />
+              <Indicador rotulo="Cresc. receita 5a" valor={pct(fund?.crescReceita5a)} dica="Crescimento anual da receita em 5 anos" />
+              <Indicador rotulo="LPA" valor={brl(a.lpa)} />
+              <Indicador rotulo="VPA" valor={brl(a.vpa)} />
+            </>
+          )}
           <Indicador rotulo="Qualidade" valor={<Nota v={a.qualidade} />} />
           <Indicador rotulo="Nota IA" valor={<Nota v={a.nota_ia} />} />
           <Indicador rotulo="Score" valor={a.score ?? "—"} />

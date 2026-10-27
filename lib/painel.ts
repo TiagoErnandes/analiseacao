@@ -47,8 +47,17 @@ export async function carregarPainel() {
     setores.set(s, (setores.get(s) ?? 0) + p.valor);
   }
 
+  const classes = new Map<string, number>();
+  for (const p of posicoes) {
+    const c = p.a?.tipo === "fii" ? "FIIs" : p.a?.tipo === "etf" ? "ETFs" : "Ações";
+    classes.set(c, (classes.get(c) ?? 0) + p.valor);
+  }
+
   return {
     exec,
+    classes: ["Ações", "FIIs", "ETFs"]
+      .map((nome) => ({ nome, valor: classes.get(nome) ?? 0, peso: patrimonio > 0 ? (classes.get(nome) ?? 0) / patrimonio : 0 }))
+      .filter((c) => c.valor > 0),
     rel: rel ?? null,
     analises,
     porTicker,

@@ -1,9 +1,13 @@
 // Dados de mercado gratuitos:
-// - Yahoo Finance: preço atual e histórico de dividendos (5 anos), necessário para o preço teto de Bazin.
-// - Fundamentus: LPA, VPA, ROE e variação do dia (balanço mais recente), para Graham.
+// - Yahoo Finance: preço atual, histórico mensal de preços e de dividendos (até 6 anos).
+// - Fundamentus: balanço das ações (LPA, VPA, ROE...) e indicadores dos FIIs (P/VP, FFO, vacância...).
+// ETFs não estão no Fundamentus: usam só o Yahoo.
+
+export type TipoAtivo = "acao" | "fii" | "etf";
 
 export type DadosAcao = {
   ticker: string;
+  tipo: TipoAtivo;
   nome: string | null;
   logo: string | null;
   preco: number | null;
@@ -13,7 +17,34 @@ export type DadosAcao = {
   roe: number | null; // fração
   dyFundamentus: number | null; // dividend yield 12m (fração), do Fundamentus
   fundamentos: Fundamentos | null;
+  fii: DadosFii | null;
+  historico: HistoricoPreco | null; // calculado do Yahoo (usado nos ETFs)
   proventos: { valor: number; data: Date }[];
+};
+
+export type DadosFii = {
+  segmento: string | null;
+  gestao: string | null;
+  dy: number | null;
+  pvp: number | null;
+  ffoYield: number | null;
+  ffoCota: number | null;
+  dividendoCota: number | null; // dividendos por cota nos últimos 12 meses
+  vpCota: number | null;
+  vacancia: number | null;
+  qtdImoveis: number | null;
+  capRate: number | null;
+  volumeMedio: number | null; // R$ por dia (média de 2 meses)
+  valorMercado: number | null;
+  patrimonio: number | null;
+};
+
+export type HistoricoPreco = {
+  media12m: number | null; // média dos fechamentos mensais dos últimos 12 meses
+  retornoAnual5a: number | null; // retorno anual composto de preço em até 5 anos
+  quedaMaxima5a: number | null; // maior queda do topo ao fundo (fração positiva)
+  volumeMensalMedio: number | null; // R$ negociados por mês (média de 12 meses)
+  anos: number; // anos de histórico disponíveis
 };
 
 const UA = { "User-Agent": "Mozilla/5.0 (compatible; analiseacao/1.0)" };
@@ -38,10 +69,37 @@ async function yahoo(ticker: string) {
   const proventos = Object.values<{ amount: number; date: number }>(r.events?.dividends ?? {})
     .filter((d) => d.amount > 0)
     .map((d) => ({ valor: d.amount, data: new Date(d.date * 1000) }));
+  const preco = typeof r.meta?.regularMarketPrice === "number" ? r.meta.regularMarketPrice : null;
+  const q = r.indicators?.quote?.[0] ?? {};
+  const meses: { fechamento: number; volume: number }[] = ((r.timestamp ?? []) as number[])
+    .map((_, i) => ({ fechamento: q.close?.[i], volume: q.volume?.[i] ?? 0 }))
+    .filter((m) => typeof m.fechamento === "number" && m.fechamento > 0);
   return {
-    preco: typeof r.meta?.regularMarketPrice === "number" ? r.meta.regularMarketPrice : null,
+    preco,
     nome: (r.meta?.longName ?? r.meta?.shortName ?? null) as string | null,
     proventos,
+    historico: calcularHistorico(meses, preco),
+  };
+}
+
+export function calcularHistorico(meses: { fechamento: number; volume: number }[], preco: number | null): HistoricoPreco | null {
+  if (meses.length < 6) return null;
+  const ultimos12 = meses.slice(-12);
+  const janela = meses.slice(-61); // até 5 anos
+  const anos = (janela.length - 1) / 12;
+  const atual = preco ?? janela[janela.length - 1].fechamento;
+  let topo = 0;
+  let queda = 0;
+  for (const m of janela) {
+    topo = Math.max(topo, m.fechamento);
+    queda = Math.max(queda, 1 - m.fechamento / topo);
+  }
+  return {
+    media12m: ultimos12.reduce((s, m) => s + m.fechamento, 0) / ultimos12.length,
+    retornoAnual5a: anos >= 1 ? Math.pow(atual / janela[0].fechamento, 1 / anos) - 1 : null,
+    quedaMaxima5a: queda,
+    volumeMensalMedio: ultimos12.reduce((s, m) => s + m.volume * m.fechamento, 0) / ultimos12.length || null,
+    anos: Math.floor(anos),
   };
 }
 
@@ -107,15 +165,36 @@ export function extrairFundamentus(html: string) {
     crescReceita5a: n("cresrec5a"),
     lucroLiquido12m: n("lucroliquido"),
   };
+  const ehFii = p.has("fii") || p.has("ffoyield");
+  const fii: DadosFii | null = ehFii
+    ? {
+        segmento: t("segmento"),
+        gestao: t("gestao"),
+        dy: n("divyield"),
+        pvp: n("pvp"),
+        ffoYield: n("ffoyield"),
+        ffoCota: n("ffocota"),
+        dividendoCota: n("dividendocota"),
+        vpCota: n("vpcota"),
+        vacancia: n("vacanciamedia"),
+        qtdImoveis: n("qtdimoveis"),
+        capRate: n("caprate"),
+        volumeMedio: n("volmed2m"),
+        valorMercado: n("valordemercado"),
+        patrimonio: n("patrimliquido"),
+      }
+    : null;
   return {
+    encontrado: p.has("cotacao"),
+    fii,
     preco: n("cotacao"),
-    nome: t("empresa"),
+    nome: t("empresa") ?? t("nome"),
     lpa: n("lpa"),
     vpa: n("vpa"),
     roe: n("roe"),
     dy: n("divyield"),
     variacaoDia: n("dia"),
-    fundamentos,
+    fundamentos: ehFii ? null : fundamentos,
   };
 }
 
@@ -133,19 +212,24 @@ export async function buscarAcao(ticker: string): Promise<DadosAcao> {
   const yv = y.status === "fulfilled" ? y.value : null;
   const fv = f.status === "fulfilled" ? f.value : null;
   if (!yv) console.warn(`  ${ticker}: sem histórico de dividendos (Yahoo falhou), Bazin ficará vazio`);
-  if (!fv) console.warn(`  ${ticker}: sem LPA/VPA (Fundamentus falhou), Graham ficará vazio`);
-
+  const noFundamentus = !!fv?.encontrado;
+  // O Fundamentus respondeu mas não conhece o código e ele termina em 11: é ETF (units de ações e FIIs estão lá)
+  const tipo: TipoAtivo = fv?.fii ? "fii" : fv && !noFundamentus && ticker.endsWith("11") && yv ? "etf" : "acao";
+  if (tipo === "acao" && !noFundamentus) console.warn(`  ${ticker}: sem dados do Fundamentus, Graham e qualidade ficarão vazios`);
   return {
     ticker,
+    tipo,
     nome: fv?.nome ?? yv?.nome ?? null,
     logo: `https://icons.brapi.dev/icons/${ticker}.svg`,
     preco: yv?.preco ?? fv?.preco ?? null,
     variacaoDia: fv?.variacaoDia ?? null,
     lpa: fv?.lpa ?? null,
-    vpa: fv?.vpa ?? null,
+    vpa: fv?.fii ? fv.fii.vpCota : (fv?.vpa ?? null), // nos FIIs, VP por cota
     roe: fv?.roe ?? null,
     dyFundamentus: fv?.dy ?? null,
-    fundamentos: fv?.fundamentos ?? null,
+    fundamentos: noFundamentus ? (fv?.fundamentos ?? null) : null,
+    fii: fv?.fii ?? null,
+    historico: yv?.historico ?? null,
     proventos: yv?.proventos ?? [],
   };
 }

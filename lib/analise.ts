@@ -2,14 +2,34 @@
 import { analisarComIa, type LinhaParaIa } from "./ai";
 import { buscarAcao, type DadosAcao } from "./mercado";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
-import { calcularQualidade } from "./qualidade";
-import { calcularIndicadores, scoreFinal } from "./valuation";
+import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, type Qualidade } from "./qualidade";
+import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, scoreFinal, type Indicadores } from "./valuation";
 
 /** Acima disso, um setor é considerado concentrado e não recebe bônus de "peso faltando". */
 const LIMITE_SETOR = 0.3;
 
 function hojeSaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+}
+
+/** Preço teto e qualidade conforme o tipo de ativo. */
+function avaliar(d: DadosAcao): { ind: Indicadores; qual: Qualidade } {
+  if (d.tipo === "fii") {
+    const ind = calcularIndicadoresFii({
+      preco: d.preco,
+      dividendoCota: d.fii?.dividendoCota ?? null,
+      ffoCota: d.fii?.ffoCota ?? null,
+      dyFundamentus: d.dyFundamentus,
+      proventos: d.proventos,
+    });
+    return { ind, qual: calcularQualidadeFii(d.fii, ind.dpa12m) };
+  }
+  if (d.tipo === "etf") {
+    const ind = calcularIndicadoresEtf({ preco: d.preco, media12m: d.historico?.media12m ?? null, proventos: d.proventos });
+    return { ind, qual: calcularQualidadeEtf(d.historico, ind.dy12m) };
+  }
+  const ind = calcularIndicadores(d);
+  return { ind, qual: calcularQualidade({ roe: d.roe, lpa: d.lpa, dpa12m: ind.dpa12m, fundamentos: d.fundamentos }) };
 }
 
 export async function executarAnalise() {
@@ -40,7 +60,12 @@ export async function executarAnalise() {
   const valorPos = (d: DadosAcao) => (minha.get(d.ticker)?.quantidade ?? 0) * (d.preco ?? 0);
   const totalCarteira = dados.reduce((s, d) => s + valorPos(d), 0);
   const pesoIdeal = minha.size > 0 ? 1 / minha.size : 0;
-  const setorDe = (d: DadosAcao) => d.fundamentos?.subsetor ?? d.fundamentos?.setor ?? "Sem setor";
+  const setorDe = (d: DadosAcao) =>
+    d.tipo === "fii"
+      ? `FII ${d.fii?.segmento ?? "sem segmento"}`
+      : d.tipo === "etf"
+        ? "ETF"
+        : (d.fundamentos?.subsetor ?? d.fundamentos?.setor ?? "Sem setor");
   const pesoSetor = new Map<string, number>();
   for (const d of dados) {
     if (totalCarteira > 0 && valorPos(d) > 0) {
@@ -49,8 +74,7 @@ export async function executarAnalise() {
   }
 
   const linhas = dados.map((d) => {
-    const ind = calcularIndicadores(d);
-    const qual = calcularQualidade({ roe: d.roe, lpa: d.lpa, dpa12m: ind.dpa12m, fundamentos: d.fundamentos });
+    const { ind, qual } = avaliar(d);
     const pos = minha.get(d.ticker);
     const setor = setorDe(d);
     const pesoAtual = pos && totalCarteira > 0 ? valorPos(d) / totalCarteira : null;
@@ -64,6 +88,7 @@ export async function executarAnalise() {
     if (alertas.length) console.warn(`  ${d.ticker}: ${alertas.join("; ")}`);
     return {
       ticker: d.ticker,
+      tipo: d.tipo,
       nome: d.nome,
       logo: d.logo,
       variacao_dia: d.variacaoDia,
@@ -79,7 +104,7 @@ export async function executarAnalise() {
       dy_12m: ind.dy12m,
       dpa_medio: ind.dpaMedio,
       roe: d.roe,
-      fundamentos: d.fundamentos,
+      indicadores: d.tipo === "fii" ? d.fii : d.tipo === "etf" ? d.historico : d.fundamentos,
       qualidade: qual.nota,
       pontos_fortes: qual.pontos,
       teto_bazin: ind.bazin,
@@ -127,6 +152,8 @@ export async function executarAnalise() {
       qualidade: l.qualidade,
       setor: l.setor,
       alertas: l.alertas.length ? l.alertas.join("; ") : null,
+      tipo: l.tipo,
+      indicadores: (l.indicadores as Record<string, unknown> | null) ?? null,
     };
   });
 

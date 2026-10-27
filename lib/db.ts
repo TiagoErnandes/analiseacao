@@ -48,6 +48,8 @@ export type Analise = {
   qualidade: number | null; // 0 a 10, só balanço
   setor: string | null;
   alertas: string | null; // problemas de dados e de qualidade, separados por "; "
+  tipo: "acao" | "fii" | "etf";
+  indicadores: Record<string, unknown> | null; // extras de cada tipo (balanço da ação, dados do FII, histórico do ETF)
 };
 
 export type Relatorio = {
@@ -63,7 +65,7 @@ export type Relatorio = {
 const COLUNAS_ANALISE = [
   "data", "ticker", "nome", "logo", "preco", "variacao_dia", "lpa", "vpa", "dpa_12m", "dpa_medio", "dy_12m", "roe",
   "teto_bazin", "teto_graham", "preco_teto", "margem", "nota_ia", "recomendacao", "resumo_ia", "riscos_ia", "score",
-  "na_carteira", "qualidade", "setor", "alertas",
+  "na_carteira", "qualidade", "setor", "alertas", "tipo", "indicadores",
 ] as const satisfies readonly (keyof Analise)[];
 
 export async function salvarAnalises(linhas: Analise[]) {
@@ -119,6 +121,22 @@ export async function migrar() {
     alter table analises add column if not exists setor text;
     alter table analises add column if not exists alertas text;
     alter table relatorio_diario add column if not exists revisao text;
+    alter table analises add column if not exists tipo text not null default 'acao';
+    alter table analises add column if not exists indicadores jsonb;
+    create table if not exists operacoes (
+      id          bigserial primary key,
+      data        date not null default current_date,
+      ticker      text not null,
+      tipo        text not null check (tipo in ('C', 'V')),
+      quantidade  numeric not null check (quantidade > 0),
+      preco       numeric not null check (preco >= 0),
+      criado_em   timestamptz not null default now()
+    );
+    -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
+    insert into universo (ticker) values
+      ('HGLG11'),('KNRI11'),('XPML11'),('BTLG11'),('VISC11'),('KNCR11'),('MXRF11'),('HGRU11'),('XPLG11'),('CPTS11'),
+      ('BOVA11'),('IVVB11'),('DIVO11'),('SMAL11')
+    on conflict (ticker) do nothing;
   `);
   migrado = true;
 }

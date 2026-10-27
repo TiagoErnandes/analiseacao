@@ -109,7 +109,7 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
 
           {linhas.length === 0 ? (
             <p className="rounded-lg bg-amber-400/5 p-3 text-sm text-amber-200/90">
-              Nenhuma ação encontrada nesse arquivo. Por enquanto o app analisa só ações; veja abaixo o que ficou de fora.
+              Nenhum ativo encontrado nesse arquivo. O app analisa ações, FIIs e ETFs; veja abaixo o que ficou de fora.
             </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-borda">
@@ -117,7 +117,7 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
                 <thead>
                   <tr>
                     <th />
-                    <th>Ação</th>
+                    <th>Ativo</th>
                     <th className="!text-right">Quantidade</th>
                     <th>Preço médio (R$)</th>
                     <th>Hoje no app</th>
@@ -197,9 +197,9 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
                 </p>
               )}
               <button onClick={salvar} disabled={salvando || invalida || selecionadas.length === 0} className="botao">
-                {salvando ? "Salvando…" : `Importar ${selecionadas.length} ações`}
+                {salvando ? "Salvando…" : `Importar ${selecionadas.length} ativos`}
               </button>
-              {invalida && <p className="text-xs text-baixa">Preencha o preço médio de todas as ações marcadas.</p>}
+              {invalida && <p className="text-xs text-baixa">Preencha o preço médio de todos os ativos marcados.</p>}
             </div>
           )}
         </div>

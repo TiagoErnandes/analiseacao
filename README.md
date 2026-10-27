@@ -2,10 +2,12 @@
 
 Todo dia útil às 7h o agendador:
 
-1. Busca preço e **histórico de 5 anos de dividendos** (Yahoo Finance) e **balanço** (Fundamentus: LPA, VPA, ROE, DY, P/L, P/VP, dívida, margem, liquidez, crescimento de receita e setor) da sua carteira e das ~30 maiores do Ibovespa. Tudo gratuito.
+1. Analisa **ações, fundos imobiliários (FIIs) e ETFs**. Busca preço e **histórico de 5 anos de dividendos** (Yahoo Finance) e **balanço** (Fundamentus: LPA, VPA, ROE, DY, P/L, P/VP, dívida, margem, liquidez, crescimento de receita e setor) da sua carteira, das ~30 maiores ações do Ibovespa, de 10 FIIs e 4 ETFs bem negociados. Nos FIIs também P/VP, FFO, vacância e segmento. Tudo gratuito.
 2. Calcula o **preço teto**, de forma conservadora:
    - **Bazin**: o menor entre o dividendo dos últimos 12 meses e a média de 5 anos, ÷ 6% (quando o DY passa de 2%).
    - **Graham**: √(22,5 × LPA × VPA) (quando a empresa paga pouco dividendo).
+   - **FIIs**: o menor entre o rendimento de 12 meses, o FFO por cota e a média de 5 anos, ÷ 8%.
+   - **ETFs**: Bazin se pagam dividendos; senão, a média de preço dos últimos 12 meses.
    - **Margem** = quanto o preço está abaixo do teto.
    - Dados que não batem entre as fontes viram **alertas** (e são descartados do cálculo).
 3. Dá uma **nota de qualidade** (0 a 10) só com o balanço: ROE, payout sustentável, dívida, margem, liquidez e crescimento.
@@ -17,7 +19,7 @@ Todo dia útil às 7h o agendador:
 6. Salva tudo no Postgres. O site mostra o resultado:
    - **Painel**: patrimônio, rentabilidade, renda passiva e DY da carteira, ações do dia, cenário, simulador de aporte, alocação por setor e pontos de atenção.
    - **Ranking**: as ações analisadas com filtros, busca, ordenação por qualquer coluna e o comentário da IA.
-   - **Carteira**: cadastro à mão ou **importação da B3** (arquivos de Posição e Negociação da Área do Investidor; o preço médio é calculado pelas negociações).
+   - **Carteira**: **registro de compras e vendas** (o preço médio é recalculado sozinho), histórico das operações, correção à mão ou **importação da B3** (arquivos de Posição e Negociação da Área do Investidor; o preço médio é calculado pelas negociações).
    - **Página de cada ação**: preço teto (Bazin e Graham), indicadores, análise da IA, sua posição e o histórico de cotação × preço teto.
 
 Score do ranking: 40% desconto ao teto, 25% qualidade, 25% nota da IA, 10% quanto falta para o peso ideal na carteira (pesos iguais).

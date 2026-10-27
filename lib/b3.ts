@@ -28,6 +28,7 @@ const numero = (v: Celula) => (typeof v === "number" ? v : typeof v === "string"
 /** Fracionário (PETR4F) vira o código normal (PETR4). */
 const codigoBase = (c: string) => c.trim().toUpperCase().replace(/^([A-Z]{4}\d{1,2})F$/, "$1");
 
+/** Ações, units, FIIs e ETFs (BDRs terminam em 32 a 35 e ficam de fora). */
 const ACAO = /^[A-Z]{4}(3|4|5|6|7|8|11)$/;
 
 /** Acha a linha de cabeçalho e devolve as linhas como objetos { cabecalho normalizado: valor }. */
@@ -40,8 +41,8 @@ function tabela(aba: Aba, obrigatorias: string[]): Record<string, Celula>[] | nu
 
 const CATEGORIAS: [RegExp, string | null][] = [
   [/^acoes?$/, null],
-  [/fundo|fii/, "fundo imobiliário ou fundo listado (ainda não analisado pelo app)"],
-  [/etf/, "ETF (ainda não analisado pelo app)"],
+  [/fundo|fii/, null],
+  [/etf/, null],
   [/bdr/, "BDR (ainda não analisado pelo app)"],
   [/rendafixa|tesouro|cdb|lci|lca|debenture/, "renda fixa ou Tesouro (fora do escopo do app)"],
 ];
@@ -124,14 +125,10 @@ function precoMedio(negocios: Negocio[]) {
 }
 
 /**
- * Lê um ou mais arquivos da B3 e monta a carteira.
- * `carteiraAtual` dá o preço médio já cadastrado; `conhecidas` são códigos que sabemos ser ações (universo do app).
+ * Lê um ou mais arquivos da B3 e monta a carteira (ações, FIIs e ETFs).
+ * `carteiraAtual` dá o preço médio já cadastrado.
  */
-export function importarB3(
-  arquivos: { nome: string; dados: Uint8Array }[],
-  carteiraAtual: Map<string, number>,
-  conhecidas: Set<string>,
-): ResultadoB3 {
+export function importarB3(arquivos: { nome: string; dados: Uint8Array }[], carteiraAtual: Map<string, number>): ResultadoB3 {
   const ignorados: Ignorado[] = [];
   const descricao: string[] = [];
   let posicoes: Posicao[] | null = null;
@@ -185,9 +182,8 @@ export function importarB3(
   } else {
     for (const [ticker, calc] of pms) {
       if (calc.quantidade <= 0) continue;
-      const ehAcao = ACAO.test(ticker) && (!ticker.endsWith("11") || conhecidas.has(ticker) || carteiraAtual.has(ticker));
-      if (!ehAcao) {
-        ignorados.push({ codigo: ticker, motivo: "pode ser FII, ETF ou BDR; se for ação (unit), cadastre à mão" });
+      if (!ACAO.test(ticker)) {
+        ignorados.push({ codigo: ticker, motivo: "BDR ou código não reconhecido (fora do escopo do app)" });
         continue;
       }
       itens.push({ ticker, produto: null, quantidade: calc.quantidade, precoMedio: calc.pm, origemPm: "negociacoes", precoFechamento: null, aviso: null });
