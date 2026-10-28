@@ -280,8 +280,8 @@ export type Execucao = {
   inicio: string;
   fim: string | null;
   erro: string | null;
-  custo_usd: number | null;
-  custo_mes_usd: number;
+  custo_brl: number | null; // custo da IA em reais (dólar do dia da análise)
+  custo_mes_brl: number;
   modo: ModoIa;
 };
 
@@ -291,14 +291,17 @@ export const INTERVALO_MINIMO_MIN = 15;
 const TIMEOUT_MIN = 60; // a coleta de dados e a IA levam alguns minutos
 
 const garantirTabela = migrar;
+/** Dólar usado para converter o custo quando a cotação do dia não foi obtida. */
+const DOLAR_PADRAO = 5.5;
 
 export async function ultimaExecucao(): Promise<Execucao | null> {
   await garantirTabela();
   const [e] = await query<Execucao>(
     `select id, origem,
             case when status = 'rodando' and inicio < now() - interval '${TIMEOUT_MIN} minutes' then 'erro' else status end as status,
-            inicio::text, fim::text, erro, custo_usd,
-            (select coalesce(sum(custo_usd), 0) from execucoes where inicio >= date_trunc('month', now())) as custo_mes_usd
+            inicio::text, fim::text, erro, custo_usd * coalesce(dolar, ${DOLAR_PADRAO}) as custo_brl,
+            (select coalesce(sum(custo_usd * coalesce(dolar, ${DOLAR_PADRAO})), 0)
+               from execucoes where inicio >= date_trunc('month', now())) as custo_mes_brl
        from execucoes order by inicio desc limit 1`,
   );
   return e ? { ...e, modo: await modoIa() } : null;
@@ -339,11 +342,13 @@ export async function rodarAnalise(origem: "agendador" | "botao" | "manual") {
 
   const termino = executarAnalise()
     .then(() =>
-      query("update execucoes set status = 'ok', fim = now(), custo_usd = $2, modelo = $3 where id = $1", [
-        reserva.id,
-        custoDaExecucao?.usd ?? 0,
-        custoDaExecucao?.modelo ?? null,
-      ]),
+      (async () =>
+        query("update execucoes set status = 'ok', fim = now(), custo_usd = $2, modelo = $3, dolar = $4 where id = $1", [
+          reserva.id,
+          custoDaExecucao?.usd ?? 0,
+          custoDaExecucao?.modelo ?? null,
+          custoDaExecucao?.usd ? await cotacaoDolar().catch(() => null) : null,
+        ]))(),
     )
     .catch(async (err) => {
       console.error("Falha na análise:", err);
