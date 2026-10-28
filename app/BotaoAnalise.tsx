@@ -14,7 +14,7 @@ type Props = {
   custoMes: number;
 };
 
-const usd = (v: number) => `US$ ${v < 0.1 ? v.toFixed(3).replace(".", ",") : v.toFixed(2).replace(".", ",")}`;
+const reais = (v: number) => `R$ ${v.toFixed(2).replace(".", ",")}`;
 
 const hora = (iso: string) =>
   new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
@@ -37,7 +37,7 @@ export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes }: Pr
 
   return (
     <div className="flex flex-col items-start gap-1 sm:items-end">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
       <select
         value={modoAtual}
         title={info ? `${info.descricao} Custo: ${info.custo}.` : undefined}
@@ -49,7 +49,7 @@ export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes }: Pr
             router.refresh();
           });
         }}
-        className="campo !w-auto !py-1.5 text-xs"
+        className="campo !w-auto h-[38px] !py-0 text-sm"
         aria-label="Modo da IA"
       >
         {MODOS.map((m) => (
@@ -78,7 +78,7 @@ export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes }: Pr
             : status === "erro"
               ? `A última análise falhou${erro ? `: ${erro}` : "."}`
               : inicio
-                ? `Última análise: ${hora(inicio)}${custo != null ? ` · custou ${usd(custo)}` : ""} · no mês ${usd(custoMes)}`
+                ? `Última análise: ${hora(inicio)}${custo != null ? ` · custou ${reais(custo)}` : ""} · no mês ${reais(custoMes)}`
                 : "Nenhuma análise ainda.")}
       </p>
     </div>

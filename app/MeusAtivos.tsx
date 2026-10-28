@@ -3,7 +3,6 @@ import Link from "next/link";
 import { brl, pct } from "@/lib/format";
 import type { Posicao } from "@/lib/painel";
 import { TIPOS } from "@/lib/tipos";
-import { BotaoLancamento, type PosicaoLancamento } from "./Lancamento";
 import { Logo } from "./Logo";
 import { Nota, Variacao } from "./ui";
 
@@ -27,12 +26,10 @@ export function MeusAtivos({
   posicoes,
   patrimonio,
   pesoIdeal,
-  paraLancamento,
 }: {
   posicoes: Posicao[];
   patrimonio: number;
   pesoIdeal: number;
-  paraLancamento: PosicaoLancamento[];
 }) {
   const grupos = TIPOS.map((t) => ({
     t,
@@ -111,7 +108,7 @@ export function MeusAtivos({
               </table>
             </div>
             <div className="flex justify-end border-t border-borda px-4 py-2.5">
-              <BotaoLancamento posicoes={paraLancamento} tipoInicial={t.id} variante="contorno" />
+              <Link href="/carteira" className="text-xs text-marca hover:underline">Lançar compra ou venda na Carteira →</Link>
             </div>
           </details>
         );

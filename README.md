@@ -14,8 +14,8 @@ Todo dia útil às 7h o agendador:
 4. Mede o **peso de cada setor** na carteira. Setor acima de 30% não ganha bônus de "peso faltando" e recebe alerta.
 5. A **IA é opcional e barata**. O modo é escolhido no painel, ao lado do botão "Rodar análise agora":
    - **Sem IA** (grátis): o app decide só pelo cálculo (preço teto, qualidade e score).
-   - **Econômico** (padrão, ≈ US$ 0,01 por análise): o Claude Haiku dá nota e sinal aos ativos da carteira e aos 8 melhores de fora, sem pesquisa na web.
-   - **Completo** (≈ US$ 0,20 a 0,40): o Claude Sonnet faz até 5 buscas na web e decide. A pesquisa do dia fica guardada e não é paga de novo se você rodar outra vez.
+   - **Econômico** (padrão, ≈ R$ 0,05 por análise): o Claude Haiku dá nota e sinal aos ativos da carteira e aos 8 melhores de fora, sem pesquisa na web.
+   - **Completo** (≈ R$ 1 a 2): o Claude Sonnet faz até 5 buscas na web e decide. A pesquisa do dia fica guardada e não é paga de novo se você rodar outra vez.
    - Se a IA falhar (por exemplo, sem créditos), a análise termina mesmo assim, só pelo cálculo. O custo de cada análise e do mês aparece no painel.
 6. Salva tudo no Postgres. O site mostra o resultado:
    - **Painel**: patrimônio, rentabilidade, renda passiva e DY da carteira, ações do dia, cenário, simulador de aporte, alocação por setor e pontos de atenção.

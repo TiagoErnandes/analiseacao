@@ -7,7 +7,6 @@ import { Logo } from "./Logo";
 import { TipoAtivo } from "./TipoAtivo";
 import { Rosca } from "./Rosca";
 import { GraficoEvolucao } from "./GraficoEvolucao";
-import { BotaoLancamento, type PosicaoLancamento } from "./Lancamento";
 import { MeusAtivos } from "./MeusAtivos";
 import { Comparativo } from "./Comparativo";
 import { ProventosMes } from "./ProventosMes";
@@ -70,8 +69,8 @@ export default async function Painel() {
       inicio={exec?.inicio ?? null}
       erro={exec?.erro ?? null}
       modo={modo}
-      custo={exec?.custo_usd ?? null}
-      custoMes={exec?.custo_mes_usd ?? 0}
+      custo={exec?.custo_brl ?? null}
+      custoMes={exec?.custo_mes_brl ?? 0}
     />
   );
 
@@ -85,13 +84,6 @@ export default async function Painel() {
   }
 
   const pesoIdeal = posicoes.length ? 1 / posicoes.length : 0;
-  const paraLancamento: PosicaoLancamento[] = posicoes.map((p) => ({
-    ticker: p.ticker,
-    tipo: p.a?.tipo ?? p.tipo,
-    quantidade: p.quantidade,
-    preco_medio: p.preco_medio,
-    preco: p.a?.preco ?? null,
-  }));
   const pesoSetor = Object.fromEntries(setores.map((s) => [s.nome, s.peso]));
   const itensAporte: ItemAporte[] = posicoes.map((p) => ({
     ticker: p.ticker,
@@ -130,11 +122,7 @@ export default async function Painel() {
           <p className="rotulo">Análise de {dataBr(rel.data)}</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">Painel da carteira</h1>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link href="/carteira#b3" className="botao">Integração B3</Link>
-          <BotaoLancamento posicoes={paraLancamento} />
-          {botao}
-        </div>
+        {botao}
       </section>
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -238,7 +226,7 @@ export default async function Painel() {
         <Projecao patrimonio={resumo.patrimonio} />
       </Cartao>
 
-      <MeusAtivos posicoes={posicoes} patrimonio={resumo.patrimonio} pesoIdeal={pesoIdeal} paraLancamento={paraLancamento} />
+      <MeusAtivos posicoes={posicoes} patrimonio={resumo.patrimonio} pesoIdeal={pesoIdeal} />
 
       {oportunidades.length > 0 && (
         <Cartao

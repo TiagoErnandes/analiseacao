@@ -165,6 +165,7 @@ export async function migrar() {
     -- Custo da IA por análise e configurações do app (modo da IA)
     alter table execucoes add column if not exists custo_usd numeric;
     alter table execucoes add column if not exists modelo text;
+    alter table execucoes add column if not exists dolar numeric;
     alter table relatorio_diario add column if not exists pesquisa text;
     create table if not exists config (chave text primary key, valor text not null);
     -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
