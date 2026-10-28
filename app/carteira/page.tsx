@@ -11,6 +11,7 @@ import { FormLancamento } from "../Lancamento";
 import { TIPOS } from "@/lib/tipos";
 import { TipoAtivo } from "../TipoAtivo";
 import { PrecoMedio } from "./PrecoMedio";
+import { ExportarCarteira } from "./ExportarCarteira";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Carteira" };
@@ -32,6 +33,10 @@ export default async function CarteiraPage() {
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Minha carteira</h1>
         <p className="mt-2 text-sm text-suave">As mudanças entram na próxima análise (às 7h ou pelo botão do painel).</p>
       </div>
+
+      <Cartao titulo="Exportar para análise em outra IA">
+        <ExportarCarteira />
+      </Cartao>
 
       <Cartao titulo="Adicionar lançamento">
         <div className="p-4">
