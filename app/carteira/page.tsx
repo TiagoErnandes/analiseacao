@@ -10,7 +10,7 @@ import { ImportadorB3 } from "./ImportadorB3";
 import { FormLancamento } from "../Lancamento";
 import { TIPOS } from "@/lib/tipos";
 import { TipoAtivo } from "../TipoAtivo";
-import { PrecoComprado } from "./PrecoComprado";
+import { PrecoMedio } from "./PrecoMedio";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Carteira" };
@@ -22,10 +22,6 @@ export default async function CarteiraPage() {
             case when tipo_ativo in ('stock', 'etf_int', 'reit') then 'USD' else 'BRL' end as moeda
        from operacoes order by data desc, id desc limit 30`,
   );
-  const ultimas = await query<{ ticker: string; preco: number; data: string }>(
-    `select distinct on (ticker) ticker, preco, data::text from operacoes where tipo = 'C' order by ticker, data desc, id desc`,
-  );
-  const ultimaCompra = new Map(ultimas.map((u) => [u.ticker, u]));
   const dinheiro = (v: number, moeda: string) => v.toLocaleString("pt-BR", { style: "currency", currency: moeda });
   const importador = <ImportadorB3 atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio }))} />;
 
@@ -52,8 +48,7 @@ export default async function CarteiraPage() {
               <tr>
                 <th>Ativo</th>
                 <th className="!text-right">Quantidade</th>
-                <th className="!text-right" title="Preço da última compra (clique para corrigir)">Preço comprado</th>
-                <th className="!text-right">Preço médio</th>
+                <th className="!text-right" title="Clique no valor para corrigir">Preço médio</th>
                 <th className="!text-right">Preço atual</th>
                 <th className="!text-right">Investido</th>
                 <th className="!text-right">Posição atual</th>
@@ -74,14 +69,8 @@ export default async function CarteiraPage() {
                   </td>
                   <td className="text-right">{p.quantidade}</td>
                   <td className="text-right">
-                    <PrecoComprado
-                      ticker={p.ticker}
-                      preco={ultimaCompra.get(p.ticker)?.preco ?? p.preco_medio}
-                      moeda={p.moeda}
-                      data={ultimaCompra.get(p.ticker)?.data ?? null}
-                    />
+                    <PrecoMedio ticker={p.ticker} preco={p.preco_medio} moeda={p.moeda} />
                   </td>
-                  <td className="text-right">{dinheiro(p.preco_medio, p.moeda)}</td>
                   <td className="text-right">
                     {p.a?.preco != null ? dinheiro(p.a.preco, p.moeda) : "—"}
                     <p className="text-[11px]"><Variacao v={p.a?.variacao_dia} casas={2} /></p>
