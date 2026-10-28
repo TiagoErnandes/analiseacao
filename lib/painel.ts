@@ -1,11 +1,12 @@
 // Dados que as páginas do site usam: última análise, carteira e posições já calculadas.
 import { modoIa, ultimaExecucao } from "./analise";
+import { estrategiaAtual } from "./estrategia";
 import { query, type Analise, type Carteira, type Relatorio } from "./db";
 import { infoTipo } from "./tipos";
 import { proventosRecebidos } from "./proventos";
 import { compararDesde } from "./indices";
 
-/** Limite de concentração por setor usado no app inteiro. */
+/** Limite de concentração por setor de referência para previdência (a estratégia Balanceamento usa este). */
 export const LIMITE_SETOR = 0.3;
 
 export type Posicao = Carteira & {
@@ -81,6 +82,7 @@ export async function carregarPainel() {
   return {
     exec,
     modo: await modoIa(),
+    estrategia: await estrategiaAtual(),
     classes: [...classes.keys()]
       .map((nome) => ({ nome, valor: classes.get(nome) ?? 0, peso: patrimonio > 0 ? (classes.get(nome) ?? 0) / patrimonio : 0 }))
       .filter((c) => c.valor > 0)
