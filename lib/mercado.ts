@@ -78,8 +78,21 @@ async function yahoo(ticker: string, simbolo = `${ticker}.SA`) {
   const meses: { fechamento: number; volume: number }[] = ((r.timestamp ?? []) as number[])
     .map((_, i) => ({ fechamento: q.close?.[i], volume: q.volume?.[i] ?? 0 }))
     .filter((m) => typeof m.fechamento === "number" && m.fechamento > 0);
+  // Variação do dia: preço de agora contra o fechamento do pregão anterior (pedido curto e separado; falha não atrapalha)
+  let variacaoDia: number | null = null;
+  try {
+    const d = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=1d&interval=1d`, { headers: UA });
+    const m = ((await d.json()) as any)?.chart?.result?.[0]?.meta;
+    const anterior = m?.chartPreviousClose ?? m?.previousClose;
+    if (typeof m?.regularMarketPrice === "number" && typeof anterior === "number" && anterior > 0) {
+      variacaoDia = m.regularMarketPrice / anterior - 1;
+    }
+  } catch {
+    /* sem variação do dia */
+  }
   return {
     preco,
+    variacaoDia,
     nome: (r.meta?.longName ?? r.meta?.shortName ?? null) as string | null,
     proventos,
     historico: calcularHistorico(meses, preco),
@@ -234,7 +247,7 @@ export async function buscarExterior(ticker: string, tipo: Tipo, dolar: number |
     nome: y.nome,
     logo: tipo === "bdr" ? `https://icons.brapi.dev/icons/${ticker}.svg` : null,
     preco: y.preco != null ? y.preco * fator : null,
-    variacaoDia: null,
+    variacaoDia: y.variacaoDia,
     lpa: null,
     vpa: null,
     roe: null,
@@ -266,7 +279,7 @@ export async function buscarAcao(ticker: string): Promise<DadosAcao> {
     nome: fv?.nome ?? yv?.nome ?? null,
     logo: `https://icons.brapi.dev/icons/${ticker}.svg`,
     preco: yv?.preco ?? fv?.preco ?? null,
-    variacaoDia: fv?.variacaoDia ?? null,
+    variacaoDia: fv?.variacaoDia ?? yv?.variacaoDia ?? null,
     lpa: fv?.lpa ?? null,
     vpa: fv?.fii ? fv.fii.vpCota : (fv?.vpa ?? null), // nos FIIs, VP por cota
     roe: fv?.roe ?? null,
