@@ -175,3 +175,63 @@ export async function registrarOperacao(dados: {
     client.release();
   }
 }
+
+/**
+ * Corrige o preço da última compra de um ativo e recalcula o preço médio.
+ * Sem compras lançadas (cadastro à mão ou importação), o preço comprado é o próprio preço médio.
+ * O preço médio é refeito pelas operações, na ordem: cada compra seguinte dilui a correção, vendas não mudam o médio.
+ */
+export async function editarPrecoCompra(ticker: string, novoPreco: number): Promise<{ ok: boolean; mensagem: string }> {
+  if (!(novoPreco > 0)) return { ok: false, mensagem: "Informe um preço maior que zero." };
+  const client = await pool().connect();
+  try {
+    await client.query("begin");
+    const { rows: cart } = await client.query<{ quantidade: number; preco_medio: number }>(
+      "select quantidade, preco_medio from carteira where ticker = $1 for update",
+      [ticker],
+    );
+    if (!cart[0]) {
+      await client.query("rollback");
+      return { ok: false, mensagem: `${ticker} não está na carteira.` };
+    }
+    const { rows: ops } = await client.query<{ id: number; tipo: "C" | "V"; quantidade: number; preco: number }>(
+      "select id, tipo, quantidade, preco from operacoes where ticker = $1 order by data, id",
+      [ticker],
+    );
+    const ultima = [...ops].reverse().find((o) => o.tipo === "C");
+    let pm: number;
+    if (!ultima) {
+      pm = novoPreco;
+    } else {
+      const delta = novoPreco - ultima.preco;
+      const liquido = ops.reduce((s, o) => s + (o.tipo === "C" ? o.quantidade : -o.quantidade), 0);
+      let q = Math.max(0, cart[0].quantidade - liquido); // lote que já existia antes das operações lançadas
+      let ajuste = 0; // quanto o preço médio muda
+      for (const o of ops) {
+        if (o.tipo === "V") {
+          q = Math.max(0, q - o.quantidade);
+          continue;
+        }
+        const extra = o.id === ultima.id ? o.quantidade * delta : 0;
+        ajuste = q + o.quantidade > 0 ? (q * ajuste + extra) / (q + o.quantidade) : 0;
+        q += o.quantidade;
+      }
+      pm = cart[0].preco_medio + ajuste;
+      await client.query("update operacoes set preco = $2 where id = $1", [ultima.id, novoPreco]);
+    }
+    if (!(pm > 0)) {
+      await client.query("rollback");
+      return { ok: false, mensagem: "Esse preço deixaria o preço médio negativo. Confira o valor." };
+    }
+    await client.query("update carteira set preco_medio = $2 where ticker = $1", [ticker, pm]);
+    await client.query("commit");
+    revalidatePath("/carteira");
+    revalidatePath("/");
+    return { ok: true, mensagem: `Preço médio de ${ticker} agora é ${pm.toFixed(2).replace(".", ",")}.` };
+  } catch (err) {
+    await client.query("rollback");
+    return { ok: false, mensagem: `Erro ao salvar: ${(err as Error).message}` };
+  } finally {
+    client.release();
+  }
+}
