@@ -38,3 +38,9 @@ Leva alguns minutos (a IA pesquisa notícias). Depois abra `https://SEU_SUBDOMIN
 - Rodar a análise na hora: botão **Rodar análise agora** no site (uma por vez, no máximo a cada 15 min)
 - Ver o log do agendador: `ssh freshtech@179.197.233.72 "cd ~/analiseacao && docker compose -f docker-compose.prod.yml logs --tail 100 agendador"`
 - Abrir o banco: `ssh freshtech@179.197.233.72 "cd ~/analiseacao && docker compose -f docker-compose.prod.yml exec postgres psql -U analiseacao"`
+
+## Atualização automática (Windows)
+Dê dois cliques em `atualizar.bat`, na pasta do projeto. A janela confere o GitHub a cada 5 minutos e, quando entra algo novo na `main`, faz o `git pull` e o deploy sozinha. Deixe a janela aberta; para parar, use Ctrl+C.
+- Na primeira vez, ele cria uma chave SSH e pede a senha da VPS uma última vez. Depois disso, não pede mais.
+- Para atualizar só uma vez, sem ficar vigiando, rode `atualizar.bat agora` no Prompt de Comando.
+- Para abrir junto com o Windows, crie um atalho do `atualizar.bat` dentro da pasta `shell:startup` (Win+R → `shell:startup`).

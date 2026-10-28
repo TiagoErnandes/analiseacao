@@ -2,7 +2,8 @@
 # Envia o app para a VPS e reconstrói os containers (site + agendador).
 # Uso (Git Bash, na raiz do repo): bash deploy/deploy.sh
 set -euo pipefail
-trap 'echo; read -p "Pressione Enter para fechar..."' EXIT
+# Pausa no fim para ler o resultado (o vigia automático pula a pausa com DEPLOY_SEM_PAUSA=1)
+trap '[ -n "${DEPLOY_SEM_PAUSA:-}" ] || { echo; read -p "Pressione Enter para fechar..."; }' EXIT
 
 VPS_USER="freshtech"
 VPS_HOST="179.197.233.72"
