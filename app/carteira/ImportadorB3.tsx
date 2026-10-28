@@ -8,7 +8,7 @@ import { aplicarImportacaoB3, lerArquivosB3 } from "./actions";
 import { TipoAtivo } from "../TipoAtivo";
 
 type Atual = { ticker: string; quantidade: number; preco_medio: number };
-type Linha = ItemImportado & { pmTexto: string; incluir: boolean };
+type Linha = ItemImportado & { pmTexto: string; pmOriginal: string; incluir: boolean };
 
 const ORIGEM: Record<string, { txt: string; cls: string }> = {
   negociacoes: { txt: "das negociações", cls: "text-alta" },
@@ -49,6 +49,7 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
           ...i,
           incluir: true,
           pmTexto: i.precoMedio != null ? i.precoMedio.toFixed(2).replace(".", ",") : "",
+          pmOriginal: i.precoMedio != null ? i.precoMedio.toFixed(2).replace(".", ",") : "",
         })),
       );
     });
@@ -57,7 +58,13 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
   function salvar() {
     startSalvar(async () => {
       const r = await aplicarImportacaoB3(
-        selecionadas.map((l) => ({ ticker: l.ticker, tipo: l.tipo, quantidade: l.quantidade, preco_medio: paraNumero(l.pmTexto) })),
+        selecionadas.map((l) => ({
+          ticker: l.ticker,
+          tipo: l.tipo,
+          quantidade: l.quantidade,
+          // Sem edição, vai o preço médio exato (a tela mostra arredondado em 2 casas)
+          preco_medio: l.pmTexto === l.pmOriginal && l.precoMedio != null ? l.precoMedio : paraNumero(l.pmTexto),
+        })),
         modo,
       );
       if (r.ok) {
