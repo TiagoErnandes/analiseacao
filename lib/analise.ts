@@ -1,5 +1,6 @@
 // A análise do dia. Use rodarAnalise() (registra a execução e impede duas ao mesmo tempo).
 import { atualizarIndices } from "./indices";
+import { estrategiaAtual } from "./estrategia";
 import { analisarComIa, type CustoIa, type LinhaParaIa, type ModoIa, type SaidaIa } from "./ai";
 import { buscarAcao, buscarExterior, cotacaoDolar, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
@@ -7,8 +8,6 @@ import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Cart
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, type Qualidade } from "./qualidade";
 import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, scoreFinal, type Indicadores } from "./valuation";
 
-/** Acima disso, um setor é considerado concentrado e não recebe bônus de "peso faltando". */
-const LIMITE_SETOR = 0.3;
 
 function hojeSaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
@@ -114,6 +113,11 @@ export async function executarAnalise() {
   if (dados.length === 0) throw new Error("Nenhum dado de mercado obtido. Yahoo/Fundamentus podem estar fora do ar.");
 
   // 2) Preço teto, qualidade e pesos da carteira (por ação e por setor)
+  // Na estratégia Oportunidade não há bônus por "peso faltando" e o limite por setor é mais folgado.
+  const estrategia = await estrategiaAtual();
+  const LIMITE_SETOR = estrategia.limiteSetor;
+  const balancear = estrategia.atual === "balanceamento";
+  console.log(`Estratégia: ${estrategia.atual} (setor até ${LIMITE_SETOR * 100}%)`);
   const valorPos = (d: DadosAcao) => (minha.get(d.ticker)?.quantidade ?? 0) * (d.preco ?? 0) * d.cambio; // em reais
   const totalCarteira = dados.reduce((s, d) => s + valorPos(d), 0);
   const pesoIdeal = minha.size > 0 ? 1 / minha.size : 0;
@@ -140,8 +144,8 @@ export async function executarAnalise() {
     if (pesoDoSetor > LIMITE_SETOR) {
       alertas.push(`setor ${setor} já é ${Math.round(pesoDoSetor * 100)}% da carteira (limite ${LIMITE_SETOR * 100}%)`);
     }
-    // Peso faltando só conta se o setor ainda não estiver concentrado
-    const falta = pos && pesoAtual != null && pesoDoSetor <= LIMITE_SETOR ? pesoIdeal - pesoAtual : null;
+    // Peso faltando só conta no balanceamento e se o setor ainda não estiver concentrado
+    const falta = balancear && pos && pesoAtual != null && pesoDoSetor <= LIMITE_SETOR ? pesoIdeal - pesoAtual : null;
     if (alertas.length) console.warn(`  ${d.ticker}: ${alertas.join("; ")}`);
     return {
       ticker: d.ticker,
@@ -170,7 +174,7 @@ export async function executarAnalise() {
       teto_graham: ind.graham,
       preco_teto: ind.teto,
       margem: ind.margem,
-      score_sem_ia: scoreFinal({ margem: ind.margem, qualidade: qual.nota, notaIa: null, faltaParaIdeal: falta }),
+      score_sem_ia: scoreFinal({ margem: ind.margem, qualidade: qual.nota, notaIa: null, faltaParaIdeal: falta, balancear }),
       alertas,
     };
   });
@@ -187,7 +191,7 @@ export async function executarAnalise() {
   } else {
     try {
       const [guardada] = await query<{ pesquisa: string | null }>("select pesquisa from relatorio_diario where data = $1", [hoje]);
-      const r = await analisarComIa(paraIa, hoje, modo, guardada?.pesquisa ?? null);
+      const r = await analisarComIa(paraIa, hoje, modo, guardada?.pesquisa ?? null, estrategia.atual);
       ia = r.saida;
       custo = r.custo;
       pesquisaDoDia = r.pesquisa;
@@ -225,7 +229,7 @@ export async function executarAnalise() {
       recomendacao: a?.recomendacao ?? sinalPorCalculo(l),
       resumo_ia: a?.resumo ?? null,
       riscos_ia: a?.riscos ?? null,
-      score: scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: a?.nota ?? null, faltaParaIdeal: l.falta_para_ideal }),
+      score: scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: a?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }),
       na_carteira: l.na_carteira,
       qualidade: l.qualidade,
       setor: l.setor,

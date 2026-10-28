@@ -45,5 +45,6 @@ npx tsx --env-file=.env.local scripts/analise.ts   # roda a análise na hora
 - **Yield mínimo do Bazin** (6%): `lib/valuation.ts`.
 - **Pesos da nota final**: `scoreFinal` em `lib/valuation.ts`.
 - **Instruções da IA**: `lib/ai.ts`.
+- **Estratégia da carteira** (seletor no painel): *Oportunidade* prioriza as ações mais baratas e de boa qualidade, sem buscar o peso ideal (setor até 50%); *Balanceamento* completa o peso ideal e segura setores acima de 30%. No *Automático*, vale Oportunidade nos primeiros 6 meses a partir da primeira compra lançada (`config.inicio_carteira`) e depois Balanceamento. Limites e prazo em `lib/modos.ts`.
 
 > Ferramenta de apoio à decisão. Não é recomendação de investimento.

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { brl, pct } from "@/lib/format";
 import { Logo } from "./Logo";
+import type { Estrategia } from "@/lib/modos";
 
 export type ItemAporte = {
   ticker: string;
@@ -17,15 +18,23 @@ export type ItemAporte = {
   nova?: boolean; // oportunidade fora da carteira
 };
 
-type Props = { itens: ItemAporte[]; novas?: ItemAporte[]; pesoSetor: Record<string, number>; limiteSetor: number };
+type Props = {
+  itens: ItemAporte[];
+  novas?: ItemAporte[];
+  pesoSetor: Record<string, number>;
+  limiteSetor: number;
+  estrategia?: Estrategia; // padrão: balanceamento
+};
 
 type Compra = { item: ItemAporte; qtd: number };
 
 /**
  * Divide o aporte entre as ações (da carteira e, se pedido, as melhores oportunidades fora dela) que estão abaixo do preço teto, sem sinal de "Evitar"
- * e fora de setor concentrado, priorizando quem está mais longe do peso ideal e tem maior score.
+ * e fora de setor concentrado.
+ * Balanceamento: prioriza quem está mais longe do peso ideal e tem maior score.
+ * Oportunidade: concentra o aporte nas de maior score, da carteira ou não, sem olhar o peso ideal.
  */
-function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor }: Omit<Props, "novas">) {
+function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor, estrategia }: Omit<Props, "novas">) {
   const patrimonio = itens.reduce((s, i) => s + i.valor, 0);
   const alvo = (patrimonio + valorAporte) / Math.max(1, itens.length);
   const elegiveis = itens
@@ -39,23 +48,33 @@ function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor }: Omit<P
   const compras = new Map<string, Compra>(elegiveis.map((i) => [i.ticker, { item: i, qtd: 0 }]));
   let resto = valorAporte;
 
-  // 0) Oportunidades fora da carteira ficam com até 30% do aporte (senão as da carteira, abaixo do peso ideal, levariam tudo)
-  const novas = elegiveis.filter((i) => i.nova);
-  const cotaNovas = novas.length ? valorAporte * COTA_NOVAS : 0;
-  for (const i of novas) {
-    const parte = cotaNovas / novas.length;
-    const qtd = Math.floor(Math.min(parte, alvo, resto) / i.preco!);
-    compras.get(i.ticker)!.qtd += qtd;
-    resto -= qtd * i.preco!;
+  if (estrategia === "oportunidade") {
+    // As melhores (maior score) dividem o aporte em partes iguais
+    const top = elegiveis.slice(0, TOP_OPORTUNIDADE);
+    for (const i of top) {
+      const qtd = Math.floor(Math.min(valorAporte / top.length, resto) / i.preco!);
+      compras.get(i.ticker)!.qtd += qtd;
+      resto -= qtd * i.preco!;
+    }
+  } else {
+    // 0) Oportunidades fora da carteira ficam com até 30% do aporte (senão as da carteira, abaixo do peso ideal, levariam tudo)
+    const novas = elegiveis.filter((i) => i.nova);
+    const cotaNovas = novas.length ? valorAporte * COTA_NOVAS : 0;
+    for (const i of novas) {
+      const parte = cotaNovas / novas.length;
+      const qtd = Math.floor(Math.min(parte, alvo, resto) / i.preco!);
+      compras.get(i.ticker)!.qtd += qtd;
+      resto -= qtd * i.preco!;
+    }
+    // 1) Completa o peso ideal de cada uma da carteira, na ordem do score
+    for (const i of elegiveis.filter((e) => !e.nova)) {
+      const falta = Math.max(0, alvo - i.valor - compras.get(i.ticker)!.qtd * i.preco!);
+      const qtd = Math.floor(Math.min(falta, resto) / i.preco!);
+      compras.get(i.ticker)!.qtd += qtd;
+      resto -= qtd * i.preco!;
+    }
   }
-  // 1) Completa o peso ideal de cada uma da carteira, na ordem do score
-  for (const i of elegiveis.filter((e) => !e.nova)) {
-    const falta = Math.max(0, alvo - i.valor - compras.get(i.ticker)!.qtd * i.preco!);
-    const qtd = Math.floor(Math.min(falta, resto) / i.preco!);
-    compras.get(i.ticker)!.qtd += qtd;
-    resto -= qtd * i.preco!;
-  }
-  // 2) A sobra vai uma ação por vez, revezando, enquanto der para comprar
+  // 2) A sobra vai uma ação por vez, revezando (as melhores primeiro), enquanto der para comprar
   let comprou = true;
   while (comprou) {
     comprou = false;
@@ -74,6 +93,8 @@ function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor }: Omit<P
 
 const ATALHOS = [500, 1000, 2000, 5000];
 const COTA_NOVAS = 0.3;
+/** Na estratégia Oportunidade, quantas das melhores dividem o aporte. */
+const TOP_OPORTUNIDADE = 3;
 
 export function SimuladorAporte(props: Props) {
   const [texto, setTexto] = useState("1000");
@@ -160,7 +181,12 @@ export function SimuladorAporte(props: Props) {
       )}
       <div className="flex flex-wrap justify-between gap-2 text-xs text-suave tabular-nums">
         <span>Usado: <b className="text-texto">{brl(valor - r.resto)}</b> · Sobra: {brl(r.resto)}</span>
-        <span>Só entram ativos abaixo do teto, sem “Evitar” e com setor até {pct(props.limiteSetor, 0)}. Oportunidades novas (sinal “Comprar” e qualidade ≥ 6) ficam com até {pct(COTA_NOVAS, 0)} do aporte.</span>
+        <span>
+          Só entram ativos abaixo do teto, sem “Evitar” e com setor até {pct(props.limiteSetor, 0)}.{" "}
+          {props.estrategia === "oportunidade"
+            ? `Estratégia Oportunidade: as ${TOP_OPORTUNIDADE} de maior nota, da carteira ou novas, dividem o aporte, sem olhar o peso ideal.`
+            : `Oportunidades novas (sinal “Comprar” e qualidade ≥ 6) ficam com até ${pct(COTA_NOVAS, 0)} do aporte.`}
+        </span>
       </div>
     </div>
   );

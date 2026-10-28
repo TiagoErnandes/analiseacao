@@ -31,6 +31,7 @@ export function margem(preco: number | null, teto: number | null): number | null
 /**
  * Nota final de 0 a 100 para ordenar as ações do dia:
  * 40% desconto em relação ao teto, 25% qualidade do balanço, 25% nota da IA, 10% peso faltando na carteira.
+ * Sem balancear (estratégia Oportunidade), os 10% do peso faltando vão para o desconto (50%).
  * Sem nota de qualidade ou da IA, a parte que falta conta como zero (melhor errar para baixo).
  */
 export function scoreFinal(opts: {
@@ -38,15 +39,18 @@ export function scoreFinal(opts: {
   qualidade?: number | null;
   notaIa: number | null;
   faltaParaIdeal?: number | null; // fração: 0.05 = está 5 pontos percentuais abaixo do ideal
+  balancear?: boolean; // padrão: true
 }): number {
   const m = Math.max(-0.3, Math.min(0.5, opts.margem ?? -0.3));
   const parteMargem = (m + 0.3) / 0.8; // 0..1
   const parteQualidade = Math.max(0, Math.min(10, opts.qualidade ?? 0)) / 10;
   const falta = Math.max(0, Math.min(0.1, opts.faltaParaIdeal ?? 0)) / 0.1;
   // Sem nota da IA (modo sem IA ou ativo que não foi para a IA), os outros pesos são reescalados
-  if (opts.notaIa == null) return Math.round(((parteMargem * 0.4 + parteQualidade * 0.25 + falta * 0.1) / 0.75) * 100);
+  const pFalta = opts.balancear === false ? 0 : 0.1;
+  const pMargem = 0.5 - pFalta;
+  if (opts.notaIa == null) return Math.round(((parteMargem * pMargem + parteQualidade * 0.25 + falta * pFalta) / 0.75) * 100);
   const parteIa = Math.max(0, Math.min(10, opts.notaIa)) / 10;
-  return Math.round((parteMargem * 0.4 + parteQualidade * 0.25 + parteIa * 0.25 + falta * 0.1) * 100);
+  return Math.round((parteMargem * pMargem + parteQualidade * 0.25 + parteIa * 0.25 + falta * pFalta) * 100);
 }
 
 /** Soma os dividendos por ano e devolve DPA dos últimos 12 meses e a média anual (até 5 anos completos). */

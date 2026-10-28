@@ -7,7 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod/v4";
 
-import type { ModoIa } from "./modos";
+import type { Estrategia, ModoIa } from "./modos";
 export type { ModoIa };
 
 const CONFIG = {
@@ -17,6 +17,15 @@ const CONFIG = {
 // Preço por milhão de tokens (entrada, saída) em dólar, e por busca na web
 const PRECO: Record<string, [number, number]> = { "claude-haiku-5-5": [0.1, 0.5], "claude-sonnet-5-5": [2, 10] };
 const PRECO_BUSCA = 10 / 1000;
+/** O que a IA deve priorizar em cada estratégia da carteira. */
+const REGRAS: Record<Estrategia, string> = {
+  oportunidade: `Estratégia OPORTUNIDADE (carteira no começo): priorize as melhores oportunidades de preço com qualidade: maior margem até o teto,
+qualidade >= 6, sem alerta grave. NÃO dê preferência a quem está abaixo do peso ideal e não segure uma compra boa só para balancear setores;
+evite apenas setor acima de 50% da carteira. Considere quedas de preço por ruído político ou macro do Brasil em empresas sólidas como chance de compra.`,
+  balanceamento: `Estratégia BALANCEAMENTO: prefira margem > 0, qualidade >= 6, sem alerta grave; na carteira, prefira quem está abaixo do peso ideal
+(falta_para_ideal > 0) e de setor até 30%.`,
+};
+
 /** Quantos ativos de fora da carteira vão para a IA (os de melhor score pelo cálculo). */
 export const MAX_FORA_DA_CARTEIRA = 8;
 
@@ -25,7 +34,7 @@ export type LinhaParaIa = { ticker: string; na_carteira: boolean; score_sem_ia: 
 
 const SYSTEM = `Você é um analista de investimentos focado em previdência privada e buy and hold (ações, FIIs, ETFs, BDRs, ações e REITs americanos e cripto).
 O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele valoriza empresas perenes, lucro consistente, dividendos estáveis,
-comprar abaixo do preço teto e diversificação (nenhum setor acima de 30%).
+comprar abaixo do preço teto e diversificação ao longo do tempo.
 O preço teto já vem calculado de forma conservadora: ações por Bazin (dividendo ÷ 6%) ou Graham; FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ 8%;
 ETFs, BDRs, stocks e REITs por Bazin se pagam dividendos, senão pela média de 12 meses; cripto não tem teto (trate como parcela pequena e de alto risco).
 "margem" > 0 significa abaixo do teto. "qualidade" (0 a 10) vem do balanço ou do histórico. "alertas" lista problemas já detectados; leve-os em conta.
@@ -78,6 +87,7 @@ export async function analisarComIa(
   hoje: string,
   modo: Exclude<ModoIa, "sem_ia">,
   pesquisaGuardada: string | null,
+  estrategia: Estrategia = "balanceamento",
 ): Promise<{ saida: SaidaIa; custo: CustoIa; pesquisa: string | null }> {
   const cfg = CONFIG[modo];
   const client = new Anthropic({ timeout: 15 * 60 * 1000 });
@@ -132,8 +142,8 @@ Responda em tópicos curtos, um por ticker com novidade (com data e fonte). Tick
         {
           role: "user",
           content: `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia.
-Regras: prefira margem > 0, qualidade >= 6, sem alerta grave; na carteira, prefira quem está abaixo do peso ideal (falta_para_ideal > 0)
-e de setor até 30%. Não recomende COMPRAR com prejuízo, payout insustentável ou dado claramente errado. Se nenhum atender, escolha o mais próximo e diga isso.
+${REGRAS[estrategia]}
+Não recomende COMPRAR com prejuízo, payout insustentável ou dado claramente errado. Se nenhum atender, escolha o mais próximo e diga isso.
 
 Tabela (ordenada pela nota do cálculo, score_sem_ia):
 ${tabela}

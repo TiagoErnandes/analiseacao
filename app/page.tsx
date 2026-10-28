@@ -12,6 +12,7 @@ import { Comparativo } from "./Comparativo";
 import { ProventosMes } from "./ProventosMes";
 import { Projecao } from "./Projecao";
 import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
+import { SeletorEstrategia } from "./SeletorEstrategia";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
 
 export const dynamic = "force-dynamic";
@@ -62,7 +63,7 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 }
 
 export default async function Painel() {
-  const { exec, modo, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel();
+  const { exec, modo, estrategia, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel();
   const botao = (
     <BotaoAnalise
       status={exec?.status ?? null}
@@ -98,7 +99,7 @@ export default async function Painel() {
   const novasAporte: ItemAporte[] = analises
     .filter((a) => !a.na_carteira && a.recomendacao === "COMPRAR" && (a.margem ?? -1) > 0 && (a.qualidade ?? 0) >= 6 && a.preco)
     .sort((x, y) => (y.score ?? 0) - (x.score ?? 0))
-    .slice(0, 3)
+    .slice(0, estrategia.atual === "oportunidade" ? 5 : 3)
     .map((a) => ({
       ticker: a.ticker,
       logo: a.logo,
@@ -124,6 +125,8 @@ export default async function Painel() {
         </div>
         {botao}
       </section>
+
+      <SeletorEstrategia escolha={estrategia.escolha} atual={estrategia.atual} trocaEm={estrategia.trocaEm} />
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
@@ -212,12 +215,16 @@ export default async function Painel() {
 
       <section className="grid gap-4 lg:grid-cols-5">
         <Cartao titulo="Simulador de aporte" className="lg:col-span-3">
-          <SimuladorAporte itens={itensAporte} novas={novasAporte} pesoSetor={pesoSetor} limiteSetor={LIMITE_SETOR} />
+          <SimuladorAporte itens={itensAporte} novas={novasAporte} pesoSetor={pesoSetor} limiteSetor={estrategia.limiteSetor} estrategia={estrategia.atual} />
         </Cartao>
         <Cartao titulo="Alocação por setor" className="lg:col-span-2">
           <div className="p-4">
             <Rosca fatias={setores} centro="setores" limite={LIMITE_SETOR} />
-            <p className="mt-4 text-xs text-fraco">Para previdência, o ideal é nenhum setor passar de {pct(LIMITE_SETOR, 0)} da carteira.</p>
+            <p className="mt-4 text-xs text-fraco">
+              Para previdência, o ideal é nenhum setor passar de {pct(LIMITE_SETOR, 0)} da carteira.
+              {estrategia.atual === "oportunidade" &&
+                ` Na estratégia Oportunidade, o simulador só barra setor acima de ${pct(estrategia.limiteSetor, 0)}; o balanceamento fica para depois.`}
+            </p>
           </div>
         </Cartao>
       </section>
