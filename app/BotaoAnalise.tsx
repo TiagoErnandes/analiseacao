@@ -28,6 +28,9 @@ export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes }: Pr
   const [mensagem, setMensagem] = useState<string | null>(null);
   const rodando = status === "rodando";
 
+  // Quando a análise começa ou termina, o aviso antigo sai e fica só a linha de status.
+  useEffect(() => setMensagem(null), [status, inicio]);
+
   // Enquanto roda, atualiza a página a cada 10s para mostrar o resultado quando terminar.
   useEffect(() => {
     if (!rodando) return;
@@ -71,15 +74,15 @@ export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes }: Pr
         {rodando ? "Analisando…" : pendente ? "Iniciando…" : "Rodar análise agora"}
       </button>
       </div>
+      {mensagem && <p className="max-w-80 text-xs text-texto sm:text-right">{mensagem}</p>}
       <p className="max-w-80 text-xs text-suave sm:text-right">
-        {mensagem ??
-          (rodando && inicio
-            ? `Rodando desde ${hora(inicio)}. Leva alguns minutos.`
-            : status === "erro"
-              ? `A última análise falhou${erro ? `: ${erro}` : "."}`
-              : inicio
-                ? `Última análise: ${hora(inicio)}${custo != null ? ` · custou ${reais(custo)}` : ""} · no mês ${reais(custoMes)}`
-                : "Nenhuma análise ainda.")}
+        {rodando && inicio
+          ? `Rodando desde ${hora(inicio)}. Leva alguns minutos.`
+          : status === "erro"
+            ? `A última análise falhou${inicio ? ` (${hora(inicio)})` : ""}${erro ? `: ${erro}` : "."}`
+            : inicio
+              ? `Última análise: ${hora(inicio)}${custo != null ? ` · custou ${reais(custo)}` : ""} · no mês ${reais(custoMes)}`
+              : "Nenhuma análise ainda."}
       </p>
     </div>
   );

@@ -308,30 +308,35 @@ export async function ultimaExecucao(): Promise<Execucao | null> {
 }
 
 /**
- * Registra o início se não houver outra análise rodando (e, para o botão, se a última que não falhou
- * começou há mais de INTERVALO_MINIMO_MIN). Devolve o id, ou um motivo quando não pode rodar.
+ * Registra o início se não houver outra análise rodando. Para o botão, uma análise com IA só roda se a última
+ * que usou IA começou há mais de INTERVALO_MINIMO_MIN (a análise grátis não conta e não tem espera).
+ * Devolve o id, ou um motivo quando não pode rodar.
  */
 async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id: number } | { motivo: string }> {
   await garantirTabela();
-  const intervalo = origem === "botao" ? INTERVALO_MINIMO_MIN : 0;
+  const intervalo = origem === "botao" && (await modoIa()) !== "sem_ia" ? INTERVALO_MINIMO_MIN : 0;
   const [r] = await query<{ id: number }>(
     `insert into execucoes (origem, status)
      select $1, 'rodando'
      where not exists (
        select 1 from execucoes
         where (status = 'rodando' and inicio > now() - interval '${TIMEOUT_MIN} minutes')
-           or (status <> 'erro' and inicio > now() - make_interval(mins => $2::int))
+           or (status <> 'erro' and modelo is not null and inicio > now() - make_interval(mins => $2::int))
      )
      returning id`,
     [origem, intervalo],
   );
   if (r) return { id: r.id };
   const ultima = await ultimaExecucao();
+  if (ultima?.status === "rodando") return { motivo: "Já tem uma análise rodando. Aguarde terminar." };
+  const [ia] = await query<{ ultima: string; libera: string }>(
+    `select to_char(max(inicio) at time zone 'America/Sao_Paulo', 'DD/MM/YYYY "às" HH24:MI') as ultima,
+            to_char((max(inicio) + make_interval(mins => $1::int)) at time zone 'America/Sao_Paulo', 'HH24:MI') as libera
+       from execucoes where status <> 'erro' and modelo is not null`,
+    [INTERVALO_MINIMO_MIN],
+  );
   return {
-    motivo:
-      ultima?.status === "rodando"
-        ? "Já tem uma análise rodando. Aguarde terminar."
-        : `Aguarde ${INTERVALO_MINIMO_MIN} minutos entre uma análise e outra.`,
+    motivo: `A última análise com IA foi em ${ia?.ultima ?? "—"}. Espere ${INTERVALO_MINIMO_MIN} minutos entre análises com IA: libera às ${ia?.libera ?? "—"}.`,
   };
 }
 
