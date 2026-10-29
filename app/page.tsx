@@ -72,6 +72,7 @@ export default async function Painel() {
       modo={modo}
       custo={exec?.custo_brl ?? null}
       custoMes={exec?.custo_mes_brl ?? 0}
+      economiaMes={exec?.economia_mes_brl ?? 0}
     />
   );
 

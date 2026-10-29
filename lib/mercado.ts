@@ -3,7 +3,35 @@
 // - Fundamentus: balanço das ações (LPA, VPA, ROE...) e indicadores dos FIIs (P/VP, FFO, vacância...).
 // ETFs não estão no Fundamentus: usam só o Yahoo.
 
+import { query } from "./db";
 import { simboloYahoo, type Tipo } from "./tipos";
+
+// Cache das fontes no banco: balanço e histórico mudam pouco, então só buscamos de novo quando pode ter novidade.
+const DIA = 24 * 60 * 60 * 1000;
+async function lerCache<T>(chave: string): Promise<{ dados: T; idadeDias: number; buscadoEm: Date } | null> {
+  try {
+    const [c] = await query<{ dados: T; buscado_em: Date }>("select dados, buscado_em from cache_fontes where chave = $1", [chave]);
+    return c ? { dados: c.dados, buscadoEm: new Date(c.buscado_em), idadeDias: (Date.now() - new Date(c.buscado_em).getTime()) / DIA } : null;
+  } catch {
+    return null; // sem banco (testes) ou tabela ainda não criada: busca na fonte
+  }
+}
+async function salvarCache(chave: string, dados: unknown) {
+  try {
+    await query(
+      `insert into cache_fontes (chave, dados, buscado_em) values ($1, $2, now())
+       on conflict (chave) do update set dados = excluded.dados, buscado_em = now()`,
+      [chave, JSON.stringify(dados)],
+    );
+  } catch {
+    /* cache é só otimização */
+  }
+}
+/** Contadores da execução (para o log): quantas vezes cada fonte foi consultada ou reaproveitada. */
+export const usoFontes = { fundamentus: 0, fundamentusCache: 0, historico: 0, historicoCache: 0 };
+export function zerarUsoFontes() {
+  Object.assign(usoFontes, { fundamentus: 0, fundamentusCache: 0, historico: 0, historicoCache: 0 });
+}
 
 export type TipoAtivo = Tipo;
 
@@ -63,39 +91,66 @@ export function numeroBr(txt: string | undefined): number | null {
   return ehPct ? n / 100 : n;
 }
 
-async function yahoo(ticker: string, simbolo = `${ticker}.SA`) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=6y&interval=1mo&events=div`;
-  const res = await fetch(url, { headers: UA });
-  if (!res.ok) throw new Error(`Yahoo ${ticker}: HTTP ${res.status}`);
-  const json = (await res.json()) as any;
-  const r = json?.chart?.result?.[0];
-  if (!r) throw new Error(`Yahoo ${ticker}: sem dados`);
-  const proventos = Object.values<{ amount: number; date: number }>(r.events?.dividends ?? {})
-    .filter((d) => d.amount > 0)
-    .map((d) => ({ valor: d.amount, data: new Date(d.date * 1000) }));
-  const preco = typeof r.meta?.regularMarketPrice === "number" ? r.meta.regularMarketPrice : null;
-  const q = r.indicators?.quote?.[0] ?? {};
-  const meses: { fechamento: number; volume: number }[] = ((r.timestamp ?? []) as number[])
-    .map((_, i) => ({ fechamento: q.close?.[i], volume: q.volume?.[i] ?? 0 }))
-    .filter((m) => typeof m.fechamento === "number" && m.fechamento > 0);
-  // Variação do dia: preço de agora contra o fechamento do pregão anterior (pedido curto e separado; falha não atrapalha)
-  let variacaoDia: number | null = null;
-  try {
-    const d = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=1d&interval=1d`, { headers: UA });
-    const m = ((await d.json()) as any)?.chart?.result?.[0]?.meta;
-    const anterior = m?.chartPreviousClose ?? m?.previousClose;
-    if (typeof m?.regularMarketPrice === "number" && typeof anterior === "number" && anterior > 0) {
-      variacaoDia = m.regularMarketPrice / anterior - 1;
-    }
-  } catch {
-    /* sem variação do dia */
+type HistoricoBruto = { meses: { fechamento: number; volume: number }[]; proventos: { valor: number; data: number }[]; nome: string | null; preco: number | null };
+
+/** Histórico mensal de 6 anos (preços e dividendos). É o pedido pesado: fica guardado e é renovado por semana ou na virada do mês. */
+async function historicoYahoo(simbolo: string): Promise<HistoricoBruto & { fresco: boolean }> {
+  const chave = `yahoo:${simbolo}`;
+  const c = await lerCache<HistoricoBruto>(chave);
+  const virouMes = c ? c.buscadoEm.getUTCMonth() !== new Date().getUTCMonth() : true;
+  if (c && c.idadeDias < 7 && !virouMes) {
+    usoFontes.historicoCache++;
+    return { ...c.dados, fresco: false };
   }
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=6y&interval=1mo&events=div`;
+    const res = await fetch(url, { headers: UA });
+    if (!res.ok) throw new Error(`Yahoo ${simbolo}: HTTP ${res.status}`);
+    const r = ((await res.json()) as any)?.chart?.result?.[0];
+    if (!r) throw new Error(`Yahoo ${simbolo}: sem dados`);
+    const q = r.indicators?.quote?.[0] ?? {};
+    const bruto: HistoricoBruto = {
+      meses: ((r.timestamp ?? []) as number[])
+        .map((_, i) => ({ fechamento: q.close?.[i], volume: q.volume?.[i] ?? 0 }))
+        .filter((m) => typeof m.fechamento === "number" && m.fechamento > 0),
+      proventos: Object.values<{ amount: number; date: number }>(r.events?.dividends ?? {})
+        .filter((d) => d.amount > 0)
+        .map((d) => ({ valor: d.amount, data: d.date * 1000 })),
+      nome: (r.meta?.longName ?? r.meta?.shortName ?? null) as string | null,
+      preco: typeof r.meta?.regularMarketPrice === "number" ? r.meta.regularMarketPrice : null,
+    };
+    usoFontes.historico++;
+    await salvarCache(chave, bruto);
+    return { ...bruto, fresco: true };
+  } catch (err) {
+    if (c) return { ...c.dados, fresco: false }; // fonte fora do ar: usa o que já tinha
+    throw err;
+  }
+}
+
+/** Preço de agora e variação do dia (pedido leve, todo dia). */
+async function precoYahoo(simbolo: string): Promise<{ preco: number | null; variacaoDia: number | null }> {
+  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=1d&interval=1d`, { headers: UA });
+  if (!res.ok) throw new Error(`Yahoo ${simbolo}: HTTP ${res.status}`);
+  const m = ((await res.json()) as any)?.chart?.result?.[0]?.meta;
+  const preco = typeof m?.regularMarketPrice === "number" ? m.regularMarketPrice : null;
+  const anterior = m?.chartPreviousClose ?? m?.previousClose;
+  return { preco, variacaoDia: preco != null && typeof anterior === "number" && anterior > 0 ? preco / anterior - 1 : null };
+}
+
+async function yahoo(ticker: string, simbolo = `${ticker}.SA`) {
+  const [h, d] = await Promise.allSettled([historicoYahoo(simbolo), precoYahoo(simbolo)]);
+  if (h.status === "rejected" && d.status === "rejected") throw h.reason;
+  const hist = h.status === "fulfilled" ? h.value : null;
+  const dia = d.status === "fulfilled" ? d.value : null;
+  // Preço: o de agora; se o pedido leve falhar, o do histórico só se ele acabou de ser buscado
+  const preco = dia?.preco ?? (hist?.fresco ? hist.preco : null);
   return {
     preco,
-    variacaoDia,
-    nome: (r.meta?.longName ?? r.meta?.shortName ?? null) as string | null,
-    proventos,
-    historico: calcularHistorico(meses, preco),
+    variacaoDia: dia?.variacaoDia ?? null,
+    nome: hist?.nome ?? null,
+    proventos: (hist?.proventos ?? []).map((p) => ({ valor: p.valor, data: new Date(p.data) })),
+    historico: hist ? calcularHistorico(hist.meses, preco) : null,
   };
 }
 
@@ -211,14 +266,63 @@ export function extrairFundamentus(html: string) {
     roe: n("roe"),
     dy: n("divyield"),
     variacaoDia: n("dia"),
+    ultBalanco: t("ultbalancoprocessado"), // dd/mm/aaaa
     fundamentos: ehFii ? null : fundamentos,
   };
 }
 
-async function fundamentus(ticker: string) {
-  const res = await fetch(`https://www.fundamentus.com.br/detalhes.php?papel=${ticker}`, { headers: UA });
-  if (!res.ok) throw new Error(`Fundamentus ${ticker}: HTTP ${res.status}`);
-  return extrairFundamentus(new TextDecoder("latin1").decode(await res.arrayBuffer()));
+type Fundamentus = ReturnType<typeof extrairFundamentus>;
+
+/**
+ * Busca de novo no Fundamentus só quando pode ter dado novo:
+ * - ações: a cada 30 dias, ou a cada 3 dias quando já passaram 90 dias do último balanço (temporada de resultado);
+ * - FIIs: por semana (relatórios mensais).
+ */
+export function precisaAtualizarFundamentus(f: Fundamentus, idadeDias: number, hoje = new Date()): boolean {
+  if (!f.encontrado) return idadeDias >= 7;
+  if (f.fii) return idadeDias >= 7;
+  if (idadeDias >= 30) return true;
+  const m = f.ultBalanco?.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (!m) return idadeDias >= 7;
+  const balanco = Date.UTC(+m[3], +m[2] - 1, +m[1]);
+  return hoje.getTime() - balanco > 90 * DIA && idadeDias >= 3;
+}
+
+async function fundamentus(ticker: string): Promise<Fundamentus> {
+  const chave = `fundamentus:${ticker}`;
+  const c = await lerCache<Fundamentus>(chave);
+  if (c && !precisaAtualizarFundamentus(c.dados, c.idadeDias)) {
+    usoFontes.fundamentusCache++;
+    return { ...c.dados, variacaoDia: null }; // a variação do dia guardada é velha
+  }
+  try {
+    const res = await fetch(`https://www.fundamentus.com.br/detalhes.php?papel=${ticker}`, { headers: UA });
+    if (!res.ok) throw new Error(`Fundamentus ${ticker}: HTTP ${res.status}`);
+    const f = extrairFundamentus(new TextDecoder("latin1").decode(await res.arrayBuffer()));
+    usoFontes.fundamentus++;
+    await salvarCache(chave, f);
+    return f;
+  } catch (err) {
+    if (c) return { ...c.dados, variacaoDia: null };
+    throw err;
+  }
+}
+
+/** Indicadores que dependem do preço (P/L, P/VP, DY...) acompanham o preço de hoje quando o balanço veio do cache. */
+export function ajustarAoPreco(f: Fundamentus, precoHoje: number | null): Fundamentus {
+  if (!precoHoje || !f.preco || f.preco === precoHoje) return f;
+  const k = precoHoje / f.preco;
+  const vezes = (v: number | null) => (v == null ? null : v * k);
+  const dividido = (v: number | null) => (v == null ? null : v / k);
+  return {
+    ...f,
+    preco: precoHoje,
+    dy: dividido(f.dy),
+    fundamentos: f.fundamentos ? { ...f.fundamentos, pl: vezes(f.fundamentos.pl), pvp: vezes(f.fundamentos.pvp) } : null,
+    fii: f.fii
+      ? { ...f.fii, pvp: vezes(f.fii.pvp), dy: dividido(f.fii.dy), ffoYield: dividido(f.fii.ffoYield), valorMercado: vezes(f.fii.valorMercado) }
+      : null,
+  };
 }
 
 /** Cotação do dólar em reais (Yahoo). */
@@ -265,7 +369,7 @@ export async function buscarAcao(ticker: string): Promise<DadosAcao> {
     throw new Error(`${y.reason?.message ?? y.reason} | ${f.reason?.message ?? f.reason}`);
   }
   const yv = y.status === "fulfilled" ? y.value : null;
-  const fv = f.status === "fulfilled" ? f.value : null;
+  const fv = f.status === "fulfilled" ? ajustarAoPreco(f.value, yv?.preco ?? null) : null;
   if (!yv) console.warn(`  ${ticker}: sem histórico de dividendos (Yahoo falhou), Bazin ficará vazio`);
   const noFundamentus = !!fv?.encontrado;
   // O Fundamentus respondeu mas não conhece o código e ele termina em 11: é ETF (units de ações e FIIs estão lá)

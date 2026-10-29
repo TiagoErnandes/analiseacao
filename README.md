@@ -14,9 +14,12 @@ Todo dia útil às 7h o agendador:
 4. Mede o **peso de cada setor** na carteira. Setor acima de 30% não ganha bônus de "peso faltando" e recebe alerta.
 5. A **IA é opcional e barata**. O modo é escolhido no painel, ao lado do botão "Rodar análise agora":
    - **Sem IA** (grátis): o app decide só pelo cálculo (preço teto, qualidade e score).
-   - **Econômico** (padrão, ≈ R$ 0,05 por análise): o Claude Haiku dá nota e sinal aos ativos da carteira e aos 8 melhores de fora, sem pesquisa na web.
-   - **Completo** (≈ R$ 1 a 2): o Claude Sonnet faz até 5 buscas na web e decide. A pesquisa do dia fica guardada e não é paga de novo se você rodar outra vez.
-   - Se a IA falhar (por exemplo, sem créditos), a análise termina mesmo assim, só pelo cálculo. O custo de cada análise e do mês aparece no painel.
+   - **Econômico** (padrão, ≈ R$ 0,02 por análise): o Claude Haiku dá nota e sinal aos ativos da carteira e aos 8 melhores de fora, sem pesquisa na web.
+   - **Completo** (≈ R$ 0,30 a 0,70): o Claude Haiku faz até 5 buscas na web (ler resultados de busca é a parte cara, e o Haiku custa 20x menos) e o Claude Sonnet toma a decisão final. A pesquisa do dia fica guardada e não é paga de novo se você rodar outra vez.
+   - **Só reanalisa o que mudou**: cada ativo guarda uma "assinatura" dos dados que a IA viu (balanço, dividendos, qualidade, alertas e a margem até o teto em faixas de 5 pontos). Se nada mudou, a nota anterior é reaproveitada (vale 7 dias no Econômico e 3 no Completo). Se nenhum ativo mudou, a IA nem é chamada. Tabela `cache_ia`.
+   - **Batch API na análise das 7h**: a análise automática vai pela Batch API da Anthropic, que cobra metade do preço dos tokens. Se o lote não terminar em 60 minutos, ela é feita do jeito normal. O botão "Rodar análise agora" continua imediato.
+   - **Dados guardados no banco** (tabela `cache_fontes`): o balanço do Fundamentus só é buscado de novo a cada 30 dias, ou a cada 3 dias quando já passaram 90 dias do último balanço (época de resultado); FIIs, por semana. O histórico de 6 anos do Yahoo é renovado por semana. Todo dia só o preço é buscado, e P/L, P/VP e DY são recalculados com ele.
+   - Se a IA falhar (por exemplo, sem créditos), a análise termina mesmo assim, só pelo cálculo. O custo e a economia do mês aparecem no painel.
 6. Salva tudo no Postgres. O site mostra o resultado:
    - **Painel**: patrimônio, rentabilidade, renda passiva e DY da carteira, ações do dia, cenário, simulador de aporte, alocação por setor e pontos de atenção.
    - **Ranking**: as ações analisadas com filtros, busca, ordenação por qualquer coluna e o comentário da IA.
