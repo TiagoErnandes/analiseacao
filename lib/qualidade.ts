@@ -1,6 +1,8 @@
 // Nota de qualidade (0 a 10) calculada só com números do balanço, sem IA.
 // Ideia: para previdência, só vale comprar barato o que é bom. Uma ação "barata" com nota baixa costuma ser armadilha.
+import type { HistoricoLucro } from "./cvm";
 import type { DadosFii, Fundamentos, HistoricoPreco } from "./mercado";
+import type { ConsistenciaDividendos } from "./valuation";
 
 export type Qualidade = { nota: number | null; pontos: string[]; alertas: string[] };
 
@@ -15,6 +17,8 @@ export function calcularQualidade(d: {
   lpa: number | null;
   dpa12m: number | null;
   fundamentos: Fundamentos | null;
+  lucros?: HistoricoLucro | null; // lucro de cada ano nos balanços da CVM (até 10 anos)
+  dividendos?: ConsistenciaDividendos | null; // dividendos de cada ano (até 10 anos)
 }): Qualidade {
   const f = d.fundamentos;
   const pontos: string[] = [];
@@ -43,6 +47,19 @@ export function calcularQualidade(d: {
 
   // Crescimento de receita em 5 anos (taxa anual)
   criterio(2, f?.crescReceita5a, (v) => (v >= 0.05 ? 2 : v > 0 ? 1 : 0), "receita crescendo");
+
+  // Constância em 10 anos: para previdência, lucro e dividendo todo ano valem mais que um ano excelente
+  const l = d.lucros;
+  if (l && l.anos >= 5) {
+    criterio(2, l.anosComLucro / l.anos, (v) => (v >= 1 ? 2 : v >= 0.8 ? 1 : 0), `lucro em todos os ${l.anos} anos`);
+    if (l.anosComLucro < l.anos) alertas.push(`prejuízo em ${l.anos - l.anosComLucro} dos últimos ${l.anos} anos`);
+    criterio(1, l.crescimentoAnual, (v) => (v >= 0.03 ? 1 : v >= 0 ? 0.5 : 0), "lucro crescendo em 10 anos");
+  }
+  const dv = d.dividendos;
+  if (dv && dv.anos >= 5) {
+    criterio(1, dv.anosPagos / dv.anos - dv.cortes * 0.1, (v) => (v >= 0.95 ? 1 : v >= 0.7 ? 0.5 : 0), `dividendos em ${dv.anosPagos} de ${dv.anos} anos`);
+    if (dv.cortes >= 3) alertas.push(`cortou o dividendo pela metade ${dv.cortes} vezes em ${dv.anos} anos`);
+  }
 
   if (!ehFinanceira(f)) {
     // Endividamento, margem e liquidez não se aplicam a bancos e seguradoras

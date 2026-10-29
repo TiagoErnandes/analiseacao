@@ -7,15 +7,21 @@ import { buscarAcao, buscarExterior, cotacaoDolar, usoFontes, zerarUsoFontes, ty
 import { SO_YAHOO, infoTipo } from "./tipos";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, type Qualidade } from "./qualidade";
-import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, scoreFinal, type Indicadores } from "./valuation";
+import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, scoreFinal, type Indicadores } from "./valuation";
+import { juroReal, yieldExigido, type YieldExigido } from "./juros";
+import {
+  atualizarDocumentosCvm, atualizarLucrosCvm, documentosRecentes, historicoLucros, infoB3, proventosRecentes,
+  type Documento, type HistoricoLucro, type ProventoAnunciado,
+} from "./cvm";
 
 
 function hojeSaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 }
 
-/** Preço teto e qualidade conforme o tipo de ativo. */
-function avaliar(d: DadosAcao): { ind: Indicadores; qual: Qualidade } {
+/** Preço teto e qualidade conforme o tipo de ativo. `exigido`: yield do Bazin ligado ao juro real. */
+function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | null): { ind: Indicadores; qual: Qualidade } {
+  const hoje = new Date();
   if (d.tipo === "fii") {
     const ind = calcularIndicadoresFii({
       preco: d.preco,
@@ -23,7 +29,7 @@ function avaliar(d: DadosAcao): { ind: Indicadores; qual: Qualidade } {
       ffoCota: d.fii?.ffoCota ?? null,
       dyFundamentus: d.dyFundamentus,
       proventos: d.proventos,
-    });
+    }, hoje, exigido.fii);
     return { ind, qual: calcularQualidadeFii(d.fii, ind.dpa12m) };
   }
   if (d.tipo === "cripto") {
@@ -35,11 +41,17 @@ function avaliar(d: DadosAcao): { ind: Indicadores; qual: Qualidade } {
   }
   if (d.tipo !== "acao") {
     // ETF, BDR, stock, ETF internacional e REIT: Bazin se pagam dividendos, senão média de 12 meses
-    const ind = calcularIndicadoresEtf({ preco: d.preco, media12m: d.historico?.media12m ?? null, proventos: d.proventos });
+    const ind = calcularIndicadoresEtf({ preco: d.preco, media12m: d.historico?.media12m ?? null, proventos: d.proventos }, hoje, exigido.acao);
     return { ind, qual: calcularQualidadeEtf(d.historico, ind.dy12m) };
   }
-  const ind = calcularIndicadores(d);
-  return { ind, qual: calcularQualidade({ roe: d.roe, lpa: d.lpa, dpa12m: ind.dpa12m, fundamentos: d.fundamentos }) };
+  const ind = calcularIndicadores(d, hoje, exigido.acao);
+  return {
+    ind,
+    qual: calcularQualidade({
+      roe: d.roe, lpa: d.lpa, dpa12m: ind.dpa12m, fundamentos: d.fundamentos,
+      lucros, dividendos: consistenciaDividendos(d.proventos, hoje),
+    }),
+  };
 }
 
 let custoDaExecucao: CustoIa | null = null;
@@ -57,6 +69,8 @@ function assinatura(l: Record<string, unknown>, estrategia: string, modo: string
   const base = [
     modo, estrategia, l.na_carteira, l.tipo, l.setor, r(l.margem, 0.05), r(l.qualidade, 0.5), r(l.dy_12m, 0.005),
     r(l.lpa, 0.01), r(l.vpa, 0.01), r(l.dpa_12m, 0.01), [...((l.alertas as string[]) ?? [])].sort().join("|"),
+    // Documento novo na CVM ou provento anunciado na B3 também pede uma nova olhada
+    JSON.stringify(l.documentos_cvm ?? null), JSON.stringify(l.proventos_anunciados ?? null),
   ];
   return createHash("sha1").update(JSON.stringify(base)).digest("hex");
 }
@@ -136,7 +150,36 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       `histórico Yahoo ${usoFontes.historico} buscados / ${usoFontes.historicoCache} do banco`,
   );
 
-  // 2) Preço teto, qualidade e pesos da carteira (por ação e por setor)
+  // 2) Fontes oficiais: juro real (preço teto), CVM (fatos relevantes e lucro de 10 anos) e B3 (proventos anunciados).
+  // Qualquer uma pode falhar sem derrubar a análise.
+  const juro = await juroReal().catch(() => null);
+  const exigido = yieldExigido(juro);
+  console.log(
+    `Yield exigido: ações ${(exigido.acao * 100).toFixed(1)}%, FIIs ${(exigido.fii * 100).toFixed(1)}%` +
+      (juro ? ` (juro real ${(juro.taxa * 100).toFixed(2)}%, ${juro.fonte}, ${juro.data})` : " (sem juro real: mínimos fixos)"),
+  );
+  await query("insert into config (chave, valor) values ('yield_exigido', $1) on conflict (chave) do update set valor = excluded.valor", [
+    JSON.stringify(exigido),
+  ]);
+  await atualizarDocumentosCvm()
+    .then((n) => n && console.log(`CVM: ${n} documentos recentes lidos`))
+    .catch((e) => console.warn(`  CVM documentos: ${e.message}`));
+  await atualizarLucrosCvm()
+    .then((f) => f.length && console.log(`CVM: lucros anuais de ${f.join(", ")}`))
+    .catch((e) => console.warn(`  CVM balanços: ${e.message}`));
+  const b3 = new Map<string, { codigoCvm: number | null; proventos: ProventoAnunciado[] }>();
+  for (const d of dados.filter((x) => x.tipo === "acao")) {
+    const info = await infoB3(d.ticker).catch(() => null);
+    if (info) b3.set(d.ticker, info);
+  }
+  const codigos = [...new Set([...b3.values()].map((i) => i.codigoCvm).filter((c): c is number => !!c))];
+  const [docs, lucros] = await Promise.all([
+    documentosRecentes(codigos).catch(() => new Map<number, Documento[]>()),
+    historicoLucros(codigos).catch(() => new Map<number, HistoricoLucro>()),
+  ]);
+  const cvmDe = (t: string) => b3.get(t)?.codigoCvm ?? null;
+
+  // 3) Preço teto, qualidade e pesos da carteira (por ação e por setor)
   // Na estratégia Oportunidade não há bônus por "peso faltando" e o limite por setor é mais folgado.
   const estrategia = await estrategiaAtual();
   const LIMITE_SETOR = estrategia.limiteSetor;
@@ -159,7 +202,12 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   }
 
   const linhas = dados.map((d) => {
-    const { ind, qual } = avaliar(d);
+    const cd = cvmDe(d.ticker);
+    const lucro = cd ? (lucros.get(cd) ?? null) : null;
+    const { ind, qual } = avaliar(d, exigido, lucro);
+    const div10 = d.tipo === "acao" || d.tipo === "fii" ? consistenciaDividendos(d.proventos) : null;
+    const documentos = cd ? (docs.get(cd) ?? []) : [];
+    const anunciados = proventosRecentes(b3.get(d.ticker)?.proventos ?? [], hoje);
     const pos = minha.get(d.ticker);
     const setor = setorDe(d);
     const pesoAtual = pos && totalCarteira > 0 ? valorPos(d) / totalCarteira : null;
@@ -191,7 +239,19 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       dy_12m: ind.dy12m,
       dpa_medio: ind.dpaMedio,
       roe: d.roe,
-      indicadores: d.tipo === "fii" ? d.fii : d.tipo === "acao" ? d.fundamentos : d.historico,
+      indicadores:
+        d.tipo === "fii"
+          ? { ...d.fii, dividendos10a: div10 }
+          : d.tipo === "acao"
+            ? { ...d.fundamentos, lucros10a: lucro, dividendos10a: div10, documentosCvm: documentos, proventosAnunciados: anunciados, yieldExigido: exigido.acao }
+            : d.historico,
+      // Para a IA: constância em 10 anos e fontes oficiais recentes (só o essencial, para gastar poucos tokens)
+      lucro_10a: lucro ? { anos: lucro.anos, anos_com_lucro: lucro.anosComLucro, crescimento_anual: lucro.crescimentoAnual } : null,
+      dividendos_10a: div10 ? { anos: div10.anos, anos_pagos: div10.anosPagos, cortes_pela_metade: div10.cortes } : null,
+      documentos_cvm: documentos.length ? documentos.map((x) => `${x.data} ${x.categoria}${x.assunto ? `: ${x.assunto.slice(0, 160)}` : ""}`) : null,
+      proventos_anunciados: anunciados.length
+        ? anunciados.map((p) => `${p.tipo} ${p.valor != null ? `R$ ${p.valor}` : ""} aprovado ${p.aprovadoEm ?? "?"}, data-com ${p.dataCom ?? "?"}`)
+        : null,
       qualidade: qual.nota,
       pontos_fortes: qual.pontos,
       teto_bazin: ind.bazin,
@@ -203,7 +263,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
     };
   });
 
-  // 3) IA (opcional e barata). Sem créditos ou com erro, o app decide só pelo cálculo.
+  // 4) IA (opcional e barata). Sem créditos ou com erro, o app decide só pelo cálculo.
   const paraIa: LinhaParaIa[] = linhas
     .map(({ logo, variacao_dia, indicadores, pontos_fortes, nome, ...resto }) => resto)
     .sort((a, b) => b.score_sem_ia - a.score_sem_ia);
@@ -259,6 +319,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
         const r = await analisarComIa(mudaram, hoje, modo, guardada?.pesquisa ?? null, estrategia.atual, {
           reaproveitadas: ref,
           lote: origem === "agendador", // a análise das 7h pode esperar: Batch API, metade do preço
+          yieldExigido: { acao: exigido.acao, fii: exigido.fii, juroReal: juro?.taxa ?? null },
         });
         ia = r.saida;
         ia.acoes = [...r.saida.acoes, ...[...reaproveitadas.values()].filter((a) => !r.saida.acoes.some((n) => n.ticker.toUpperCase() === a.ticker))];
@@ -294,7 +355,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   custoDaExecucao = custo;
   const porTicker = new Map(ia.acoes.map((a) => [a.ticker.toUpperCase(), a]));
 
-  // 4) Salva
+  // 5) Salva
   const registros: Analise[] = linhas.map((l) => {
     const a = porTicker.get(l.ticker);
     return {

@@ -1,7 +1,9 @@
 // Análise com o Claude, pensada para custar pouco:
 // - só os ativos que importam e que MUDARAM vão para a IA (os outros reaproveitam a nota anterior, ver lib/analise.ts);
 // - modo "economico": Claude Haiku, uma chamada só, sem busca na web (centavos por análise);
-// - modo "completo": pesquisa na web com o Haiku (barato para ler resultados de busca) e decisão final com o Sonnet;
+// - pesquisa de notícias: Gemini com Google Search (grátis, se houver GEMINI_API_KEY) nos modos econômico e completo;
+//   no completo, se o Gemini falhar ou passar do limite grátis, a pesquisa é feita pelo Haiku (pago, barato);
+// - modo "completo": decisão final com o Sonnet;
 // - análise automática (agendador): pela Batch API, que cobra metade do preço dos tokens;
 // - modo "sem_ia": nenhuma chamada (o app decide só pelo cálculo).
 import Anthropic from "@anthropic-ai/sdk";
@@ -22,6 +24,11 @@ const ESPERA_LOTE_MIN = 60;
 // Preço por milhão de tokens (entrada, saída) em dólar, e por busca na web
 const PRECO: Record<string, [number, number]> = { "claude-haiku-5-5": [0.1, 0.5], "claude-sonnet-5-5": [2, 10] };
 const PRECO_BUSCA = 10 / 1000;
+/**
+ * Gemini usado na pesquisa. O 2.5 Flash é o que tem Google Search no plano grátis (500 pesquisas por dia; usamos 1).
+ * No plano grátis o Google pode usar o texto enviado para treinar: vão só tickers e perguntas públicas, nada da carteira.
+ */
+const MODELO_GEMINI = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 /** O que a IA deve priorizar em cada estratégia da carteira. */
 const REGRAS: Record<Estrategia, string> = {
   oportunidade: `Estratégia OPORTUNIDADE (carteira no começo): priorize as melhores oportunidades de preço com qualidade: maior margem até o teto,
@@ -51,10 +58,13 @@ export type LinhaParaIa = { ticker: string; na_carteira: boolean; score_sem_ia: 
 const SYSTEM = `Você é um analista de investimentos focado em previdência privada e buy and hold (ações, FIIs, ETFs, BDRs, ações e REITs americanos e cripto).
 O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele valoriza empresas perenes, lucro consistente, dividendos estáveis,
 comprar abaixo do preço teto e diversificação ao longo do tempo.
-O preço teto já vem calculado de forma conservadora: ações por Bazin (dividendo ÷ 6%) ou Graham; FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ 8%;
+O preço teto já vem calculado de forma conservadora: ações por Bazin (dividendo ÷ yield exigido, ligado ao juro real do Tesouro IPCA+, mínimo 6%) ou Graham;
+FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ yield exigido (mínimo 8%);
 ETFs, BDRs, stocks e REITs por Bazin se pagam dividendos, senão pela média de 12 meses; cripto não tem teto (trate como parcela pequena e de alto risco).
 "margem" > 0 significa abaixo do teto. "qualidade" (0 a 10) vem do balanço ou do histórico. "alertas" lista problemas já detectados; leve-os em conta.
 Ativos em dólar têm "moeda" USD e "cambio" em reais por dólar.
+"lucro_10a" e "dividendos_10a" mostram a constância em até 10 anos. "documentos_cvm" são fatos relevantes e comunicados oficiais recentes,
+e "proventos_anunciados" vêm da B3: são fontes oficiais, pese-as mais que notícias.
 Seja direto, em português do Brasil, e não invente números: use a tabela e, quando houver, a pesquisa.`;
 
 const Acao = z.object({
@@ -96,6 +106,35 @@ function somarCusto(custo: CustoIa, msg: Anthropic.Beta.BetaMessage, modelo: str
 }
 
 type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
+
+/**
+ * Pesquisa com o Gemini e a Busca Google (API generateContent). Devolve null sem chave; erro (ex.: limite grátis) sobe.
+ * As fontes citadas vão no fim do texto.
+ */
+export async function pesquisarComGemini(pergunta: string): Promise<string | null> {
+  const chave = process.env.GEMINI_API_KEY;
+  if (!chave) return null;
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODELO_GEMINI}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": chave, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: "Você é um pesquisador do mercado financeiro brasileiro. Responda em português do Brasil, com datas e fontes. Não invente." }] },
+      contents: [{ role: "user", parts: [{ text: pergunta }] }],
+      tools: [{ google_search: {} }],
+    }),
+    signal: AbortSignal.timeout(180_000),
+  });
+  if (!res.ok) {
+    const corpo = (await res.text()).slice(0, 300);
+    throw new Error(`Gemini HTTP ${res.status}${res.status === 429 ? " (limite grátis do dia)" : ""}: ${corpo}`);
+  }
+  const j = (await res.json()) as any;
+  const c = j?.candidates?.[0];
+  const texto = ((c?.content?.parts ?? []) as { text?: string }[]).map((p) => p.text ?? "").join("").trim();
+  if (!texto) throw new Error(`Gemini sem resposta (${c?.finishReason ?? "vazio"})`);
+  const fontes = [...new Set(((c?.groundingMetadata?.groundingChunks ?? []) as any[]).map((g) => g?.web?.title).filter(Boolean))];
+  return fontes.length ? `${texto}\n\nFontes (Busca Google): ${fontes.slice(0, 15).join(", ")}` : texto;
+}
 
 /**
  * Faz uma chamada. Com `lote`, vai pela Batch API (50% mais barato, pode levar alguns minutos);
@@ -143,7 +182,7 @@ export async function analisarComIa(
   modo: Exclude<ModoIa, "sem_ia">,
   pesquisaGuardada: string | null,
   estrategia: Estrategia = "balanceamento",
-  opcoes: { reaproveitadas?: NotaReaproveitada[]; lote?: boolean } = {},
+  opcoes: { reaproveitadas?: NotaReaproveitada[]; lote?: boolean; yieldExigido?: { acao: number; fii: number; juroReal: number | null } } = {},
 ): Promise<{ saida: SaidaIa; custo: CustoIa; pesquisa: string | null }> {
   const cfg = CONFIG[modo];
   const lote = !!opcoes.lote;
@@ -157,10 +196,23 @@ export async function analisarComIa(
   const tabela = JSON.stringify(selecao);
   console.log(`  IA (${modo}, ${cfg.modelo}${lote ? ", lote" : ""}): ${selecao.length} ativos novos ou alterados, ${reaproveitadas.length} reaproveitados`);
 
-  // 1) Pesquisa curta na web (só no modo completo, uma vez por dia, com o Haiku)
+  // 1) Pesquisa de notícias, uma vez por dia: Gemini grátis primeiro; no completo, Haiku com busca se o Gemini falhar
   let pesquisa = pesquisaGuardada;
+  let pesquisaPor: string | null = pesquisa ? "guardada" : null;
+  const foco = [...selecao.map((l) => l.ticker), ...reaproveitadas.filter((r) => r.na_carteira).map((r) => r.ticker)].join(", ");
+  const pedido = (buscas: number | null) => `Hoje é ${hoje}.${buscas ? ` Use no máximo ${buscas} buscas, agrupando vários ativos por busca.` : ""}
+Pesquise: (1) Selic, IPCA, Ibovespa e dólar hoje, e as notícias de política e economia do Brasil que mais mexem com a bolsa;
+(2) resultados, fatos relevantes, proventos, rebaixamentos, processos e mudanças de gestão nos últimos 30 dias para: ${foco}.
+Responda em tópicos curtos: um de cenário e um por ticker com novidade (com data e fonte). Tickers sem novidade: não mencione.`;
+  if (!pesquisa && process.env.GEMINI_API_KEY) {
+    try {
+      pesquisa = await pesquisarComGemini(pedido(null));
+      if (pesquisa) pesquisaPor = `Gemini (${MODELO_GEMINI})`;
+    } catch (err) {
+      console.warn(`  Pesquisa com Gemini falhou: ${(err as Error).message}${cfg.buscas > 0 ? "; usando o Haiku" : ""}`);
+    }
+  }
   if (cfg.buscas > 0 && !pesquisa) {
-    const foco = [...selecao.map((l) => l.ticker), ...reaproveitadas.filter((r) => r.na_carteira).map((r) => r.ticker)].join(", ");
     const r = await chamar(
       client,
       {
@@ -169,21 +221,16 @@ export async function analisarComIa(
         system: SYSTEM,
         output_config: { effort: "low" },
         tools: [{ type: "web_search_20250305", name: "web_search", max_uses: cfg.buscas, user_location: { type: "approximate", country: "BR" } }],
-        messages: [
-          {
-            role: "user",
-            content: `Hoje é ${hoje}. Use no máximo ${cfg.buscas} buscas, agrupando vários ativos por busca.
-Procure: (1) Selic, Ibovespa e dólar hoje; (2) fatos relevantes, resultados e proventos anunciados nos últimos 30 dias para: ${foco}.
-Responda em tópicos curtos, um por ticker com novidade (com data e fonte). Tickers sem novidade: não mencione.`,
-          },
-        ],
+        messages: [{ role: "user", content: pedido(cfg.buscas) }],
       },
       lote,
     );
     somarCusto(custo, r.msg, MODELO_PESQUISA, r.lote);
     if (r.msg.stop_reason === "refusal") throw new Error("A IA recusou a pesquisa do dia.");
     pesquisa = textoDe(r.msg.content) || null;
+    if (pesquisa) pesquisaPor = "Claude Haiku";
   }
+  if (pesquisaPor) console.log(`  Pesquisa do dia: ${pesquisaPor}`);
 
   // 2) Decisão com saída JSON validada
   const ref = reaproveitadas.length
@@ -201,7 +248,12 @@ Responda em tópicos curtos, um por ticker com novidade (com data e fonte). Tick
         {
           role: "user",
           content: `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia (entre a tabela e os ativos sem mudança).
-${REGRAS[estrategia]}
+${REGRAS[estrategia]}${
+            opcoes.yieldExigido
+              ? `\nYield exigido hoje no preço teto: ações ${(opcoes.yieldExigido.acao * 100).toFixed(1)}%, FIIs ${(opcoes.yieldExigido.fii * 100).toFixed(1)}%` +
+                (opcoes.yieldExigido.juroReal != null ? ` (juro real do Tesouro IPCA+: ${(opcoes.yieldExigido.juroReal * 100).toFixed(2)}%).` : ".")
+              : ""
+          }
 Não recomende COMPRAR com prejuízo, payout insustentável ou dado claramente errado. Se nenhum atender, escolha o mais próximo e diga isso.
 
 Tabela (ordenada pela nota do cálculo, score_sem_ia):

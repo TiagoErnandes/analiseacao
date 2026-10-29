@@ -1,5 +1,5 @@
 // Dados de mercado gratuitos:
-// - Yahoo Finance: preço atual, histórico mensal de preços e de dividendos (até 6 anos).
+// - Yahoo Finance: preço atual, histórico mensal de preços e de dividendos (até 11 anos).
 // - Fundamentus: balanço das ações (LPA, VPA, ROE...) e indicadores dos FIIs (P/VP, FFO, vacância...).
 // ETFs não estão no Fundamentus: usam só o Yahoo.
 
@@ -8,7 +8,7 @@ import { simboloYahoo, type Tipo } from "./tipos";
 
 // Cache das fontes no banco: balanço e histórico mudam pouco, então só buscamos de novo quando pode ter novidade.
 const DIA = 24 * 60 * 60 * 1000;
-async function lerCache<T>(chave: string): Promise<{ dados: T; idadeDias: number; buscadoEm: Date } | null> {
+export async function lerCache<T>(chave: string): Promise<{ dados: T; idadeDias: number; buscadoEm: Date } | null> {
   try {
     const [c] = await query<{ dados: T; buscado_em: Date }>("select dados, buscado_em from cache_fontes where chave = $1", [chave]);
     return c ? { dados: c.dados, buscadoEm: new Date(c.buscado_em), idadeDias: (Date.now() - new Date(c.buscado_em).getTime()) / DIA } : null;
@@ -16,7 +16,7 @@ async function lerCache<T>(chave: string): Promise<{ dados: T; idadeDias: number
     return null; // sem banco (testes) ou tabela ainda não criada: busca na fonte
   }
 }
-async function salvarCache(chave: string, dados: unknown) {
+export async function salvarCache(chave: string, dados: unknown) {
   try {
     await query(
       `insert into cache_fontes (chave, dados, buscado_em) values ($1, $2, now())
@@ -93,9 +93,9 @@ export function numeroBr(txt: string | undefined): number | null {
 
 type HistoricoBruto = { meses: { fechamento: number; volume: number }[]; proventos: { valor: number; data: number }[]; nome: string | null; preco: number | null };
 
-/** Histórico mensal de 6 anos (preços e dividendos). É o pedido pesado: fica guardado e é renovado por semana ou na virada do mês. */
+/** Histórico mensal de 11 anos (preços e dividendos, para medir 10 anos completos). É o pedido pesado: fica guardado e é renovado por semana ou na virada do mês. */
 async function historicoYahoo(simbolo: string): Promise<HistoricoBruto & { fresco: boolean }> {
-  const chave = `yahoo:${simbolo}`;
+  const chave = `yahoo11:${simbolo}`; // chave nova ao passar de 6 para 11 anos (busca de novo uma vez)
   const c = await lerCache<HistoricoBruto>(chave);
   const virouMes = c ? c.buscadoEm.getUTCMonth() !== new Date().getUTCMonth() : true;
   if (c && c.idadeDias < 7 && !virouMes) {
@@ -103,7 +103,7 @@ async function historicoYahoo(simbolo: string): Promise<HistoricoBruto & { fresc
     return { ...c.dados, fresco: false };
   }
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=6y&interval=1mo&events=div`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=11y&interval=1mo&events=div`;
     const res = await fetch(url, { headers: UA });
     if (!res.ok) throw new Error(`Yahoo ${simbolo}: HTTP ${res.status}`);
     const r = ((await res.json()) as any)?.chart?.result?.[0];

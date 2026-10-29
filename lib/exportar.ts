@@ -1,5 +1,6 @@
 // Exporta a carteira com tudo o que o site sabe, para mandar a outra IA analisar (Markdown, JSON ou CSV).
 import { carregarPainel } from "./painel";
+import { yieldAtual } from "./juros";
 import { infoTipo } from "./tipos";
 import { brl, dataBr, num, pct, pctSinal } from "./format";
 
@@ -24,7 +25,8 @@ const fmtIndicador = (k: string, v: unknown) =>
   typeof v !== "number" ? String(v) : EM_PCT.has(k) ? pct(v) : EM_REAIS.has(k) ? brl(v).replace(",00", "") : num(v);
 
 export async function montarExportacao() {
-  const p = await carregarPainel();
+  const [p, y] = await Promise.all([carregarPainel(), yieldAtual()]);
+  const yp = (v: number) => `${(v * 100).toFixed(1).replace(".", ",")}%`;
   const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 
   const posicoes = [...p.posicoes]
@@ -96,8 +98,10 @@ export async function montarExportacao() {
     gerado_em: hoje,
     data_da_analise: p.rel?.data ?? null,
     observacoes:
-      "Percentuais em fração (0,12 = 12%). Valores *_brl em reais; preços na moeda do ativo. Preço teto: Bazin (dividendo ÷ 6%) ou Graham para ações; " +
-      "FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ 8%. margem_ate_teto > 0 = abaixo do teto. Qualidade 0-10 vem do balanço/histórico.",
+      `Percentuais em fração (0,12 = 12%). Valores *_brl em reais; preços na moeda do ativo. Preço teto: Bazin (dividendo ÷ ${yp(y.acao)}) ou Graham para ações; ` +
+      `FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ ${yp(y.fii)}` +
+      (y.juroReal ? ` (yield exigido ligado ao juro real do Tesouro IPCA+, ${yp(y.juroReal.taxa)})` : "") +
+      ". margem_ate_teto > 0 = abaixo do teto. Qualidade 0-10 vem do balanço/histórico.",
     estrategia: {
       atual: p.estrategia.atual,
       limite_por_setor: p.estrategia.limiteSetor,

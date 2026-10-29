@@ -19,7 +19,7 @@ function Marca() {
           <path d="M15 7h6v6" />
         </svg>
       </span>
-      <span>
+      <span className="hidden min-[400px]:inline">
         Preço<span className="text-marca">Teto</span>
       </span>
     </Link>
