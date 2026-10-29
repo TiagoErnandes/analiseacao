@@ -1,8 +1,9 @@
 // A análise do dia. Use rodarAnalise() (registra a execução e impede duas ao mesmo tempo).
 import { atualizarIndices } from "./indices";
 import { estrategiaAtual } from "./estrategia";
-import { analisarComIa, type CustoIa, type LinhaParaIa, type ModoIa, type SaidaIa } from "./ai";
-import { buscarAcao, buscarExterior, cotacaoDolar, type DadosAcao } from "./mercado";
+import { createHash } from "node:crypto";
+import { analisarComIa, selecionarParaIa, type CustoIa, type LinhaParaIa, type ModoIa, type NotaReaproveitada, type SaidaIa } from "./ai";
+import { buscarAcao, buscarExterior, cotacaoDolar, usoFontes, zerarUsoFontes, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, type Qualidade } from "./qualidade";
@@ -42,6 +43,23 @@ function avaliar(d: DadosAcao): { ind: Indicadores; qual: Qualidade } {
 }
 
 let custoDaExecucao: CustoIa | null = null;
+let economiaDaExecucao = 0; // US$ que deixaram de ser gastos (notas reaproveitadas + desconto do lote)
+
+/** Por quantos dias a nota da IA vale para um ativo cujos dados não mudaram. */
+const VALIDADE_NOTA_DIAS: Record<Exclude<ModoIa, "sem_ia">, number> = { economico: 7, completo: 3 };
+
+/**
+ * O que precisa mudar para a IA olhar o ativo de novo: balanço (LPA, VPA, dividendos), qualidade, alertas, setor
+ * e o preço só quando ele anda o bastante para mudar a margem em 5 pontos.
+ */
+function assinatura(l: Record<string, unknown>, estrategia: string, modo: string): string {
+  const r = (v: unknown, passo: number) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v / passo) : null);
+  const base = [
+    modo, estrategia, l.na_carteira, l.tipo, l.setor, r(l.margem, 0.05), r(l.qualidade, 0.5), r(l.dy_12m, 0.005),
+    r(l.lpa, 0.01), r(l.vpa, 0.01), r(l.dpa_12m, 0.01), [...((l.alertas as string[]) ?? [])].sort().join("|"),
+  ];
+  return createHash("sha1").update(JSON.stringify(base)).digest("hex");
+}
 let pesquisaDoDia: string | null = null;
 
 export async function modoIa(): Promise<ModoIa> {
@@ -83,8 +101,10 @@ function decisaoPorCalculo(
   };
 }
 
-export async function executarAnalise() {
+export async function executarAnalise(origem: "agendador" | "botao" | "manual" = "manual") {
   custoDaExecucao = null;
+  economiaDaExecucao = 0;
+  zerarUsoFontes();
   pesquisaDoDia = null;
   const hoje = hojeSaoPaulo();
   await migrar();
@@ -111,6 +131,10 @@ export async function executarAnalise() {
     }
   }
   if (dados.length === 0) throw new Error("Nenhum dado de mercado obtido. Yahoo/Fundamentus podem estar fora do ar.");
+  console.log(
+    `Fontes: Fundamentus ${usoFontes.fundamentus} buscados / ${usoFontes.fundamentusCache} do banco; ` +
+      `histórico Yahoo ${usoFontes.historico} buscados / ${usoFontes.historicoCache} do banco`,
+  );
 
   // 2) Preço teto, qualidade e pesos da carteira (por ação e por setor)
   // Na estratégia Oportunidade não há bônus por "peso faltando" e o limite por setor é mais folgado.
@@ -184,22 +208,87 @@ export async function executarAnalise() {
     .map(({ logo, variacao_dia, indicadores, pontos_fortes, nome, ...resto }) => resto)
     .sort((a, b) => b.score_sem_ia - a.score_sem_ia);
   const modo = await modoIa();
+  const reaproveitadas = new Map<string, SaidaIa["acoes"][number]>();
   let ia: SaidaIa;
   let custo: CustoIa | null = null;
   if (modo === "sem_ia") {
     ia = decisaoPorCalculo(linhas, "Análise feita só pelo cálculo (modo sem IA).");
   } else {
     try {
-      const [guardada] = await query<{ pesquisa: string | null }>("select pesquisa from relatorio_diario where data = $1", [hoje]);
-      const r = await analisarComIa(paraIa, hoje, modo, guardada?.pesquisa ?? null, estrategia.atual);
-      ia = r.saida;
-      custo = r.custo;
-      pesquisaDoDia = r.pesquisa;
+      // Só vai para a IA o que mudou desde a última nota; o resto reaproveita a nota guardada
+      const selecao = selecionarParaIa(paraIa);
+      const guardadas = new Map(
+        (
+          await query<{ ticker: string; assinatura: string; nota: number | null; recomendacao: string | null; resumo: string | null; riscos: string | null }>(
+            `select ticker, assinatura, nota, recomendacao, resumo, riscos from cache_ia
+              where analisado_em > now() - make_interval(days => $1::int)`,
+            [VALIDADE_NOTA_DIAS[modo]],
+          )
+        ).map((c) => [c.ticker, c]),
+      );
+      const assinaturas = new Map(selecao.map((l) => [l.ticker, assinatura(l, estrategia.atual, modo)]));
+      const mudaram = selecao.filter((l) => guardadas.get(l.ticker)?.assinatura !== assinaturas.get(l.ticker));
+      const iguais = selecao.filter((l) => guardadas.get(l.ticker)?.assinatura === assinaturas.get(l.ticker));
+      for (const l of iguais) {
+        const g = guardadas.get(l.ticker)!;
+        reaproveitadas.set(l.ticker, { ticker: l.ticker, nota: g.nota ?? 0, recomendacao: (g.recomendacao ?? "AGUARDAR") as "COMPRAR", resumo: g.resumo ?? "", riscos: g.riscos ?? "" });
+      }
+      const [porAtivo] = await query<{ valor: string }>("select valor from config where chave = 'custo_ia_por_ativo_usd'");
+      const custoPorAtivo = Number(porAtivo?.valor ?? 0) || 0;
+      console.log(`  IA: ${mudaram.length} ativos mudaram, ${iguais.length} sem mudança (nota reaproveitada)`);
+
+      if (mudaram.length === 0) {
+        // Nada mudou: nenhuma chamada. A ação do dia sai da nota final, que já inclui as notas guardadas da IA.
+        const comNota = linhas.map((l) => ({
+          ...l,
+          score_sem_ia: scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: reaproveitadas.get(l.ticker)?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }),
+        }));
+        ia = decisaoPorCalculo(comNota, "Nenhum ativo mudou desde a última análise com IA: as notas foram reaproveitadas, sem custo.");
+        ia.acoes = [...reaproveitadas.values()];
+        economiaDaExecucao = custoPorAtivo * iguais.length;
+      } else {
+        const [guardada] = await query<{ pesquisa: string | null }>("select pesquisa from relatorio_diario where data = $1", [hoje]);
+        const ref: NotaReaproveitada[] = iguais.map((l) => ({
+          ticker: l.ticker,
+          na_carteira: l.na_carteira,
+          nota: reaproveitadas.get(l.ticker)!.nota,
+          recomendacao: reaproveitadas.get(l.ticker)!.recomendacao,
+          score_sem_ia: l.score_sem_ia,
+          margem: l.margem,
+        }));
+        const r = await analisarComIa(mudaram, hoje, modo, guardada?.pesquisa ?? null, estrategia.atual, {
+          reaproveitadas: ref,
+          lote: origem === "agendador", // a análise das 7h pode esperar: Batch API, metade do preço
+        });
+        ia = r.saida;
+        ia.acoes = [...r.saida.acoes, ...[...reaproveitadas.values()].filter((a) => !r.saida.acoes.some((n) => n.ticker.toUpperCase() === a.ticker))];
+        custo = r.custo;
+        pesquisaDoDia = r.pesquisa;
+        // Guarda as notas novas com a assinatura dos dados que as geraram
+        for (const a of r.saida.acoes) {
+          const t = a.ticker.toUpperCase();
+          if (!assinaturas.has(t)) continue;
+          await query(
+            `insert into cache_ia (ticker, assinatura, nota, recomendacao, resumo, riscos, modelo, analisado_em)
+             values ($1, $2, $3, $4, $5, $6, $7, now())
+             on conflict (ticker) do update set assinatura = excluded.assinatura, nota = excluded.nota, recomendacao = excluded.recomendacao,
+               resumo = excluded.resumo, riscos = excluded.riscos, modelo = excluded.modelo, analisado_em = now()`,
+            [t, assinaturas.get(t), a.nota, a.recomendacao, a.resumo, a.riscos, r.custo.modelo],
+          );
+        }
+        const porAtivoAgora = (r.custo.lote ? r.custo.usd * 2 : r.custo.usd) / mudaram.length; // preço cheio por ativo
+        await query(
+          "insert into config (chave, valor) values ('custo_ia_por_ativo_usd', $1) on conflict (chave) do update set valor = excluded.valor",
+          [String(porAtivoAgora)],
+        );
+        economiaDaExecucao = porAtivoAgora * iguais.length + (r.custo.lote ? r.custo.usd : 0);
+      }
     } catch (err) {
       const bruto = (err as Error).message ?? String(err);
       const motivo = /credit balance/i.test(bruto) ? "sem créditos na conta da Anthropic" : bruto;
       console.warn(`  IA indisponível, usando só o cálculo: ${motivo}`);
       ia = decisaoPorCalculo(linhas, `A IA não respondeu (${motivo.slice(0, 160)}). Análise feita só pelo cálculo.`);
+      ia.acoes = [...reaproveitadas.values()]; // as notas guardadas continuam valendo
     }
   }
   custoDaExecucao = custo;
@@ -286,6 +375,8 @@ export type Execucao = {
   erro: string | null;
   custo_brl: number | null; // custo da IA em reais (dólar do dia da análise)
   custo_mes_brl: number;
+  economia_brl: number | null; // quanto deixou de gastar (notas reaproveitadas + lote)
+  economia_mes_brl: number;
   modo: ModoIa;
 };
 
@@ -305,7 +396,10 @@ export async function ultimaExecucao(): Promise<Execucao | null> {
             case when status = 'rodando' and inicio < now() - interval '${TIMEOUT_MIN} minutes' then 'erro' else status end as status,
             inicio::text, fim::text, erro, custo_usd * coalesce(dolar, ${DOLAR_PADRAO}) as custo_brl,
             (select coalesce(sum(custo_usd * coalesce(dolar, ${DOLAR_PADRAO})), 0)
-               from execucoes where inicio >= date_trunc('month', now())) as custo_mes_brl
+               from execucoes where inicio >= date_trunc('month', now())) as custo_mes_brl,
+            economia_usd * coalesce(dolar, ${DOLAR_PADRAO}) as economia_brl,
+            (select coalesce(sum(economia_usd * coalesce(dolar, ${DOLAR_PADRAO})), 0)
+               from execucoes where inicio >= date_trunc('month', now())) as economia_mes_brl
        from execucoes order by inicio desc limit 1`,
   );
   return e ? { ...e, modo: await modoIa() } : null;
@@ -349,14 +443,15 @@ export async function rodarAnalise(origem: "agendador" | "botao" | "manual") {
   const reserva = await reservar(origem);
   if ("motivo" in reserva) return reserva;
 
-  const termino = executarAnalise()
+  const termino = executarAnalise(origem)
     .then(() =>
       (async () =>
-        query("update execucoes set status = 'ok', fim = now(), custo_usd = $2, modelo = $3, dolar = $4 where id = $1", [
+        query("update execucoes set status = 'ok', fim = now(), custo_usd = $2, modelo = $3, dolar = $4, economia_usd = $5 where id = $1", [
           reserva.id,
           custoDaExecucao?.usd ?? 0,
           custoDaExecucao?.modelo ?? null,
-          custoDaExecucao?.usd ? await cotacaoDolar().catch(() => null) : null,
+          custoDaExecucao?.usd || economiaDaExecucao ? await cotacaoDolar().catch(() => null) : null,
+          economiaDaExecucao || null,
         ]))(),
     )
     .catch(async (err) => {

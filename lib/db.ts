@@ -168,6 +168,19 @@ export async function migrar() {
     alter table execucoes add column if not exists dolar numeric;
     alter table relatorio_diario add column if not exists pesquisa text;
     create table if not exists config (chave text primary key, valor text not null);
+    -- Dados das fontes guardados (balanço, histórico) e notas da IA reaproveitadas quando nada mudou
+    create table if not exists cache_fontes (chave text primary key, dados jsonb not null, buscado_em timestamptz not null default now());
+    create table if not exists cache_ia (
+      ticker      text primary key,
+      assinatura  text not null,
+      nota        numeric,
+      recomendacao text,
+      resumo      text,
+      riscos      text,
+      modelo      text,
+      analisado_em timestamptz not null default now()
+    );
+    alter table execucoes add column if not exists economia_usd numeric;
     -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
     insert into universo (ticker) values
       ('HGLG11'),('KNRI11'),('XPML11'),('BTLG11'),('VISC11'),('KNCR11'),('MXRF11'),('HGRU11'),('XPLG11'),('CPTS11'),

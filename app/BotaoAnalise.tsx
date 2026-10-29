@@ -12,6 +12,7 @@ type Props = {
   modo: ModoIa;
   custo: number | null;
   custoMes: number;
+  economiaMes?: number;
 };
 
 const reais = (v: number) => `R$ ${v.toFixed(2).replace(".", ",")}`;
@@ -19,7 +20,7 @@ const reais = (v: number) => `R$ ${v.toFixed(2).replace(".", ",")}`;
 const hora = (iso: string) =>
   new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
 
-export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes }: Props) {
+export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes, economiaMes = 0 }: Props) {
   const [modoAtual, setModo] = useState<ModoIa>(modo);
   const [, startSalvar] = useTransition();
   const info = MODOS.find((m) => m.id === modoAtual);
@@ -81,7 +82,8 @@ export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes }: Pr
           : status === "erro"
             ? `A última análise falhou${inicio ? ` (${hora(inicio)})` : ""}${erro ? `: ${erro}` : "."}`
             : inicio
-              ? `Última análise: ${hora(inicio)}${custo != null ? ` · custou ${reais(custo)}` : ""} · no mês ${reais(custoMes)}`
+              ? `Última análise: ${hora(inicio)}${custo != null ? ` · custou ${reais(custo)}` : ""} · no mês ${reais(custoMes)}` +
+                (economiaMes >= 0.005 ? ` · economizou ${reais(economiaMes)}` : "")
               : "Nenhuma análise ainda."}
       </p>
     </div>

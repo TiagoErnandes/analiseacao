@@ -1,7 +1,8 @@
 // Análise com o Claude, pensada para custar pouco:
-// - só os ativos que importam vão para a IA (sua carteira + os melhores de fora pelo cálculo);
+// - só os ativos que importam e que MUDARAM vão para a IA (os outros reaproveitam a nota anterior, ver lib/analise.ts);
 // - modo "economico": Claude Haiku, uma chamada só, sem busca na web (centavos por análise);
-// - modo "completo": Claude Sonnet com poucas buscas na web + decisão (a pesquisa do dia fica guardada e é reaproveitada);
+// - modo "completo": pesquisa na web com o Haiku (barato para ler resultados de busca) e decisão final com o Sonnet;
+// - análise automática (agendador): pela Batch API, que cobra metade do preço dos tokens;
 // - modo "sem_ia": nenhuma chamada (o app decide só pelo cálculo).
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
@@ -14,6 +15,10 @@ const CONFIG = {
   economico: { modelo: "claude-haiku-5-5", esforco: "low" as const, buscas: 0 },
   completo: { modelo: "claude-sonnet-5-5", esforco: "medium" as const, buscas: 5 },
 };
+/** Modelo da pesquisa na web (lê muitos tokens de resultados de busca: o Haiku custa 20x menos que o Sonnet). */
+const MODELO_PESQUISA = "claude-haiku-5-5";
+/** Quanto esperar a Batch API antes de desistir e chamar do jeito normal. */
+const ESPERA_LOTE_MIN = 60;
 // Preço por milhão de tokens (entrada, saída) em dólar, e por busca na web
 const PRECO: Record<string, [number, number]> = { "claude-haiku-5-5": [0.1, 0.5], "claude-sonnet-5-5": [2, 10] };
 const PRECO_BUSCA = 10 / 1000;
@@ -28,6 +33,17 @@ evite apenas setor acima de 50% da carteira. Considere quedas de preço por ruí
 
 /** Quantos ativos de fora da carteira vão para a IA (os de melhor score pelo cálculo). */
 export const MAX_FORA_DA_CARTEIRA = 8;
+
+/** Os ativos que interessam à IA: toda a carteira + os melhores de fora pelo cálculo. */
+export function selecionarParaIa<T extends LinhaParaIa>(linhas: T[]): T[] {
+  return [
+    ...linhas.filter((l) => l.na_carteira),
+    ...linhas.filter((l) => !l.na_carteira).sort((a, b) => b.score_sem_ia - a.score_sem_ia).slice(0, MAX_FORA_DA_CARTEIRA),
+  ];
+}
+
+/** Nota já dada pela IA a um ativo que não mudou (vai como referência, sem pedir nova análise). */
+export type NotaReaproveitada = { ticker: string; na_carteira: boolean; nota: number | null; recomendacao: string | null; score_sem_ia: number; margem: unknown };
 
 /** Uma linha da tabela enviada à IA (números em R$ ou US$ conforme "moeda"; dy, margem, roe e pesos em fração). */
 export type LinhaParaIa = { ticker: string; na_carteira: boolean; score_sem_ia: number; [campo: string]: unknown };
@@ -57,7 +73,7 @@ const Decisao = z.object({
   justificativa_geral: z.string(),
 });
 export type SaidaIa = z.infer<typeof Decisao> & { revisao: string | null };
-export type CustoIa = { usd: number; modelo: string; entrada: number; saida: number; buscas: number };
+export type CustoIa = { usd: number; modelo: string; entrada: number; saida: number; buscas: number; lote: boolean };
 
 function textoDe(content: Anthropic.Beta.BetaContentBlock[]): string {
   return content
@@ -67,54 +83,92 @@ function textoDe(content: Anthropic.Beta.BetaContentBlock[]): string {
     .trim();
 }
 
-function somarCusto(custo: CustoIa, msg: Anthropic.Beta.BetaMessage) {
+function somarCusto(custo: CustoIa, msg: Anthropic.Beta.BetaMessage, modelo: string, lote: boolean) {
   const u = msg.usage;
-  const [pe, ps] = PRECO[custo.modelo] ?? [2, 10];
+  const [pe, ps] = PRECO[modelo] ?? [2, 10];
+  const desconto = lote ? 0.5 : 1; // Batch API: metade do preço dos tokens (a busca na web é cobrada igual)
   const entrada = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) * 1.25 + (u.cache_read_input_tokens ?? 0) * 0.1;
   const buscas = u.server_tool_use?.web_search_requests ?? 0;
   custo.entrada += u.input_tokens ?? 0;
   custo.saida += u.output_tokens ?? 0;
   custo.buscas += buscas;
-  custo.usd += (entrada * pe + (u.output_tokens ?? 0) * ps) / 1e6 + buscas * PRECO_BUSCA;
+  custo.usd += ((entrada * pe + (u.output_tokens ?? 0) * ps) / 1e6) * desconto + buscas * PRECO_BUSCA;
+}
+
+type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
+
+/**
+ * Faz uma chamada. Com `lote`, vai pela Batch API (50% mais barato, pode levar alguns minutos);
+ * se o lote não terminar em ESPERA_LOTE_MIN, cancela e chama do jeito normal.
+ */
+async function chamar(client: Anthropic, params: Params, lote: boolean): Promise<{ msg: Anthropic.Beta.BetaMessage; lote: boolean }> {
+  if (lote) {
+    try {
+      // O fallback automático de modelo não é aceito em lote: vai sem ele
+      const { betas, fallbacks, ...semExtras } = params as Params & { fallbacks?: unknown };
+      void betas;
+      void fallbacks;
+      const b = await client.beta.messages.batches.create({ requests: [{ custom_id: "analise", params: semExtras }] });
+      const limite = Date.now() + ESPERA_LOTE_MIN * 60_000;
+      let estado = b;
+      while (estado.processing_status !== "ended" && Date.now() < limite) {
+        await new Promise((r) => setTimeout(r, 20_000));
+        estado = await client.beta.messages.batches.retrieve(b.id);
+      }
+      if (estado.processing_status === "ended") {
+        for await (const r of await client.beta.messages.batches.results(b.id)) {
+          if (r.result.type === "succeeded") return { msg: r.result.message, lote: true };
+          console.warn(`  Lote ${b.id}: ${r.result.type}; chamando do jeito normal.`);
+        }
+      } else {
+        console.warn(`  Lote ${b.id} não terminou em ${ESPERA_LOTE_MIN} min; cancelando e chamando do jeito normal.`);
+        await client.beta.messages.batches.cancel(b.id).catch(() => {});
+      }
+    } catch (err) {
+      console.warn(`  Batch API falhou (${(err as Error).message}); chamando do jeito normal.`);
+    }
+  }
+  return { msg: await client.beta.messages.stream(params).finalMessage(), lote: false };
 }
 
 /**
- * Envia à IA só os ativos da carteira e os melhores de fora, com os campos essenciais.
+ * Envia à IA só os ativos que mudaram desde a última análise, com os campos essenciais.
+ * `reaproveitadas`: notas anteriores dos que não mudaram (a IA usa só para escolher a ação do dia).
  * `pesquisaGuardada`: pesquisa já feita hoje (modo completo), para não pagar de novo.
+ * `lote`: usar a Batch API (análise automática, que pode esperar alguns minutos).
  */
 export async function analisarComIa(
-  linhas: LinhaParaIa[],
+  selecao: LinhaParaIa[],
   hoje: string,
   modo: Exclude<ModoIa, "sem_ia">,
   pesquisaGuardada: string | null,
   estrategia: Estrategia = "balanceamento",
+  opcoes: { reaproveitadas?: NotaReaproveitada[]; lote?: boolean } = {},
 ): Promise<{ saida: SaidaIa; custo: CustoIa; pesquisa: string | null }> {
   const cfg = CONFIG[modo];
+  const lote = !!opcoes.lote;
+  const reaproveitadas = opcoes.reaproveitadas ?? [];
   const client = new Anthropic({ timeout: 15 * 60 * 1000 });
-  const custo: CustoIa = { usd: 0, modelo: cfg.modelo, entrada: 0, saida: 0, buscas: 0 };
+  const custo: CustoIa = { usd: 0, modelo: cfg.modelo, entrada: 0, saida: 0, buscas: 0, lote: false };
   const fallback = cfg.modelo.startsWith("claude-sonnet")
     ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
     : {};
 
-  const selecao = [
-    ...linhas.filter((l) => l.na_carteira),
-    ...linhas.filter((l) => !l.na_carteira).sort((a, b) => b.score_sem_ia - a.score_sem_ia).slice(0, MAX_FORA_DA_CARTEIRA),
-  ];
   const tabela = JSON.stringify(selecao);
-  console.log(`  IA (${modo}, ${cfg.modelo}): ${selecao.length} ativos`);
+  console.log(`  IA (${modo}, ${cfg.modelo}${lote ? ", lote" : ""}): ${selecao.length} ativos novos ou alterados, ${reaproveitadas.length} reaproveitados`);
 
-  // 1) Pesquisa curta na web (só no modo completo e só uma vez por dia)
+  // 1) Pesquisa curta na web (só no modo completo, uma vez por dia, com o Haiku)
   let pesquisa = pesquisaGuardada;
   if (cfg.buscas > 0 && !pesquisa) {
-    const foco = selecao.map((l) => l.ticker).join(", ");
-    const msg = await client.beta.messages
-      .stream({
-        model: cfg.modelo,
+    const foco = [...selecao.map((l) => l.ticker), ...reaproveitadas.filter((r) => r.na_carteira).map((r) => r.ticker)].join(", ");
+    const r = await chamar(
+      client,
+      {
+        model: MODELO_PESQUISA,
         max_tokens: 16000,
         system: SYSTEM,
         output_config: { effort: "low" },
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: cfg.buscas, user_location: { type: "approximate", country: "BR" } }],
-        ...fallback,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: cfg.buscas, user_location: { type: "approximate", country: "BR" } }],
         messages: [
           {
             role: "user",
@@ -123,16 +177,21 @@ Procure: (1) Selic, Ibovespa e dólar hoje; (2) fatos relevantes, resultados e p
 Responda em tópicos curtos, um por ticker com novidade (com data e fonte). Tickers sem novidade: não mencione.`,
           },
         ],
-      })
-      .finalMessage();
-    somarCusto(custo, msg);
-    if (msg.stop_reason === "refusal") throw new Error("A IA recusou a pesquisa do dia.");
-    pesquisa = textoDe(msg.content) || null;
+      },
+      lote,
+    );
+    somarCusto(custo, r.msg, MODELO_PESQUISA, r.lote);
+    if (r.msg.stop_reason === "refusal") throw new Error("A IA recusou a pesquisa do dia.");
+    pesquisa = textoDe(r.msg.content) || null;
   }
 
   // 2) Decisão com saída JSON validada
-  const msg = await client.beta.messages
-    .stream({
+  const ref = reaproveitadas.length
+    ? `\n\nAtivos sem mudança desde a última análise (NÃO precisam de nota; use só para escolher a ação do dia):\n${JSON.stringify(reaproveitadas)}`
+    : "";
+  const r = await chamar(
+    client,
+    {
       model: cfg.modelo,
       max_tokens: 32000,
       system: SYSTEM,
@@ -141,18 +200,21 @@ Responda em tópicos curtos, um por ticker com novidade (com data e fonte). Tick
       messages: [
         {
           role: "user",
-          content: `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia.
+          content: `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia (entre a tabela e os ativos sem mudança).
 ${REGRAS[estrategia]}
 Não recomende COMPRAR com prejuízo, payout insustentável ou dado claramente errado. Se nenhum atender, escolha o mais próximo e diga isso.
 
 Tabela (ordenada pela nota do cálculo, score_sem_ia):
-${tabela}
+${tabela}${ref}
 ${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: decida só pelos números.)"}`,
         },
       ],
-    })
-    .finalMessage();
-  somarCusto(custo, msg);
+    } as Params,
+    lote,
+  );
+  const msg = r.msg;
+  somarCusto(custo, msg, cfg.modelo, r.lote);
+  custo.lote = r.lote;
   if (msg.stop_reason === "refusal") throw new Error("A IA recusou a decisão.");
   if (msg.stop_reason === "max_tokens") throw new Error("A resposta da IA foi cortada (max_tokens).");
   let saida: z.infer<typeof Decisao>;
@@ -161,6 +223,6 @@ ${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: d
   } catch (err) {
     throw new Error(`JSON inválido da IA: ${(err as Error).message}`.slice(0, 500));
   }
-  console.log(`  IA: US$ ${custo.usd.toFixed(4)} (${custo.entrada} tokens de entrada, ${custo.saida} de saída, ${custo.buscas} buscas)`);
+  console.log(`  IA: US$ ${custo.usd.toFixed(4)} (${custo.entrada} tokens de entrada, ${custo.saida} de saída, ${custo.buscas} buscas${r.lote ? ", via lote" : ""})`);
   return { saida: { ...saida, revisao: null }, custo, pesquisa };
 }
