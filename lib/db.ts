@@ -181,6 +181,23 @@ export async function migrar() {
       analisado_em timestamptz not null default now()
     );
     alter table execucoes add column if not exists economia_usd numeric;
+    -- Documentos oficiais da CVM (fatos relevantes, comunicados, avisos) e lucro anual dos balanços (DFP)
+    create table if not exists cvm_documentos (
+      protocolo text primary key,
+      cd_cvm    int not null,
+      data      date not null,
+      categoria text not null,
+      tipo      text,
+      assunto   text,
+      link      text
+    );
+    create index if not exists cvm_documentos_cd on cvm_documentos (cd_cvm, data desc);
+    create table if not exists lucros_anuais (
+      cd_cvm int not null,
+      ano    int not null,
+      lucro  numeric not null, -- em reais
+      primary key (cd_cvm, ano)
+    );
     -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
     insert into universo (ticker) values
       ('HGLG11'),('KNRI11'),('XPML11'),('BTLG11'),('VISC11'),('KNCR11'),('MXRF11'),('HGRU11'),('XPLG11'),('CPTS11'),

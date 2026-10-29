@@ -7,6 +7,10 @@ import { query, type Analise } from "@/lib/db";
 import { Logo } from "../../Logo";
 import { TipoAtivo } from "../../TipoAtivo";
 import type { DadosFii, Fundamentos, HistoricoPreco } from "@/lib/mercado";
+import type { Documento, HistoricoLucro, ProventoAnunciado } from "@/lib/cvm";
+import { yieldAtual } from "@/lib/juros";
+import type { ConsistenciaDividendos } from "@/lib/valuation";
+import { Constancia } from "./Constancia";
 import { Alertas, Cartao, Nota, ReguaTeto, Score, Sinal, Variacao } from "../../ui";
 import { GraficoHistorico } from "./GraficoHistorico";
 
@@ -36,7 +40,12 @@ export default async function AcaoPage({ params }: Params) {
   }
   if (!a) notFound();
 
-  const historico = await historicoDe(ticker);
+  const [historico, exigido] = await Promise.all([historicoDe(ticker), yieldAtual()]);
+  const yAcao = pct(exigido.acao, 1);
+  const yFii = pct(exigido.fii, 1);
+  const textoJuro = exigido.juroReal
+    ? `O yield exigido acompanha o juro real do Tesouro IPCA+ (${pct(exigido.juroReal.taxa, 2)} em ${dataBr(exigido.juroReal.data)}): se o título público sem risco paga mais, o dividendo da ação também precisa pagar.`
+    : "Sem o juro real do Tesouro na última análise: valem os mínimos clássicos.";
   const pos = posicoes.find((p) => p.ticker === ticker);
   const pl = a.preco && a.lpa && a.lpa > 0 ? a.preco / a.lpa : null;
   const pvp = a.preco && a.vpa && a.vpa > 0 ? a.preco / a.vpa : null;
@@ -46,11 +55,17 @@ export default async function AcaoPage({ params }: Params) {
     a.preco_teto == null
       ? null
       : a.teto_bazin != null && a.preco_teto === a.teto_bazin
-        ? tipo === "fii" ? "Rendimento sustentável ÷ 8%" : "Bazin"
+        ? tipo === "fii" ? `Rendimento sustentável ÷ ${yFii}` : "Bazin"
         : tipo === "etf" ? "Média de preço de 12 meses" : "Graham";
   const fii = tipo === "fii" ? (a.indicadores as DadosFii | null) : null;
   const etf = tipo === "etf" ? (a.indicadores as HistoricoPreco | null) : null;
   const fund = tipo === "acao" ? (a.indicadores as Fundamentos | null) : null;
+  const extras = (a.indicadores ?? {}) as {
+    lucros10a?: HistoricoLucro | null;
+    dividendos10a?: ConsistenciaDividendos | null;
+    documentosCvm?: Documento[];
+    proventosAnunciados?: ProventoAnunciado[];
+  };
   const ehDoDia = rel && (rel.acao_do_dia_carteira === ticker || rel.acao_do_dia_geral === ticker);
 
   return (
@@ -104,7 +119,7 @@ export default async function AcaoPage({ params }: Params) {
                 <div className={`rounded-lg border p-3 ${metodo === "Bazin" ? "border-marca/40" : "border-borda"}`}>
                   <p className="text-xs text-suave">Bazin</p>
                   <p className="font-semibold tabular-nums">{brl(a.teto_bazin)}</p>
-                  <p className="mt-1 text-[11px] leading-snug text-fraco">Dividendo conservador ÷ 6%</p>
+                  <p className="mt-1 text-[11px] leading-snug text-fraco">Dividendo conservador ÷ {yAcao}</p>
                 </div>
                 <div className={`rounded-lg border p-3 ${metodo === "Graham" ? "border-marca/40" : "border-borda"}`}>
                   <p className="text-xs text-suave">Graham</p>
@@ -115,10 +130,11 @@ export default async function AcaoPage({ params }: Params) {
             ) : (
               <p className="rounded-lg border border-borda p-3 text-xs leading-relaxed text-suave">
                 {tipo === "fii"
-                  ? "Para FIIs: o menor entre o rendimento de 12 meses, o FFO por cota e a média de 5 anos, dividido por 8% (o rendimento mínimo que compensa frente à renda fixa)."
-                  : "Para ETFs: se paga dividendos relevantes, Bazin (÷ 6%); senão, a média de preço dos últimos 12 meses. Abaixo dela, você compra mais barato que a média do ano."}
+                  ? `Para FIIs: o menor entre o rendimento de 12 meses, o FFO por cota e a média de 5 anos, dividido por ${yFii} (o rendimento mínimo que compensa frente ao Tesouro IPCA+).`
+                  : `Para ETFs: se paga dividendos relevantes, Bazin (÷ ${yAcao}); senão, a média de preço dos últimos 12 meses. Abaixo dela, você compra mais barato que a média do ano.`}
               </p>
             )}
+            {(tipo === "acao" || tipo === "fii" || tipo === "etf") && <p className="text-[11px] leading-snug text-fraco">{textoJuro}</p>}
           </div>
         </Cartao>
 
@@ -187,6 +203,16 @@ export default async function AcaoPage({ params }: Params) {
           <Indicador rotulo="Score" valor={a.score ?? "—"} />
         </div>
       </Cartao>
+
+      {(tipo === "acao" || tipo === "fii") && (
+        <Constancia
+          lucros={extras.lucros10a ?? null}
+          dividendos={extras.dividendos10a ?? null}
+          documentos={extras.documentosCvm ?? []}
+          proventos={extras.proventosAnunciados ?? []}
+          ehAcao={tipo === "acao"}
+        />
+      )}
 
       {pos && (
         <Cartao titulo="Minha posição" acao={<Link href="/carteira" className="text-xs text-marca hover:underline">Editar</Link>}>

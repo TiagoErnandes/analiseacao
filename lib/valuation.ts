@@ -1,11 +1,14 @@
 // Métodos clássicos de preço teto para quem investe pensando em renda e longo prazo.
 
-/** Bazin: o preço máximo para receber pelo menos 6% ao ano em dividendos. */
+/**
+ * Bazin: o preço máximo para receber pelo menos X% ao ano em dividendos. O clássico é 6%; aqui o X acompanha o juro real
+ * do Tesouro IPCA+ (ver lib/juros.ts), com 6% de mínimo.
+ */
 export const YIELD_MINIMO_BAZIN = 0.06;
 
-export function tetoBazin(dpaMedio: number | null): number | null {
+export function tetoBazin(dpaMedio: number | null, exigido = YIELD_MINIMO_BAZIN): number | null {
   if (!dpaMedio || dpaMedio <= 0) return null;
-  return dpaMedio / YIELD_MINIMO_BAZIN;
+  return dpaMedio / exigido;
 }
 
 /** Graham: valor justo = raiz(22,5 × LPA × VPA). Só faz sentido com lucro e patrimônio positivos. */
@@ -79,6 +82,32 @@ export function calcularDpa(
   return { dpa12m: dpa12m || null, dpaMedio };
 }
 
+export type ConsistenciaDividendos = { anos: number; anosPagos: number; cortes: number };
+
+/**
+ * Nos últimos 10 anos completos (a partir do primeiro com dado): em quantos pagou dividendo
+ * e quantas vezes o total do ano caiu mais da metade em relação ao ano anterior.
+ */
+export function consistenciaDividendos(proventos: { valor: number; data: Date }[], hoje = new Date()): ConsistenciaDividendos | null {
+  const atual = hoje.getFullYear();
+  const porAno = new Map<number, number>();
+  for (const p of proventos) {
+    const a = p.data.getFullYear();
+    if (a >= atual - 10 && a < atual) porAno.set(a, (porAno.get(a) ?? 0) + p.valor);
+  }
+  if (!porAno.size) return null;
+  const primeiro = Math.min(...porAno.keys());
+  let anosPagos = 0;
+  let cortes = 0;
+  for (let a = primeiro; a < atual; a++) {
+    const v = porAno.get(a) ?? 0;
+    if (v > 0) anosPagos++;
+    const ant = porAno.get(a - 1);
+    if (a > primeiro && ant && v < ant * 0.5) cortes++;
+  }
+  return { anos: atual - primeiro, anosPagos, cortes };
+}
+
 /** Abaixo disso de dividend yield, a empresa é tratada como "não pagadora" e o teto vem do Graham. */
 export const DY_MINIMO_PAGADORA = 0.02;
 /** Diferença máxima aceitável entre o DPA 12m do Yahoo e o do Fundamentus antes de desconfiar do histórico. */
@@ -109,7 +138,7 @@ export function calcularIndicadores(d: {
   vpa: number | null;
   dyFundamentus: number | null;
   proventos: { valor: number; data: Date }[];
-}, hoje = new Date()): Indicadores {
+}, hoje = new Date(), exigido = YIELD_MINIMO_BAZIN): Indicadores {
   const alertas: string[] = [];
   const yahoo = calcularDpa(d.proventos, hoje);
   const dpa12mFund = d.dyFundamentus != null && d.preco ? d.dyFundamentus * d.preco : null;
@@ -130,7 +159,7 @@ export function calcularIndicadores(d: {
   let bazin: number | null = null;
   if (dy12m != null && dy12m >= DY_MINIMO_PAGADORA) {
     const base = Math.min(dpa12m ?? Infinity, dpaMedio ?? Infinity);
-    bazin = tetoBazin(Number.isFinite(base) ? base : null);
+    bazin = tetoBazin(Number.isFinite(base) ? base : null, exigido);
   } else {
     alertas.push("paga pouco ou nenhum dividendo, teto pelo Graham");
     if (!dpa12m) dpa12m = null;
@@ -146,11 +175,11 @@ export function calcularIndicadores(d: {
   return { dpa12m, dpaMedio, dy12m, bazin, graham, teto, margem: margem(d.preco, teto), alertas };
 }
 
-/** FIIs pagam mais que ações; para valer a pena frente à renda fixa, exigimos pelo menos 8% ao ano. */
+/** FIIs pagam mais que ações; para valer a pena frente à renda fixa, exigimos pelo menos 8% ao ano (ou juro real + 1,5 ponto). */
 export const YIELD_MINIMO_FII = 0.08;
 
 /**
- * Preço teto de FII (Bazin adaptado): o dividendo sustentável ÷ 8%.
+ * Preço teto de FII (Bazin adaptado): o dividendo sustentável ÷ o yield exigido (8% no mínimo).
  * Dividendo sustentável = o menor entre o pago nos últimos 12 meses, o FFO por cota (o que o fundo de fato gera)
  * e a média de 5 anos — para não pagar caro por rendimento extraordinário (venda de imóveis, por exemplo).
  */
@@ -160,7 +189,7 @@ export function calcularIndicadoresFii(d: {
   ffoCota: number | null;
   dyFundamentus: number | null;
   proventos: { valor: number; data: Date }[];
-}, hoje = new Date()): Indicadores {
+}, hoje = new Date(), exigido = YIELD_MINIMO_FII): Indicadores {
   const alertas: string[] = [];
   const yahoo = calcularDpa(d.proventos, hoje);
   const dpa12m = d.dividendoCota ?? (d.dyFundamentus != null && d.preco ? d.dyFundamentus * d.preco : yahoo.dpa12m);
@@ -174,7 +203,7 @@ export function calcularIndicadoresFii(d: {
   if (dpa12m && d.ffoCota && d.ffoCota > 0 && dpa12m > d.ffoCota * 1.3) {
     alertas.push(`distribui ${Math.round((dpa12m / d.ffoCota) * 100)}% do FFO (rendimento acima do que gera, pode cair)`);
   }
-  const bazin = base ? base / YIELD_MINIMO_FII : null;
+  const bazin = base ? base / exigido : null;
   return {
     dpa12m: dpa12m || null,
     dpaMedio,
@@ -195,10 +224,10 @@ export function calcularIndicadoresEtf(d: {
   preco: number | null;
   media12m: number | null;
   proventos: { valor: number; data: Date }[];
-}, hoje = new Date()): Indicadores {
+}, hoje = new Date(), exigido = YIELD_MINIMO_BAZIN): Indicadores {
   const { dpa12m, dpaMedio } = calcularDpa(d.proventos, hoje);
   const dy12m = dpa12m && d.preco ? dpa12m / d.preco : null;
-  const bazin = dy12m != null && dy12m >= DY_MINIMO_PAGADORA ? tetoBazin(Math.min(dpa12m!, dpaMedio ?? Infinity)) : null;
+  const bazin = dy12m != null && dy12m >= DY_MINIMO_PAGADORA ? tetoBazin(Math.min(dpa12m!, dpaMedio ?? Infinity), exigido) : null;
   const teto = bazin ?? d.media12m;
   const alertas = teto == null ? ["sem histórico de preço suficiente para referência"] : [];
   return { dpa12m, dpaMedio, dy12m, bazin, graham: null, teto, margem: margem(d.preco, teto), alertas };
