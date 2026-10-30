@@ -179,7 +179,7 @@ export async function gemini(
       ? [{ esquema: true, pensarPouco: true }, { esquema: true, pensarPouco: false }, { esquema: false, pensarPouco: false }]
       : [{ esquema: false, pensarPouco: false }];
     for (const { esquema: comEsquema, pensarPouco } of variantes) {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+      const pedir = () => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": chave, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -198,7 +198,13 @@ export async function gemini(
               }
             : {}),
         }),
-        signal: AbortSignal.timeout(480_000),
+        signal: AbortSignal.timeout(600_000),
+      });
+      // Demorou demais: tenta mais uma vez antes de desistir (mais vale esperar que perder a pesquisa)
+      const res = await pedir().catch((err: Error) => {
+        if (err.name !== "TimeoutError" && err.name !== "AbortError") throw err;
+        console.warn(`  Gemini ${modelo} passou de 10 minutos; tentando de novo.`);
+        return pedir();
       });
       if (!res.ok) {
         const corpo = (await res.text()).slice(0, 300);
@@ -226,15 +232,66 @@ export async function gemini(
   throw ultimoErro ?? new Error("Gemini: nenhum modelo disponível");
 }
 
+/** Tickers por chamada na pesquisa: poucos por vez, para a Busca Google trazer detalhes de cada um. */
+const PESQUISA_POR_CHAMADA = 10;
+const SISTEMA_PESQUISA = "Você é um pesquisador do mercado financeiro brasileiro. Responda em português do Brasil, com datas e fontes. Não invente.";
+
+/**
+ * Pesquisa detalhada em partes paralelas (cenário + grupos de tickers), cada ticker sob um título "### TICKER".
+ * Uma parte que falha não derruba as outras. Devolve o texto juntado (ou null se todas falharem).
+ */
+export async function pesquisaDetalhada(
+  hoje: string,
+  tickers: string[],
+  soPaga: boolean,
+): Promise<{ texto: string | null; entrada: number; saida: number; partes: number; partesOk: number; erros: string[] }> {
+  const pedidos = [
+    `Hoje é ${hoje}. Escreva sob o título "### CENÁRIO": Selic, IPCA, Ibovespa e dólar hoje; as decisões e expectativas do Copom;
+as notícias de política, fiscal e economia do Brasil e do exterior que mais mexem com a bolsa nos últimos 7 dias; e os setores em alta ou em baixa.
+Seja detalhado, com números, datas e fontes.`,
+  ];
+  for (let i = 0; i < tickers.length; i += PESQUISA_POR_CHAMADA) {
+    const grupo = tickers.slice(i, i + PESQUISA_POR_CHAMADA);
+    pedidos.push(`Hoje é ${hoje}. Pesquise cada ativo da bolsa brasileira abaixo (ações, FIIs ou ETFs): ${grupo.join(", ")}.
+Para CADA um, escreva sob o título "### TICKER" (ex.: "### ${grupo[0]}") o que houve nos últimos 90 dias:
+último resultado trimestral (lucro, receita, dívida, comparação com o ano anterior), proventos anunciados (valor, data-com),
+fatos relevantes, guidance, mudanças de gestão ou controle, processos, rebaixamentos ou elevações de rating, recomendações de analistas
+e preço-alvo, riscos do setor e de regulação. Para FIIs: vacância, inadimplência, emissões, rendimento mensal e mudanças no portfólio.
+Seja detalhado, com números, datas e fontes. Se não achar nada sobre um ativo, escreva "sem novidades encontradas".`);
+  }
+  const res = await Promise.allSettled(pedidos.map((p) => pesquisarComGemini(p, soPaga)));
+  const ok = res.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+  return {
+    texto: ok.length ? ok.map((r) => r.texto).join("\n\n") : null,
+    entrada: ok.reduce((s, r) => s + r.entrada, 0),
+    saida: ok.reduce((s, r) => s + r.saida, 0),
+    partes: pedidos.length,
+    partesOk: ok.length,
+    erros: res.flatMap((r) => (r.status === "rejected" ? [(r.reason as Error).message] : [])),
+  };
+}
+
+/**
+ * Da pesquisa, só o cenário e os trechos dos tickers pedidos (para cada parte da decisão não receber a pesquisa inteira).
+ * Pesquisa sem títulos "### " (formato antigo ou do Haiku) vai inteira.
+ */
+export function trechosDaPesquisa(pesquisa: string, tickers: string[]): string {
+  const blocos = pesquisa.split(/\n(?=#{2,3} )/);
+  if (blocos.length < 2) return pesquisa;
+  const quero = new Set(tickers.map((t) => t.toUpperCase()));
+  const manter = blocos.filter((b) => {
+    const titulo = b.match(/^#{2,3} ([^\n]*)/)?.[1]?.toUpperCase();
+    if (!titulo) return true; // texto antes do primeiro título (cabeçalho da pesquisa)
+    return /CEN[AÁ]RIO|FONTES/.test(titulo) || [...quero].some((t) => titulo.includes(t));
+  });
+  return manter.join("\n");
+}
+
 /** Pesquisa com a Busca Google. Usa a chave paga se houver (a Busca Google exige faturamento); senão, tenta a grátis. */
 export async function pesquisarComGemini(pergunta: string, soPaga = false): Promise<{ texto: string; entrada: number; saida: number } | null> {
   const paga = !!chaveGemini(true);
   if (!paga && (soPaga || !chaveGemini(false))) return null;
-  const r = await gemini(
-    "Você é um pesquisador do mercado financeiro brasileiro. Responda em português do Brasil, com datas e fontes. Não invente.",
-    pergunta,
-    { buscar: true, paga },
-  );
+  const r = await gemini(SISTEMA_PESQUISA, pergunta, { buscar: true, paga });
   return { ...r, texto: r.fontes.length ? `${r.texto}\n\nFontes (Busca Google): ${r.fontes.slice(0, 15).join(", ")}` : r.texto };
 }
 
@@ -308,7 +365,13 @@ export async function analisarComIa(
   modo: Exclude<ModoIa, "sem_ia">,
   pesquisaGuardada: string | null,
   estrategia: Estrategia = "balanceamento",
-  opcoes: { reaproveitadas?: NotaReaproveitada[]; lote?: boolean; yieldExigido?: { acao: number; fii: number; juroReal: number | null } } = {},
+  opcoes: {
+    reaproveitadas?: NotaReaproveitada[];
+    lote?: boolean;
+    yieldExigido?: { acao: number; fii: number; juroReal: number | null };
+    /** Chamado assim que a pesquisa termina (antes da decisão), para ela não se perder se a decisão falhar. */
+    salvarPesquisa?: (texto: string, por: string) => Promise<void>;
+  } = {},
 ): Promise<{ saida: SaidaIa; custo: CustoIa; pesquisa: string | null }> {
   const cfg = CONFIG[modo];
   const lote = !!opcoes.lote;
@@ -323,10 +386,11 @@ export async function analisarComIa(
   const tabela = JSON.stringify(selecao);
   console.log(`  IA (${modo}, ${cfg.modelo}${lote ? ", lote" : ""}): ${selecao.length} ativos novos ou alterados, ${reaproveitadas.length} reaproveitados`);
 
-  // 1) Pesquisa de notícias, uma vez por dia: Gemini grátis primeiro; no completo, Haiku com busca se o Gemini falhar
+  // 1) Pesquisa de notícias, uma vez por dia (guardada assim que termina, para o modo grátis reaproveitar)
   let pesquisa = pesquisaGuardada;
   let pesquisaPor: string | null = pesquisa ? "guardada" : null;
-  const foco = [...selecao.map((l) => l.ticker), ...reaproveitadas.filter((r) => r.na_carteira).map((r) => r.ticker)].join(", ");
+  const todos = [...new Set([...selecao.map((l) => l.ticker), ...reaproveitadas.map((r) => r.ticker)])];
+  const foco = todos.join(", ");
   const pedido = (buscas: number | null) => `Hoje é ${hoje}.${buscas ? ` Use no máximo ${buscas} buscas, agrupando vários ativos por busca.` : ""}
 Pesquise: (1) Selic, IPCA, Ibovespa e dólar hoje, e as notícias de política e economia do Brasil que mais mexem com a bolsa;
 (2) resultados, fatos relevantes, proventos, rebaixamentos, processos e mudanças de gestão nos últimos 30 dias para: ${foco}.
@@ -335,17 +399,15 @@ Responda em tópicos curtos: um de cenário e um por ticker com novidade (com da
   if (!pesquisa && modo === "gemini_busca" && !chaveGemini(true)) {
     console.warn("  Modo Gemini com Busca Google sem GEMINI_API_KEY_PAGO: seguindo sem notícias da internet.");
   } else if (!pesquisa && modo !== "gratis" && (chaveGemini(true) || chaveGemini(false))) {
-    try {
-      const r = await pesquisarComGemini(pedido(null), modo === "gemini_busca");
-      if (r) {
-        pesquisa = r.texto;
-        pesquisaPor = `Gemini (${modeloGemini}, ${r.entrada} tokens de entrada, ${r.saida} de saída)`;
-        custo.entrada += r.entrada;
-        custo.saida += r.saida;
-      }
-    } catch (err) {
-      console.warn(`  Pesquisa com Gemini falhou: ${(err as Error).message}${cfg.buscas > 0 ? "; usando o Haiku" : ""}`);
+    const r = await pesquisaDetalhada(hoje, todos, modo === "gemini_busca");
+    custo.entrada += r.entrada;
+    custo.saida += r.saida;
+    if (r.texto) {
+      pesquisa = r.texto;
+      pesquisaPor = `Gemini (${modeloGemini}, ${r.partesOk} de ${r.partes} partes, ${r.entrada} tokens de entrada, ${r.saida} de saída)`;
+      await opcoes.salvarPesquisa?.(pesquisa, pesquisaPor);
     }
+    for (const e of r.erros) console.warn(`  Pesquisa com Gemini falhou em uma parte: ${e}`);
   }
   if (cfg.buscas > 0 && !pesquisa) {
     const r = await chamar(
@@ -363,7 +425,10 @@ Responda em tópicos curtos: um de cenário e um por ticker com novidade (com da
     somarCusto(custo, r.msg, MODELO_PESQUISA, r.lote);
     if (r.msg.stop_reason === "refusal") throw new Error("A IA recusou a pesquisa do dia.");
     pesquisa = textoDe(r.msg.content) || null;
-    if (pesquisa) pesquisaPor = "Claude Haiku";
+    if (pesquisa) {
+      pesquisaPor = "Claude Haiku";
+      await opcoes.salvarPesquisa?.(pesquisa, pesquisaPor);
+    }
   }
   if (pesquisaPor) console.log(`  Pesquisa do dia: ${pesquisaPor}`);
 
@@ -371,7 +436,7 @@ Responda em tópicos curtos: um de cenário e um por ticker com novidade (com da
   const ref = reaproveitadas.length
     ? `\n\nAtivos sem mudança desde a última análise (NÃO precisam de nota; use só para escolher a ação do dia):\n${JSON.stringify(reaproveitadas)}`
     : "";
-  const montarPedido = (tabela: string) => `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia (entre a tabela e os ativos sem mudança).
+  const montarPedido = (tabela: string, tickers?: string[]) => `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia (entre a tabela e os ativos sem mudança).
 ${REGRAS[estrategia]}${
             opcoes.yieldExigido
               ? `\nYield exigido hoje no preço teto: ações ${(opcoes.yieldExigido.acao * 100).toFixed(1)}%, FIIs ${(opcoes.yieldExigido.fii * 100).toFixed(1)}%` +
@@ -382,7 +447,7 @@ Não recomende COMPRAR com prejuízo, payout insustentável ou dado claramente e
 
 Tabela (ordenada pela nota do cálculo, score_sem_ia):
 ${tabela}${ref}
-${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: decida só pelos números.)"}`;
+${pesquisa ? `\nPesquisa:\n${tickers ? trechosDaPesquisa(pesquisa, tickers) : pesquisa}` : "\n(Sem pesquisa na web hoje: decida só pelos números.)"}`;
   const pedidoDecisao = montarPedido(tabela);
 
   // Modos do Gemini: ele decide (JSON no esquema da decisão). Grátis com a chave grátis; no gemini_busca, com a paga
@@ -393,7 +458,7 @@ ${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: d
     for (let i = 0; i < selecao.length; i += GEMINI_POR_CHAMADA) partes.push(selecao.slice(i, i + GEMINI_POR_CHAMADA));
     const respostas = await Promise.all(
       partes.map(async (parte) => {
-        const r = await gemini(SYSTEM, montarPedido(JSON.stringify(parte)), { json: true, paga });
+        const r = await gemini(SYSTEM, montarPedido(JSON.stringify(parte), parte.map((l) => l.ticker)), { json: true, paga });
         custo.entrada += r.entrada;
         custo.saida += r.saida;
         try {

@@ -3,7 +3,7 @@ import { atualizarIndices } from "./indices";
 import { estrategiaAtual } from "./estrategia";
 import { createHash } from "node:crypto";
 import { analisarComIa, selecionarParaIa, type CustoIa, type LinhaParaIa, type ModoIa, type NotaReaproveitada, type SaidaIa } from "./ai";
-import { buscarAcao, buscarExterior, cotacaoDolar, usoFontes, zerarUsoFontes, type DadosAcao } from "./mercado";
+import { buscarAcao, lerCache, salvarCache, buscarExterior, cotacaoDolar, usoFontes, zerarUsoFontes, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
 import { garimpar } from "./garimpo";
 import { alertasDaAnalise } from "./alertas";
@@ -86,6 +86,26 @@ function assinatura(l: Record<string, unknown>, estrategia: string, modo: string
   return createHash("sha1").update(JSON.stringify(base)).digest("hex");
 }
 let pesquisaDoDia: string | null = null;
+
+/**
+ * Pesquisa já feita hoje (guardada assim que termina, mesmo se a decisão falhou). No modo grátis, que não pesquisa,
+ * vale também a mais recente dos últimos 7 dias, com a data avisando que pode estar desatualizada.
+ */
+async function pesquisaGuardada(hoje: string, modo: ModoIa): Promise<string | null> {
+  const deHoje = await lerCache<{ texto: string }>(`pesquisa:${hoje}`);
+  if (deHoje?.dados?.texto) return deHoje.dados.texto;
+  const [rel] = await query<{ pesquisa: string | null }>("select pesquisa from relatorio_diario where data = $1", [hoje]);
+  if (rel?.pesquisa) return rel.pesquisa;
+  if (modo !== "gratis") return null; // os outros modos pesquisam de novo
+  const [antiga] = await query<{ chave: string; texto: string }>(
+    `select chave, dados->>'texto' as texto from cache_fontes
+      where chave like 'pesquisa:%' and buscado_em > now() - interval '7 days' and dados->>'texto' <> ''
+      order by chave desc limit 1`,
+  );
+  if (!antiga) return null;
+  const data = antiga.chave.slice("pesquisa:".length).split("-").reverse().join("/");
+  return `(Pesquisa feita em ${data}, reaproveitada no modo grátis: pode estar desatualizada.)\n${antiga.texto}`;
+}
 
 export async function modoIa(): Promise<ModoIa> {
   const [c] = await query<{ valor: string }>("select valor from config where chave = 'modo_ia'");
@@ -328,7 +348,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
         ia.acoes = [...reaproveitadas.values()];
         economiaDaExecucao = custoPorAtivo * iguais.length;
       } else {
-        const [guardada] = await query<{ pesquisa: string | null }>("select pesquisa from relatorio_diario where data = $1", [hoje]);
+        const guardada = { pesquisa: await pesquisaGuardada(hoje, modo) };
         const ref: NotaReaproveitada[] = iguais.map((l) => ({
           ticker: l.ticker,
           na_carteira: l.na_carteira,
@@ -341,6 +361,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
           reaproveitadas: ref,
           lote: origem === "agendador", // a análise das 7h pode esperar: Batch API, metade do preço
           yieldExigido: { acao: exigido.acao, fii: exigido.fii, juroReal: juro?.taxa ?? null },
+          salvarPesquisa: (texto, por) => salvarCache(`pesquisa:${hoje}`, { texto, por }),
         });
         ia = r.saida;
         ia.acoes = [...r.saida.acoes, ...[...reaproveitadas.values()].filter((a) => !r.saida.acoes.some((n) => n.ticker.toUpperCase() === a.ticker))];
