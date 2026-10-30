@@ -8,7 +8,7 @@ import { SO_YAHOO, infoTipo } from "./tipos";
 import { garimpar } from "./garimpo";
 import { alertasDaAnalise } from "./alertas";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
-import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, type Qualidade } from "./qualidade";
+import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, tipoDeSetor, type Qualidade } from "./qualidade";
 import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, scoreFinal, type Indicadores } from "./valuation";
 import { juroReal, yieldExigido, type YieldExigido } from "./juros";
 import {
@@ -24,6 +24,37 @@ function hojeSaoPaulo(): string {
 /** Abaixo disso a empresa é pequena demais para o perfil (mais risco, menos liquidez, menos governança). */
 const VALOR_MINIMO_ACAO = 2_000_000_000;
 const PATRIMONIO_MINIMO_FII = 500_000_000;
+
+/**
+ * Padrão previdência para o garimpo (ativos de fora da sua lista). É mais exigente que a trava geral, porque
+ * aqui não há motivo para aceitar risco: só empresas grandes, de setor previsível, com 10 anos de lucro e de dividendo
+ * (o "lucro em cada um dos últimos 10 anos" e "dividendo contínuo" do Graham defensivo) e FIIs de tijolo grandes.
+ */
+const VALOR_MINIMO_GARIMPO = 5_000_000_000;
+const PATRIMONIO_MINIMO_GARIMPO_FII = 1_000_000_000;
+const SEGMENTOS_TIJOLO = /log[íi]st|shopping|lajes|escrit|corporat|renda urbana|varejo|hospital|educa/i;
+function foraDoPadraoPrevidencia(
+  d: DadosAcao,
+  lucro: HistoricoLucro | null,
+  div10: { anos: number; anosPagos: number; cortes: number } | null,
+): string[] {
+  const m: string[] = [];
+  if (d.tipo === "fii") {
+    const pl = d.fii?.patrimonio;
+    if (pl == null || pl < PATRIMONIO_MINIMO_GARIMPO_FII) m.push(`patrimônio abaixo de R$ 1 bi`);
+    if (!SEGMENTOS_TIJOLO.test(d.fii?.segmento ?? "")) m.push(`segmento ${d.fii?.segmento ?? "desconhecido"} (só FII de tijolo)`);
+    if (!div10 || div10.anos < 5 || div10.anosPagos < div10.anos) m.push("menos de 5 anos pagando todo ano");
+    return m;
+  }
+  if (d.tipo !== "acao") return m;
+  const vm = d.fundamentos?.valorMercado;
+  if (vm == null || vm < VALOR_MINIMO_GARIMPO) m.push(`valor de mercado abaixo de R$ 5 bi`);
+  if (tipoDeSetor(d.fundamentos) === "ciclico") m.push(`setor cíclico (${d.fundamentos?.subsetor ?? d.fundamentos?.setor})`);
+  if (!lucro || lucro.anos < 8 || lucro.anosComLucro < lucro.anos) m.push(`lucro em ${lucro?.anosComLucro ?? 0} de ${lucro?.anos ?? 0} anos (precisa de todos, 8 ou mais)`);
+  if (!div10 || div10.anos < 8 || div10.anosPagos < div10.anos - 1 || div10.cortes > 1)
+    m.push(div10 ? `dividendo inconstante (${div10.anosPagos} de ${div10.anos} anos, ${div10.cortes} corte(s) pela metade)` : "sem histórico de dividendos");
+  return m;
+}
 
 /** Preço teto e qualidade conforme o tipo de ativo. `exigido`: yield do Bazin ligado ao juro real. */
 function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | null): { ind: Indicadores; qual: Qualidade } {
@@ -274,11 +305,16 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
     }
   }
 
+  const foraDoPadrao = new Map<string, string[]>(); // garimpo que não passa no padrão previdência
   const todas = dados.map((d) => {
     const cd = cvmDe(d.ticker);
     const lucro = cd ? (lucros.get(cd) ?? null) : null;
     const { ind, qual } = avaliar(d, exigido, lucro);
     const div10 = d.tipo === "acao" || d.tipo === "fii" ? consistenciaDividendos(d.proventos) : null;
+    if (doGarimpo.has(d.ticker)) {
+      const m = foraDoPadraoPrevidencia(d, lucro, div10);
+      if (m.length) foraDoPadrao.set(d.ticker, m);
+    }
     const documentos = cd ? (docs.get(cd) ?? []) : [];
     const anunciados = proventosRecentes(b3.get(d.ticker)?.proventos ?? [], hoje);
     const pos = minha.get(d.ticker);
@@ -339,8 +375,13 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
     };
   });
   // Garimpo só traz o que passa na trava de segurança (os da sua lista continuam, com o alerta)
-  const barrados = todas.filter((l) => l.garimpo && temAlertaGrave(l.alertas));
-  if (barrados.length) console.log(`Garimpo descartou: ${barrados.map((l) => `${l.ticker} (${l.alertas.filter((a) => ALERTA_GRAVE.test(a)).join("; ")})`).join("; ")}`);
+  const barrados = todas.filter((l) => l.garimpo && (temAlertaGrave(l.alertas) || foraDoPadrao.has(l.ticker)));
+  if (barrados.length)
+    console.log(
+      `Garimpo descartou: ${barrados
+        .map((l) => `${l.ticker} (${[...l.alertas.filter((a) => ALERTA_GRAVE.test(a)), ...(foraDoPadrao.get(l.ticker) ?? [])].join("; ")})`)
+        .join("; ")}`,
+    );
   const linhas = todas.filter((l) => !barrados.includes(l));
 
   // 4) IA (opcional e barata). Sem créditos ou com erro, o app decide só pelo cálculo.

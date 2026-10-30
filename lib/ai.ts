@@ -202,12 +202,27 @@ export async function gemini(
         }),
         signal: AbortSignal.timeout(600_000),
       });
-      // Demorou demais: tenta mais uma vez antes de desistir (mais vale esperar que perder a pesquisa)
-      const res = await pedir().catch((err: Error) => {
-        if (err.name !== "TimeoutError" && err.name !== "AbortError") throw err;
-        console.warn(`  Gemini ${modelo} passou de 10 minutos; tentando de novo.`);
-        return pedir();
-      });
+      // Demorou demais: tenta mais uma vez antes de desistir (mais vale esperar que perder a pesquisa).
+      // Falha de rede ("fetch failed": DNS, conexão caiu): espera um pouco e tenta até mais 2 vezes.
+      const res = await pedir()
+        .catch((err: Error) => {
+          if (err.name !== "TimeoutError" && err.name !== "AbortError") throw err;
+          console.warn(`  Gemini ${modelo} passou de 10 minutos; tentando de novo.`);
+          return pedir();
+        })
+        .catch(async (err: Error) => {
+          for (const espera of [10_000, 30_000]) {
+            if (!/fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket/i.test(`${err.message} ${(err as any).cause?.code ?? ""}`)) throw err;
+            console.warn(`  Gemini ${modelo}: falha de rede (${err.message}); tentando de novo em ${espera / 1000}s.`);
+            await new Promise((r) => setTimeout(r, espera));
+            try {
+              return await pedir();
+            } catch (e) {
+              err = e as Error;
+            }
+          }
+          throw err;
+        });
       if (!res.ok) {
         const corpo = (await res.text()).slice(0, 300);
         ultimoErro = new Error(`Gemini ${modelo} HTTP ${res.status}${res.status === 429 ? " (limite grátis do dia)" : ""}: ${corpo}`);

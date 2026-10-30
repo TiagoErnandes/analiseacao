@@ -5,7 +5,7 @@ import { lerCache, numeroBr, salvarCache } from "./mercado";
 const UA = { "User-Agent": "Mozilla/5.0 (compatible; analiseacao/1.0)" };
 
 /** Quantos ativos o garimpo acrescenta por dia. */
-export const MAX_ACOES = 15; // os que não passam na trava de segurança (5 anos de lucro, porte) são descartados depois
+export const MAX_ACOES = 20; // depois, só fica quem passa no padrão previdência (porte, setor, 10 anos de lucro e dividendo)
 export const MAX_FIIS = 2; // foco em ações: poucos FIIs de fora
 
 type Linha = Record<string, string>;
@@ -51,7 +51,7 @@ export function filtrarAcoes(linhas: Linha[], ja: Set<string>, max = MAX_ACOES):
         c.dy != null && c.dy >= 0.05 && c.dy <= 0.2 && // acima de 20% costuma ser dividendo extraordinário
         c.pvp != null && c.pvp > 0 &&
         (c.divida == null || c.divida <= 1.5) &&
-        (c.patrimonio == null || c.patrimonio >= 1_000_000_000), // empresa de porte (patrimônio de R$ 1 bi ou mais)
+        c.patrimonio != null && c.patrimonio >= 2_000_000_000, // empresa de porte (patrimônio de R$ 2 bi ou mais)
     )
     .map((c) => ({
       ...c,
@@ -83,12 +83,15 @@ export function filtrarFiis(linhas: Linha[], ja: Set<string>, max = MAX_FIIS): A
       liq: col(l, /^liquidez/i),
       vacancia: col(l, /vac[aâ]ncia/i),
       valor: col(l, /valor de mercado/i),
+      segmento: Object.entries(l).find(([h]) => /segmento/i.test(h))?.[1] ?? "",
     }))
     .filter(
       (c) =>
         /^[A-Z]{4}11$/.test(c.ticker) && !ja.has(c.ticker) &&
         c.liq != null && c.liq >= 1_000_000 &&
-        c.valor != null && c.valor >= 500_000_000 &&
+        c.valor != null && c.valor >= 1_000_000_000 &&
+        // Previdência: só tijolo (imóveis com aluguel). Papel (CRI) e híbridos dependem de crédito e juros
+        /log[íi]st|shopping|lajes|escrit|corporat|renda urbana|varejo|hospital|educa/i.test(c.segmento) &&
         c.pvp != null && c.pvp >= 0.75 && c.pvp <= 1.05 &&
         c.dy != null && c.dy >= 0.08 && c.dy <= 0.16 &&
         (c.vacancia == null || c.vacancia <= 0.1),
