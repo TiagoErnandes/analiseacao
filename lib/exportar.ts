@@ -1,5 +1,6 @@
 // Exporta a carteira com tudo o que o site sabe, para mandar a outra IA analisar (Markdown, JSON ou CSV).
 import { carregarPainel } from "./painel";
+import { query, type Analise } from "./db";
 import { yieldAtual } from "./juros";
 import { infoTipo } from "./tipos";
 import { brl, dataBr, num, pct, pctSinal } from "./format";
@@ -265,4 +266,116 @@ export function paraCsv(e: Exportacao): string {
   };
   const linhas = [cols.join(";"), ...e.posicoes.map((x) => cols.map((c) => cel(x[c])).join(";"))];
   return "﻿" + linhas.join("\r\n");
+}
+
+// ---------- Ranking do dia ----------
+
+type Lucros10a = { anos: number; anosComLucro: number; crescimentoAnual: number | null; lucros: { ano: number; lucro: number }[] } | null;
+type Div10a = { anos: number; anosPagos: number; cortes: number; crescimento?: number | null } | null;
+
+/** O ranking inteiro do dia, com o que pesa na decisão: preço teto, qualidade, constância, porte, alertas e a IA. */
+export async function montarRanking() {
+  const [rel] = await query<{ data: string; contexto_mercado: string | null }>(
+    "select data::text, contexto_mercado from relatorio_diario order by data desc limit 1",
+  );
+  const analises = rel ? await query<Analise>("select * from analises where data = $1 order by score desc nulls last", [rel.data]) : [];
+  const y = await yieldAtual();
+  const ativos = analises.map((a, i) => {
+    const ind = (a.indicadores ?? {}) as Record<string, unknown>;
+    const n = (k: string) => (typeof ind[k] === "number" ? (ind[k] as number) : null);
+    const luc = (ind.lucros10a ?? null) as Lucros10a;
+    const div = (ind.dividendos10a ?? null) as Div10a;
+    return {
+      posicao: i + 1,
+      ticker: a.ticker,
+      nome: a.nome,
+      tipo: infoTipo(a.tipo)?.nome ?? a.tipo,
+      setor: a.setor,
+      origem: a.na_carteira ? "carteira" : a.garimpo ? "garimpo" : "lista",
+      preco: r2(a.preco),
+      preco_teto: r2(a.preco_teto),
+      metodo_teto: a.teto_bazin != null && a.preco_teto === a.teto_bazin ? "Bazin" : a.teto_graham != null && a.preco_teto === a.teto_graham ? "Graham" : null,
+      margem_ate_teto: r2(a.margem, 4),
+      dy_12m: r2(a.dy_12m, 4),
+      pl: r2(n("pl")),
+      pvp: r2(n("pvp") ?? n("pvpa")),
+      roe: r2(a.roe, 4),
+      div_liq_patrim: r2(n("divLiqPatrim")),
+      valor_mercado_bi: r2((n("valorMercado") ?? 0) / 1e9 || null, 1),
+      liquidez_dia_mi: r2((n("volumeMedio") ?? 0) / 1e6 || null, 1),
+      anos_com_lucro: luc ? `${luc.anosComLucro}/${luc.anos}` : null,
+      lucro_ultimos_5a: luc ? luc.lucros.slice(-5).map((l) => `${l.ano}: ${(l.lucro / 1e6).toFixed(0)} mi`).join(", ") : null,
+      crescimento_lucro_10a: r2(luc?.crescimentoAnual ?? null, 4),
+      anos_com_dividendo: div ? `${div.anosPagos}/${div.anos}` : null,
+      cortes_dividendo: div?.cortes ?? null,
+      crescimento_dividendo: r2(div?.crescimento ?? null, 4),
+      qualidade_0a10: r2(a.qualidade, 1),
+      nota_ia_0a10: r2(a.nota_ia, 1),
+      score_0a100: r2(a.score, 0),
+      recomendacao: a.recomendacao,
+      alertas: lista(a.alertas),
+      resumo_ia: a.resumo_ia,
+      riscos_ia: a.riscos_ia,
+    };
+  });
+  return {
+    data_da_analise: rel?.data ?? null,
+    yield_exigido: { acoes: y.acao, fiis: y.fii, juro_real: y.juroReal?.taxa ?? null },
+    cenario_do_dia: rel?.contexto_mercado ?? null,
+    ativos,
+  };
+}
+export type ExportacaoRanking = Awaited<ReturnType<typeof montarRanking>>;
+
+const PEDIDO_RANKING = `Analise o ranking do dia do meu app de ações (buy and hold, dividendos, previdência). O objetivo é comprar empresas sólidas,
+que pagam bons dividendos, a um preço justo e com margem de segurança. Diga quais do topo são boas de verdade, quais são armadilhas
+(lucro inconstante, empresa pequena, dívida, dividendo extraordinário) e se algum critério do cálculo parece errado.`;
+
+export function rankingMarkdown(e: ExportacaoRanking): string {
+  const L: string[] = [PEDIDO_RANKING, "", "---", "", `# Ranking de ${e.data_da_analise ? dataBr(e.data_da_analise) : "—"}`, ""];
+  L.push(
+    `Yield exigido: ações ${pct(e.yield_exigido.acoes)}, FIIs ${pct(e.yield_exigido.fiis)}` +
+      (e.yield_exigido.juro_real != null ? ` (juro real ${pct(e.yield_exigido.juro_real, 2)})` : "") +
+      ". Margem > 0 = abaixo do preço teto. Score: 35% qualidade, 25% IA, 40% desconto (até 40%); alerta grave multiplica por 0,75.",
+  );
+  if (e.cenario_do_dia) L.push("", `Cenário: ${e.cenario_do_dia}`);
+  L.push(
+    "",
+    "| # | Ativo | Origem | Setor | Preço | Teto | Margem | DY | P/L | P/VP | ROE | Valor merc. | Lucro (anos) | Div. (anos) | Qual. | IA | Score | Sinal |",
+    "|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+  );
+  for (const a of e.ativos) {
+    L.push(
+      `| ${a.posicao} | ${a.ticker} | ${a.origem} | ${a.setor ?? "—"} | ${num(a.preco)} | ${num(a.preco_teto)}${a.metodo_teto ? ` (${a.metodo_teto})` : ""} | ${pctSinal(a.margem_ate_teto)} | ${pct(a.dy_12m)} | ${num(a.pl)} | ${num(a.pvp)} | ${pct(a.roe)} | ${a.valor_mercado_bi != null ? `${num(a.valor_mercado_bi, 1)} bi` : "—"} | ${a.anos_com_lucro ?? "—"} | ${a.anos_com_dividendo ?? "—"} | ${num(a.qualidade_0a10, 1)} | ${num(a.nota_ia_0a10, 1)} | ${a.score_0a100 ?? "—"} | ${a.recomendacao ?? "—"} |`,
+    );
+  }
+  L.push("", "## Detalhes");
+  for (const a of e.ativos) {
+    L.push("", `### ${a.posicao}. ${a.ticker}${a.nome ? ` (${a.nome})` : ""}`);
+    if (a.lucro_ultimos_5a) L.push(`- Lucro dos últimos 5 anos (CVM): ${a.lucro_ultimos_5a}`);
+    const extra = [
+      a.crescimento_lucro_10a != null ? `lucro cresce ${pctSinal(a.crescimento_lucro_10a)} ao ano` : null,
+      a.crescimento_dividendo != null ? `dividendo cresce ${pctSinal(a.crescimento_dividendo)} ao ano` : null,
+      a.cortes_dividendo ? `${a.cortes_dividendo} cortes do dividendo pela metade` : null,
+      a.div_liq_patrim != null ? `dív. líq./patrim. ${num(a.div_liq_patrim)}` : null,
+      a.liquidez_dia_mi != null ? `liquidez R$ ${num(a.liquidez_dia_mi, 1)} mi/dia` : null,
+    ].filter(Boolean);
+    if (extra.length) L.push(`- ${extra.join(" · ")}`);
+    if (a.alertas.length) L.push(`- Alertas: ${a.alertas.join("; ")}`);
+    if (a.resumo_ia) L.push(`- IA: ${a.resumo_ia}`);
+    if (a.riscos_ia) L.push(`- Riscos: ${a.riscos_ia}`);
+  }
+  return L.join("\n");
+}
+
+export function rankingCsv(e: ExportacaoRanking): string {
+  const cols = Object.keys(e.ativos[0] ?? { posicao: 0 }) as (keyof ExportacaoRanking["ativos"][number])[];
+  const cel = (v: unknown) => {
+    if (v == null) return "";
+    if (Array.isArray(v)) v = v.join("; ");
+    if (typeof v === "number") return String(v).replace(".", ",");
+    const s = String(v);
+    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return "﻿" + [cols.join(";"), ...e.ativos.map((a) => cols.map((c) => cel(a[c])).join(";"))].join("\r\n");
 }
