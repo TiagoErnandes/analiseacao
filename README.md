@@ -33,7 +33,7 @@ Todo dia útil às 7h o agendador:
    - **Página de cada ação**: preço teto (Bazin e Graham), indicadores, análise da IA, lucro de cada ano, dividendos em 10 anos, fatos relevantes e proventos anunciados, sua posição e o histórico de cotação × preço teto.
    - **Placar**: as recomendações passadas deram certo? Para cada sinal (Ação do dia, COMPRAR e EVITAR, um por ativo e por mês), o retorno com proventos até hoje e depois de 3, 6 e 12 meses, comparado com o Ibovespa no mesmo período.
 
-Score do ranking: 40% desconto ao teto, 25% qualidade, 25% nota da IA, 10% quanto falta para o peso ideal na carteira (pesos iguais). Sem nota da IA, os outros três pesos são reescalados.
+Score do ranking: 35% qualidade, 25% nota da IA e 40% desconto ao teto (no Balanceamento, 30% desconto e 10% quanto falta para o peso ideal). O desconto conta até 40% abaixo do teto. Sem nota da IA, os outros pesos são reescalados.
 
 ## Como colocar no ar
 
