@@ -48,9 +48,14 @@ atualizar() {
     return 0 # a VPS já está com esta versão
   fi
   echo "[$(agora)] Subindo $(git log -1 --format='%h %s') para a VPS..."
-  if bash deploy/deploy.sh; then
+  bash deploy/deploy.sh
+  local r=$?
+  if [ $r -eq 0 ]; then
     echo "$atual" > "$ULTIMO"
     echo "[$(agora)] ✅ Deploy feito."
+  elif [ $r -eq 3 ]; then
+    echo "[$(agora)] ⏳ Esperando a análise terminar. Tento de novo na próxima conferida."
+    return 1
   else
     echo "[$(agora)] ❌ O deploy falhou. Tento de novo na próxima conferida."
     return 1
