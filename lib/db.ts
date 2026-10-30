@@ -182,6 +182,9 @@ export async function migrar() {
       analisado_em timestamptz not null default now()
     );
     alter table execucoes add column if not exists economia_usd numeric;
+    -- Sinal de vida da análise (a cada 30s) e etapa atual: uma execução sem sinal há minutos foi interrompida
+    alter table execucoes add column if not exists batida timestamptz;
+    alter table execucoes add column if not exists etapa text;
     -- Documentos oficiais da CVM (fatos relevantes, comunicados, avisos) e lucro anual dos balanços (DFP)
     create table if not exists cvm_documentos (
       protocolo text primary key,

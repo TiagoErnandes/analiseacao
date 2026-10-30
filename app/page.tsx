@@ -72,6 +72,7 @@ export default async function Painel() {
       status={exec?.status ?? null}
       inicio={exec?.inicio ?? null}
       erro={exec?.erro ?? null}
+      etapa={exec?.etapa ?? null}
       modo={modo}
       custo={exec?.custo_brl ?? null}
       custoMes={exec?.custo_mes_brl ?? 0}

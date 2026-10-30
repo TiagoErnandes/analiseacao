@@ -9,6 +9,7 @@ type Props = {
   status: "rodando" | "ok" | "erro" | null;
   inicio: string | null;
   erro: string | null;
+  etapa?: string | null;
   modo: ModoIa;
   custo: number | null;
   custoMes: number;
@@ -20,7 +21,7 @@ const reais = (v: number) => `R$ ${v.toFixed(2).replace(".", ",")}`;
 const hora = (iso: string) =>
   new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
 
-export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes, economiaMes = 0 }: Props) {
+export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMes, economiaMes = 0 }: Props) {
   const [modoAtual, setModo] = useState<ModoIa>(modo);
   const [, startSalvar] = useTransition();
   const info = MODOS.find((m) => m.id === modoAtual);
@@ -78,7 +79,7 @@ export function BotaoAnalise({ status, inicio, erro, modo, custo, custoMes, econ
       {mensagem && <p className="max-w-80 text-xs text-texto sm:text-right">{mensagem}</p>}
       <p className="max-w-80 text-xs text-suave sm:text-right">
         {rodando && inicio
-          ? `Rodando desde ${hora(inicio)}. Leva alguns minutos.`
+          ? `Rodando desde ${hora(inicio)}${etapa ? `: ${etapa}` : ". Leva alguns minutos"}.`
           : status === "erro"
             ? `A última análise falhou${inicio ? ` (${hora(inicio)})` : ""}${erro ? `: ${erro}` : "."}`
             : inicio
