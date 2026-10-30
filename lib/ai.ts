@@ -5,6 +5,7 @@
 //   no completo, se o Gemini falhar ou passar do limite grátis, a pesquisa é feita pelo Haiku (pago, barato);
 // - modo "completo": decisão final com o Sonnet;
 // - análise automática (agendador): pela Batch API, que cobra metade do preço dos tokens;
+// - modo "gratis" (padrão): o Gemini pesquisa as notícias e dá as notas, sem custo (plano grátis do Google);
 // - modo "sem_ia": nenhuma chamada (o app decide só pelo cálculo).
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
@@ -13,7 +14,9 @@ import { z } from "zod/v4";
 import type { Estrategia, ModoIa } from "./modos";
 export type { ModoIa };
 
-const CONFIG = {
+const MODELO_GEMINI_PADRAO = "gemini-2.5-flash";
+const CONFIG: Record<Exclude<ModoIa, "sem_ia">, { modelo: string; esforco: "low" | "medium"; buscas: number }> = {
+  gratis: { modelo: MODELO_GEMINI_PADRAO, esforco: "low" as const, buscas: 0 },
   economico: { modelo: "claude-haiku-5-5", esforco: "low" as const, buscas: 0 },
   completo: { modelo: "claude-sonnet-5-5", esforco: "medium" as const, buscas: 5 },
 };
@@ -28,12 +31,12 @@ const PRECO_BUSCA = 10 / 1000;
  * Gemini usado na pesquisa. O 2.5 Flash é o que tem Google Search no plano grátis (500 pesquisas por dia; usamos 1).
  * No plano grátis o Google pode usar o texto enviado para treinar: vão só tickers e perguntas públicas, nada da carteira.
  */
-const MODELO_GEMINI = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const MODELO_GEMINI = process.env.GEMINI_MODEL || MODELO_GEMINI_PADRAO;
 /** O que a IA deve priorizar em cada estratégia da carteira. */
 const REGRAS: Record<Estrategia, string> = {
   oportunidade: `Estratégia OPORTUNIDADE (carteira no começo): priorize as melhores oportunidades de preço com qualidade: maior margem até o teto,
 qualidade >= 6, sem alerta grave. NÃO dê preferência a quem está abaixo do peso ideal e não segure uma compra boa só para balancear setores;
-evite apenas setor acima de 50% da carteira. Considere quedas de preço por ruído político ou macro do Brasil em empresas sólidas como chance de compra.`,
+não há limite de concentração por setor nesta fase: se as melhores oportunidades estão no mesmo setor, pode concentrar. Considere quedas de preço por ruído político ou macro do Brasil em empresas sólidas como chance de compra.`,
   balanceamento: `Estratégia BALANCEAMENTO: prefira margem > 0, qualidade >= 6, sem alerta grave; na carteira, prefira quem está abaixo do peso ideal
 (falta_para_ideal > 0) e de setor até 30%.`,
 };
@@ -111,18 +114,47 @@ type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
  * Pesquisa com o Gemini e a Busca Google (API generateContent). Devolve null sem chave; erro (ex.: limite grátis) sobe.
  * As fontes citadas vão no fim do texto.
  */
-export async function pesquisarComGemini(pergunta: string): Promise<string | null> {
+/** Esquema da decisão no formato do Gemini (responseSchema). */
+const ESQUEMA_GEMINI = {
+  type: "OBJECT",
+  properties: {
+    contexto_mercado: { type: "STRING" },
+    acoes: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          ticker: { type: "STRING" },
+          nota: { type: "NUMBER" },
+          recomendacao: { type: "STRING", enum: ["COMPRAR", "AGUARDAR", "EVITAR"] },
+          resumo: { type: "STRING" },
+          riscos: { type: "STRING" },
+        },
+        required: ["ticker", "nota", "recomendacao", "resumo", "riscos"],
+      },
+    },
+    acao_do_dia_carteira: { type: "STRING" },
+    justificativa_carteira: { type: "STRING" },
+    acao_do_dia_geral: { type: "STRING" },
+    justificativa_geral: { type: "STRING" },
+  },
+  required: ["contexto_mercado", "acoes", "acao_do_dia_carteira", "justificativa_carteira", "acao_do_dia_geral", "justificativa_geral"],
+};
+
+/** Chamada ao Gemini (generateContent). Com `buscar`, usa a Busca Google; com `json`, devolve JSON no esquema da decisão. */
+async function gemini(sistema: string, pergunta: string, opcoes: { buscar?: boolean; json?: boolean }): Promise<{ texto: string; fontes: string[] }> {
   const chave = process.env.GEMINI_API_KEY;
-  if (!chave) return null;
+  if (!chave) throw new Error("GEMINI_API_KEY não configurada");
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODELO_GEMINI}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": chave, "Content-Type": "application/json" },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: "Você é um pesquisador do mercado financeiro brasileiro. Responda em português do Brasil, com datas e fontes. Não invente." }] },
+      systemInstruction: { parts: [{ text: sistema }] },
       contents: [{ role: "user", parts: [{ text: pergunta }] }],
-      tools: [{ google_search: {} }],
+      ...(opcoes.buscar ? { tools: [{ google_search: {} }] } : {}),
+      ...(opcoes.json ? { generationConfig: { responseMimeType: "application/json", responseSchema: ESQUEMA_GEMINI, maxOutputTokens: 32000 } } : {}),
     }),
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(300_000),
   });
   if (!res.ok) {
     const corpo = (await res.text()).slice(0, 300);
@@ -130,9 +162,19 @@ export async function pesquisarComGemini(pergunta: string): Promise<string | nul
   }
   const j = (await res.json()) as any;
   const c = j?.candidates?.[0];
-  const texto = ((c?.content?.parts ?? []) as { text?: string }[]).map((p) => p.text ?? "").join("").trim();
+  const texto = ((c?.content?.parts ?? []) as { text?: string; thought?: boolean }[]).filter((p) => !p.thought).map((p) => p.text ?? "").join("").trim();
   if (!texto) throw new Error(`Gemini sem resposta (${c?.finishReason ?? "vazio"})`);
-  const fontes = [...new Set(((c?.groundingMetadata?.groundingChunks ?? []) as any[]).map((g) => g?.web?.title).filter(Boolean))];
+  const fontes = [...new Set(((c?.groundingMetadata?.groundingChunks ?? []) as any[]).map((g) => g?.web?.title).filter(Boolean))] as string[];
+  return { texto, fontes };
+}
+
+export async function pesquisarComGemini(pergunta: string): Promise<string | null> {
+  if (!process.env.GEMINI_API_KEY) return null;
+  const { texto, fontes } = await gemini(
+    "Você é um pesquisador do mercado financeiro brasileiro. Responda em português do Brasil, com datas e fontes. Não invente.",
+    pergunta,
+    { buscar: true },
+  );
   return fontes.length ? `${texto}\n\nFontes (Busca Google): ${fontes.slice(0, 15).join(", ")}` : texto;
 }
 
@@ -187,7 +229,7 @@ export async function analisarComIa(
   const cfg = CONFIG[modo];
   const lote = !!opcoes.lote;
   const reaproveitadas = opcoes.reaproveitadas ?? [];
-  const client = new Anthropic({ timeout: 15 * 60 * 1000 });
+  const client = modo === "gratis" ? (null as unknown as Anthropic) : new Anthropic({ timeout: 15 * 60 * 1000 });
   const custo: CustoIa = { usd: 0, modelo: cfg.modelo, entrada: 0, saida: 0, buscas: 0, lote: false };
   const fallback = cfg.modelo.startsWith("claude-sonnet")
     ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
@@ -204,7 +246,7 @@ export async function analisarComIa(
 Pesquise: (1) Selic, IPCA, Ibovespa e dólar hoje, e as notícias de política e economia do Brasil que mais mexem com a bolsa;
 (2) resultados, fatos relevantes, proventos, rebaixamentos, processos e mudanças de gestão nos últimos 30 dias para: ${foco}.
 Responda em tópicos curtos: um de cenário e um por ticker com novidade (com data e fonte). Tickers sem novidade: não mencione.`;
-  if (!pesquisa && process.env.GEMINI_API_KEY) {
+  if (!pesquisa && (process.env.GEMINI_API_KEY || modo === "gratis")) {
     try {
       pesquisa = await pesquisarComGemini(pedido(null));
       if (pesquisa) pesquisaPor = `Gemini (${MODELO_GEMINI})`;
@@ -236,18 +278,7 @@ Responda em tópicos curtos: um de cenário e um por ticker com novidade (com da
   const ref = reaproveitadas.length
     ? `\n\nAtivos sem mudança desde a última análise (NÃO precisam de nota; use só para escolher a ação do dia):\n${JSON.stringify(reaproveitadas)}`
     : "";
-  const r = await chamar(
-    client,
-    {
-      model: cfg.modelo,
-      max_tokens: 32000,
-      system: SYSTEM,
-      output_config: { effort: cfg.esforco, format: betaZodOutputFormat(Decisao) },
-      ...fallback,
-      messages: [
-        {
-          role: "user",
-          content: `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia (entre a tabela e os ativos sem mudança).
+  const pedidoDecisao = `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia (entre a tabela e os ativos sem mudança).
 ${REGRAS[estrategia]}${
             opcoes.yieldExigido
               ? `\nYield exigido hoje no preço teto: ações ${(opcoes.yieldExigido.acao * 100).toFixed(1)}%, FIIs ${(opcoes.yieldExigido.fii * 100).toFixed(1)}%` +
@@ -258,9 +289,30 @@ Não recomende COMPRAR com prejuízo, payout insustentável ou dado claramente e
 
 Tabela (ordenada pela nota do cálculo, score_sem_ia):
 ${tabela}${ref}
-${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: decida só pelos números.)"}`,
-        },
-      ],
+${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: decida só pelos números.)"}`;
+
+  // Modo grátis: o Gemini decide (JSON no esquema da decisão), sem custo
+  if (modo === "gratis") {
+    const { texto } = await gemini(SYSTEM, pedidoDecisao, { json: true });
+    let saida: z.infer<typeof Decisao>;
+    try {
+      saida = Decisao.parse(JSON.parse(texto));
+    } catch (err) {
+      throw new Error(`JSON inválido do Gemini: ${(err as Error).message}`.slice(0, 500));
+    }
+    console.log(`  IA: Gemini (${MODELO_GEMINI}), grátis`);
+    return { saida: { ...saida, revisao: null }, custo: { ...custo, modelo: MODELO_GEMINI }, pesquisa };
+  }
+
+  const r = await chamar(
+    client,
+    {
+      model: cfg.modelo,
+      max_tokens: 32000,
+      system: SYSTEM,
+      output_config: { effort: cfg.esforco, format: betaZodOutputFormat(Decisao) },
+      ...fallback,
+      messages: [{ role: "user", content: pedidoDecisao }],
     } as Params,
     lote,
   );

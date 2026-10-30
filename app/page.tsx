@@ -224,7 +224,7 @@ export default async function Painel() {
             <p className="mt-4 text-xs text-fraco">
               Para previdência, o ideal é nenhum setor passar de {pct(LIMITE_SETOR, 0)} da carteira.
               {estrategia.atual === "oportunidade" &&
-                ` Na estratégia Oportunidade, o simulador só barra setor acima de ${pct(estrategia.limiteSetor, 0)}; o balanceamento fica para depois.`}
+                " Na estratégia Oportunidade não há limite por setor: o foco é aproveitar as melhores chances, e o balanceamento fica para depois."}
             </p>
           </div>
         </Cartao>

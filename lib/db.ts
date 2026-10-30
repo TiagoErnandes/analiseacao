@@ -191,6 +191,10 @@ export async function migrar() {
       assunto   text,
       link      text
     );
+    -- Modo grátis com o Gemini vira o padrão (uma vez; depois vale o que você escolher no painel)
+    with marca as (insert into config (chave, valor) values ('modo_gratis_aplicado', '1') on conflict (chave) do nothing returning 1)
+    insert into config (chave, valor) select 'modo_ia', 'gratis' from marca
+    on conflict (chave) do update set valor = excluded.valor;
     create index if not exists cvm_documentos_cd on cvm_documentos (cd_cvm, data desc);
     create table if not exists lucros_anuais (
       cd_cvm int not null,

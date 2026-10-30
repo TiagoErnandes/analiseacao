@@ -14,7 +14,7 @@ export async function iniciarAnalise(): Promise<{ ok: boolean; mensagem: string 
 }
 
 export async function salvarModoIa(modo: ModoIa) {
-  if (!["sem_ia", "economico", "completo"].includes(modo)) return;
+  if (!["gratis", "sem_ia", "economico", "completo"].includes(modo)) return;
   await query("insert into config (chave, valor) values ('modo_ia', $1) on conflict (chave) do update set valor = excluded.valor", [modo]);
   revalidatePath("/");
 }
