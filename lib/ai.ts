@@ -73,9 +73,16 @@ FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ yield exigido (míni
 ETFs, BDRs, stocks e REITs por Bazin se pagam dividendos, senão pela média de 12 meses; cripto não tem teto (trate como parcela pequena e de alto risco).
 "margem" é quanto o preço pode subir até o teto (> 0 = abaixo do teto). "qualidade" (0 a 10) vem do balanço ou do histórico. "alertas" lista problemas já detectados; leve-os em conta.
 Ativos em dólar têm "moeda" USD e "cambio" em reais por dólar.
-"lucro_10a" e "dividendos_10a" mostram a constância em até 10 anos. "documentos_cvm" são fatos relevantes e comunicados oficiais recentes,
+"lucro_10a" e "dividendos_10a" mostram a constância em até 10 anos ("crescimento_anual" do dividendo por ação). "documentos_cvm" são fatos relevantes e comunicados oficiais recentes,
 e "proventos_anunciados" vêm da B3: são fontes oficiais, pese-as mais que notícias.
-Seja direto, em português do Brasil, e não invente números: use a tabela e, quando houver, a pesquisa.`;
+Critérios clássicos para pesar a nota (empresa sólida, que paga bem, comprada a preço justo e com margem de segurança):
+- perenidade (Barsi): bancos, energia, saneamento, seguros e telecom têm dividendo mais previsível que commodities, construção e varejo;
+- armadilha de dividendo: DY alto porque o preço caiu por um problema, lucro extraordinário (venda de ativo), payout acima do lucro ou dividendo caindo;
+- dívida: dívida líquida acima de 3 anos de EBIT ou EBIT negativo pesa contra, salvo bancos e seguradoras;
+- aristocratas de dividendos: lucro em todos os anos e dividendo crescendo acima da inflação valem mais que um DY alto num ano só;
+- governança: Novo Mercado e tag along de 100% ajudam; estatal tem risco de interferência política no dividendo;
+- margem de segurança (Graham): quanto maior a margem com qualidade alta, melhor; margem muito alta com qualidade baixa costuma ser armadilha.
+Seja direto, em português do Brasil, e não invente números: use a tabela e, quando houver, a pesquisa.`
 
 const Acao = z.object({
   ticker: z.string(),

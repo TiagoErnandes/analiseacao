@@ -218,6 +218,10 @@ export type Fundamentos = {
   divLiqPatrim: number | null;
   crescReceita5a: number | null;
   lucroLiquido12m: number | null;
+  volumeMedio?: number | null; // R$ negociados por dia (média de 2 meses)
+  valorMercado?: number | null;
+  divLiquida?: number | null; // dívida líquida em R$ (negativa = caixa líquido)
+  ebit12m?: number | null;
 };
 
 export function extrairFundamentus(html: string) {
@@ -236,6 +240,10 @@ export function extrairFundamentus(html: string) {
     divLiqPatrim: n("divliqpatrim"),
     crescReceita5a: n("cresrec5a"),
     lucroLiquido12m: n("lucroliquido"),
+    volumeMedio: n("volmed2m"),
+    valorMercado: n("valordemercado"),
+    divLiquida: n("divliquida"),
+    ebit12m: n("ebit"), // a primeira ocorrência é a dos últimos 12 meses
   };
   const ehFii = p.has("fii") || p.has("ffoyield");
   const fii: DadosFii | null = ehFii
@@ -289,7 +297,7 @@ export function precisaAtualizarFundamentus(f: Fundamentus, idadeDias: number, h
 }
 
 async function fundamentus(ticker: string): Promise<Fundamentus> {
-  const chave = `fundamentus:${ticker}`;
+  const chave = `fundamentus2:${ticker}`; // 2: com liquidez, valor de mercado, dívida líquida e EBIT
   const c = await lerCache<Fundamentus>(chave);
   if (c && !precisaAtualizarFundamentus(c.dados, c.idadeDias)) {
     usoFontes.fundamentusCache++;

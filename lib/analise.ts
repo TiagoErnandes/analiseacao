@@ -92,10 +92,13 @@ export async function modoIa(): Promise<ModoIa> {
   return v === "sem_ia" || v === "completo" || v === "economico" || v === "gemini_busca" ? v : "gratis";
 }
 
-/** Sinal sem IA: comprar abaixo do teto com qualidade boa; evitar bem acima do teto ou com qualidade baixa. */
-function sinalPorCalculo(l: { margem: number | null; qualidade: number | null; tipo: string }): string | null {
+/** Alertas que impedem o COMPRAR do cálculo, mesmo abaixo do teto: são os sinais clássicos de armadilha de dividendo. */
+const ALERTA_GRAVE = /prejuízo nos últimos 12 meses|insustentável|dívida líquida acima|anos de EBIT|EBIT negativo|acima do que gera|dividendo caindo/;
+
+/** Sinal sem IA: comprar abaixo do teto com qualidade boa e sem alerta grave; evitar bem acima do teto ou com qualidade baixa. */
+function sinalPorCalculo(l: { margem: number | null; qualidade: number | null; tipo: string; alertas?: string[] }): string | null {
   if (l.tipo === "cripto" || l.margem == null) return null;
-  if (l.margem > 0 && (l.qualidade ?? 0) >= 6) return "COMPRAR";
+  if (l.margem > 0 && (l.qualidade ?? 0) >= 6 && !(l.alertas ?? []).some((a) => ALERTA_GRAVE.test(a))) return "COMPRAR";
   if (l.margem < -0.17 || (l.qualidade != null && l.qualidade < 4)) return "EVITAR"; // preço 20% acima do teto
   return "AGUARDAR";
 }
@@ -263,7 +266,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
             : d.historico,
       // Para a IA: constância em 10 anos e fontes oficiais recentes (só o essencial, para gastar poucos tokens)
       lucro_10a: lucro ? { anos: lucro.anos, anos_com_lucro: lucro.anosComLucro, crescimento_anual: lucro.crescimentoAnual } : null,
-      dividendos_10a: div10 ? { anos: div10.anos, anos_pagos: div10.anosPagos, cortes_pela_metade: div10.cortes } : null,
+      dividendos_10a: div10 ? { anos: div10.anos, anos_pagos: div10.anosPagos, cortes_pela_metade: div10.cortes, crescimento_anual: div10.crescimento ?? null } : null,
       documentos_cvm: documentos.length ? documentos.map((x) => `${x.data} ${x.categoria}${x.assunto ? `: ${x.assunto.slice(0, 160)}` : ""}`) : null,
       proventos_anunciados: anunciados.length
         ? anunciados.map((p) => `${p.tipo} ${p.valor != null ? `R$ ${p.valor}` : ""} aprovado ${p.aprovadoEm ?? "?"}, data-com ${p.dataCom ?? "?"}`)

@@ -11,10 +11,15 @@ export function tetoBazin(dpaMedio: number | null, exigido = YIELD_MINIMO_BAZIN)
   return dpaMedio / exigido;
 }
 
-/** Graham: valor justo = raiz(22,5 × LPA × VPA). Só faz sentido com lucro e patrimônio positivos. */
-export function tetoGraham(lpa: number | null, vpa: number | null): number | null {
+/**
+ * Graham: valor justo = raiz(K × LPA × VPA). O K clássico é 22,5 (P/L 15 × P/VP 1,5), pensado para os juros baixos dos EUA.
+ * Com juro real alto, P/L 15 rende menos que o Tesouro IPCA+; então o P/L máximo vira 1 ÷ yield exigido
+ * (7,8% → P/L 12,8 → K = 19,2), nunca acima de 22,5. Só faz sentido com lucro e patrimônio positivos.
+ */
+export function tetoGraham(lpa: number | null, vpa: number | null, exigido = YIELD_MINIMO_BAZIN): number | null {
   if (!lpa || !vpa || lpa <= 0 || vpa <= 0) return null;
-  return Math.sqrt(22.5 * lpa * vpa);
+  const k = Math.min(22.5, 1.5 / exigido);
+  return Math.sqrt(k * lpa * vpa);
 }
 
 /**
@@ -35,9 +40,10 @@ export function margem(preco: number | null, teto: number | null): number | null
 }
 
 /**
- * Nota final de 0 a 100 para ordenar as ações do dia:
- * 40% desconto em relação ao teto, 25% qualidade do balanço, 25% nota da IA, 10% peso faltando na carteira.
- * Sem balancear (estratégia Oportunidade), os 10% do peso faltando vão para o desconto (50%).
+ * Nota final de 0 a 100 para ordenar as ações do dia (empresa boa a preço justo, não a mais barata a qualquer custo):
+ * 30% desconto em relação ao teto, 35% qualidade do balanço, 25% nota da IA, 10% peso faltando na carteira.
+ * Sem balancear (estratégia Oportunidade), os 10% do peso faltando vão para o desconto (40%).
+ * O desconto conta até 40% abaixo do teto: mais que isso costuma ser armadilha (o mercado vê um problema), não bônus.
  * Sem nota de qualidade ou da IA, a parte que falta conta como zero (melhor errar para baixo).
  */
 export function scoreFinal(opts: {
@@ -49,16 +55,16 @@ export function scoreFinal(opts: {
 }): number {
   // A escala do score usa o desconto sobre o teto ((teto - preço) / teto), que é a margem / (1 + margem)
   const desconto = opts.margem == null || opts.margem <= -1 ? -0.3 : opts.margem / (1 + opts.margem);
-  const m = Math.max(-0.3, Math.min(0.5, desconto));
-  const parteMargem = (m + 0.3) / 0.8; // 0..1
+  const m = Math.max(-0.3, Math.min(0.4, desconto));
+  const parteMargem = (m + 0.3) / 0.7; // 0..1
   const parteQualidade = Math.max(0, Math.min(10, opts.qualidade ?? 0)) / 10;
   const falta = Math.max(0, Math.min(0.1, opts.faltaParaIdeal ?? 0)) / 0.1;
   // Sem nota da IA (modo sem IA ou ativo que não foi para a IA), os outros pesos são reescalados
   const pFalta = opts.balancear === false ? 0 : 0.1;
-  const pMargem = 0.5 - pFalta;
-  if (opts.notaIa == null) return Math.round(((parteMargem * pMargem + parteQualidade * 0.25 + falta * pFalta) / 0.75) * 100);
+  const pMargem = 0.4 - pFalta;
+  if (opts.notaIa == null) return Math.round(((parteMargem * pMargem + parteQualidade * 0.35 + falta * pFalta) / 0.75) * 100);
   const parteIa = Math.max(0, Math.min(10, opts.notaIa)) / 10;
-  return Math.round((parteMargem * pMargem + parteQualidade * 0.25 + parteIa * 0.25 + falta * pFalta) * 100);
+  return Math.round((parteMargem * pMargem + parteQualidade * 0.35 + parteIa * 0.25 + falta * pFalta) * 100);
 }
 
 /** Soma os dividendos por ano e devolve DPA dos últimos 12 meses e a média anual (até 5 anos completos). */
@@ -87,7 +93,8 @@ export function calcularDpa(
   return { dpa12m: dpa12m || null, dpaMedio };
 }
 
-export type ConsistenciaDividendos = { anos: number; anosPagos: number; cortes: number };
+/** `crescimento`: quanto o dividendo por ação cresceu ao ano (média dos 3 primeiros anos contra a dos 3 últimos). */
+export type ConsistenciaDividendos = { anos: number; anosPagos: number; cortes: number; crescimento?: number | null };
 
 /**
  * Nos últimos 10 anos completos (a partir do primeiro com dado): em quantos pagou dividendo
@@ -110,7 +117,16 @@ export function consistenciaDividendos(proventos: { valor: number; data: Date }[
     const ant = porAno.get(a - 1);
     if (a > primeiro && ant && v < ant * 0.5) cortes++;
   }
-  return { anos: atual - primeiro, anosPagos, cortes };
+  // Crescimento: média dos 3 primeiros anos contra a dos 3 últimos (suaviza um ano extraordinário), com 6 anos ou mais
+  const anos = atual - primeiro;
+  let crescimento: number | null = null;
+  if (anos >= 6) {
+    const media = (de: number) => [0, 1, 2].reduce((s, i) => s + (porAno.get(de + i) ?? 0), 0) / 3;
+    const ini = media(primeiro);
+    const fim = media(atual - 3);
+    if (ini > 0 && fim > 0) crescimento = Math.pow(fim / ini, 1 / (anos - 3)) - 1;
+  }
+  return { anos, anosPagos, cortes, crescimento };
 }
 
 /** Abaixo disso de dividend yield, a empresa é tratada como "não pagadora" e o teto vem do Graham. */
@@ -173,7 +189,7 @@ export function calcularIndicadores(d: {
     if (!dpa12m) dpa12m = null;
   }
 
-  let graham = tetoGraham(d.lpa, d.vpa);
+  let graham = tetoGraham(d.lpa, d.vpa, exigido);
   if (d.lpa != null && d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01) {
     alertas.push(`LPA ${d.lpa} parece errado (ROE implícito < 1%), Graham ignorado`);
     graham = null;
