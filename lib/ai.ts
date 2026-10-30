@@ -373,6 +373,8 @@ export async function analisarComIa(
     yieldExigido?: { acao: number; fii: number; juroReal: number | null };
     /** Chamado assim que a pesquisa termina (antes da decisão), para ela não se perder se a decisão falhar. */
     salvarPesquisa?: (texto: string, por: string) => Promise<void>;
+    /** Avisa em que parte a IA está (aparece no painel enquanto a análise roda). */
+    progresso?: (texto: string) => void;
   } = {},
 ): Promise<{ saida: SaidaIa; custo: CustoIa; pesquisa: string | null }> {
   const cfg = CONFIG[modo];
@@ -401,6 +403,7 @@ Responda em tópicos curtos: um de cenário e um por ticker com novidade (com da
   if (!pesquisa && modo === "gemini_busca" && !chaveGemini(true)) {
     console.warn("  Modo Gemini com Busca Google sem GEMINI_API_KEY_PAGO: seguindo sem notícias da internet.");
   } else if (!pesquisa && modo !== "gratis" && (chaveGemini(true) || chaveGemini(false))) {
+    opcoes.progresso?.(`IA pesquisando notícias de ${todos.length} ativos na Busca Google`);
     const r = await pesquisaDetalhada(hoje, todos, modo === "gemini_busca");
     custo.entrada += r.entrada;
     custo.saida += r.saida;
@@ -458,9 +461,12 @@ ${pesquisa ? `\nPesquisa:\n${tickers ? trechosDaPesquisa(pesquisa, tickers) : pe
     // Em partes de até GEMINI_POR_CHAMADA ativos, em paralelo: com 60+ ativos numa chamada só, o Gemini passava de 5 minutos
     const partes: LinhaParaIa[][] = [];
     for (let i = 0; i < selecao.length; i += GEMINI_POR_CHAMADA) partes.push(selecao.slice(i, i + GEMINI_POR_CHAMADA));
+    let prontas = 0;
+    opcoes.progresso?.(`IA dando as notas (0 de ${partes.length} partes prontas)`);
     const respostas = await Promise.all(
       partes.map(async (parte) => {
         const r = await gemini(SYSTEM, montarPedido(JSON.stringify(parte), parte.map((l) => l.ticker)), { json: true, paga });
+        opcoes.progresso?.(`IA dando as notas (${++prontas} de ${partes.length} partes prontas)`);
         custo.entrada += r.entrada;
         custo.saida += r.saida;
         try {

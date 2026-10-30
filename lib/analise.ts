@@ -83,6 +83,13 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
 
 let custoDaExecucao: CustoIa | null = null;
 let economiaDaExecucao = 0; // US$ que deixaram de ser gastos (notas reaproveitadas + desconto do lote)
+let execucaoAtual: number | null = null;
+
+/** Mostra no painel em que parte a análise está (e no log). */
+function etapa(texto: string) {
+  console.log(`Etapa: ${texto}`);
+  if (execucaoAtual != null) void query("update execucoes set etapa = $2, batida = now() where id = $1", [execucaoAtual, texto]).catch(() => {});
+}
 
 /** Por quantos dias a nota da IA vale para um ativo cujos dados não mudaram. */
 const VALIDADE_NOTA_DIAS: Record<Exclude<ModoIa, "sem_ia">, number> = { gratis: 1, gemini_busca: 1, economico: 7, completo: 3 };
@@ -193,12 +200,14 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   if (achados.length) console.log(`Garimpo: ${achados.map((a) => `${a.ticker} (${a.motivo})`).join("; ")}`);
   tickers.push(...doGarimpo);
   console.log(`Analisando ${tickers.length} ações em ${hoje}`);
+  etapa(`buscando cotações e balanços (${tickers.length} ativos)`);
 
   // 1) Dados de mercado (em sequência, para não sobrecarregar as fontes)
   const dados: DadosAcao[] = [];
   const precisaDolar = carteira.some((c) => c.tipo && SO_YAHOO.includes(c.tipo) && c.tipo !== "bdr");
   const dolar = precisaDolar ? await cotacaoDolar().catch((e) => (console.warn(`  ${e.message}`), null)) : null;
-  for (const t of tickers) {
+  for (const [i, t] of tickers.entries()) {
+    if (i && i % 10 === 0) etapa(`buscando cotações e balanços (${i} de ${tickers.length})`);
     const tipo = minha.get(t)?.tipo;
     try {
       dados.push(tipo && SO_YAHOO.includes(tipo) ? await buscarExterior(t, tipo, dolar) : await buscarAcao(t));
@@ -223,12 +232,14 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   await query("insert into config (chave, valor) values ('yield_exigido', $1) on conflict (chave) do update set valor = excluded.valor", [
     JSON.stringify(exigido),
   ]);
+  etapa("lendo documentos e balanços da CVM");
   await atualizarDocumentosCvm()
     .then((n) => n && console.log(`CVM: ${n} documentos recentes lidos`))
     .catch((e) => console.warn(`  CVM documentos: ${e.message}`));
   await atualizarLucrosCvm()
     .then((f) => f.length && console.log(`CVM: lucros anuais de ${f.join(", ")}`))
     .catch((e) => console.warn(`  CVM balanços: ${e.message}`));
+  etapa("lendo proventos anunciados na B3");
   const b3 = new Map<string, { codigoCvm: number | null; proventos: ProventoAnunciado[] }>();
   for (const d of dados.filter((x) => x.tipo === "acao")) {
     const info = await infoB3(d.ticker).catch(() => null);
@@ -389,7 +400,9 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
           score_sem_ia: l.score_sem_ia,
           margem: l.margem,
         }));
+        etapa(`IA analisando ${mudaram.length} ativos`);
         const r = await analisarComIa(mudaram, hoje, modo, guardada?.pesquisa ?? null, estrategia.atual, {
+          progresso: etapa,
           reaproveitadas: ref,
           lote: origem === "agendador", // a análise das 7h pode esperar: Batch API, metade do preço
           yieldExigido: { acao: exigido.acao, fii: exigido.fii, juroReal: juro?.taxa ?? null },
@@ -494,6 +507,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
      on conflict (data) do update set investido = excluded.investido, patrimonio = excluded.patrimonio`,
     [hoje, investido, totalCarteira],
   );
+  etapa("salvando o resultado");
   const errosIndices = await atualizarIndices();
   if (errosIndices.length) console.warn(`  Índices de referência: ${errosIndices.join("; ")}`);
   await salvarRelatorio({
@@ -517,6 +531,7 @@ export type Execucao = {
   inicio: string;
   fim: string | null;
   erro: string | null;
+  etapa: string | null; // em que parte a análise está
   custo_brl: number | null; // custo da IA em reais (dólar do dia da análise)
   custo_mes_brl: number;
   economia_brl: number | null; // quanto deixou de gastar (notas reaproveitadas + lote)
@@ -526,8 +541,22 @@ export type Execucao = {
 
 /** Intervalo mínimo entre duas análises disparadas pelo botão. */
 export const INTERVALO_MINIMO_MIN = 15;
-/** Uma execução "rodando" há mais que isso é considerada travada (container reiniciou, etc.). */
+/** Uma execução "rodando" há mais que isso é considerada travada. */
 const TIMEOUT_MIN = 60; // a coleta de dados e a IA levam alguns minutos
+/** A análise dá sinal de vida a cada 30s. Sem sinal há mais que isso, o processo morreu (ex.: atualizar.bat reiniciou o container). */
+const SEM_SINAL_MIN = 3;
+const TRAVADA = `status = 'rodando' and (inicio < now() - interval '${TIMEOUT_MIN} minutes' or coalesce(batida, inicio) < now() - interval '${SEM_SINAL_MIN} minutes')`;
+
+/** Fecha como erro as execuções que pararam no meio, para o botão liberar na hora. */
+async function fecharTravadas() {
+  await query(
+    `update execucoes set status = 'erro', fim = coalesce(batida, now()),
+            erro = case when coalesce(batida, inicio) < now() - interval '${SEM_SINAL_MIN} minutes'
+                        then 'Interrompida' || coalesce(' em: ' || etapa, '') || '. O servidor provavelmente reiniciou (ex.: atualizar.bat durante a análise). Rode de novo.'
+                        else 'Passou de ${TIMEOUT_MIN} minutos' || coalesce(' (parou em: ' || etapa || ')', '') || '. Rode de novo.' end
+      where ${TRAVADA}`,
+  );
+}
 
 const garantirTabela = migrar;
 /** Dólar usado para converter o custo quando a cotação do dia não foi obtida. */
@@ -535,9 +564,9 @@ const DOLAR_PADRAO = 5.5;
 
 export async function ultimaExecucao(): Promise<Execucao | null> {
   await garantirTabela();
+  await fecharTravadas();
   const [e] = await query<Execucao>(
-    `select id, origem,
-            case when status = 'rodando' and inicio < now() - interval '${TIMEOUT_MIN} minutes' then 'erro' else status end as status,
+    `select id, origem, status, etapa,
             inicio::text, fim::text, erro, custo_usd * coalesce(dolar, ${DOLAR_PADRAO}) as custo_brl,
             (select coalesce(sum(custo_usd * coalesce(dolar, ${DOLAR_PADRAO})), 0)
                from execucoes where inicio >= date_trunc('month', now())) as custo_mes_brl,
@@ -556,6 +585,7 @@ export async function ultimaExecucao(): Promise<Execucao | null> {
  */
 async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id: number } | { motivo: string }> {
   await garantirTabela();
+  await fecharTravadas();
   const modo = await modoIa();
   const intervalo = origem === "botao" && modo !== "sem_ia" && modo !== "gratis" && modo !== "gemini_busca" ? INTERVALO_MINIMO_MIN : 0;
   const [r] = await query<{ id: number }>(
@@ -563,7 +593,7 @@ async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id:
      select $1, 'rodando'
      where not exists (
        select 1 from execucoes
-        where (status = 'rodando' and inicio > now() - interval '${TIMEOUT_MIN} minutes')
+        where (status = 'rodando' and not (${TRAVADA}))
            or (status <> 'erro' and modelo like 'claude%' and inicio > now() - make_interval(mins => $2::int))
      )
      returning id`,
@@ -588,6 +618,9 @@ export async function rodarAnalise(origem: "agendador" | "botao" | "manual") {
   const reserva = await reservar(origem);
   if ("motivo" in reserva) return reserva;
 
+  // Sinal de vida: se o processo morrer no meio, o painel percebe em poucos minutos e libera o botão
+  execucaoAtual = reserva.id;
+  const sinal = setInterval(() => void query("update execucoes set batida = now() where id = $1", [reserva.id]).catch(() => {}), 30_000);
   const termino = executarAnalise(origem)
     .then(() =>
       (async () =>
@@ -605,6 +638,10 @@ export async function rodarAnalise(origem: "agendador" | "botao" | "manual") {
         reserva.id,
         String((err as Error)?.message ?? err).slice(0, 1000),
       ]);
+    })
+    .finally(() => {
+      clearInterval(sinal);
+      if (execucaoAtual === reserva.id) execucaoAtual = null;
     });
   return { id: reserva.id, termino };
 }
