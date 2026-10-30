@@ -77,6 +77,13 @@ export async function salvarAnalises(linhas: Analise[]) {
   const client = await pool().connect();
   try {
     await client.query("begin");
+    // Rodou de novo no mesmo dia: tira os ativos que saíram (ex.: garimpo que não passa mais nos filtros)
+    for (const data of new Set(linhas.map((l) => l.data))) {
+      await client.query("delete from analises where data = $1 and not (ticker = any($2::text[]))", [
+        data,
+        linhas.filter((l) => l.data === data).map((l) => l.ticker),
+      ]);
+    }
     const cols = COLUNAS_ANALISE.join(", ");
     const marcadores = COLUNAS_ANALISE.map((_, i) => `$${i + 1}`).join(", ");
     const update = COLUNAS_ANALISE.filter((c) => c !== "data" && c !== "ticker")
