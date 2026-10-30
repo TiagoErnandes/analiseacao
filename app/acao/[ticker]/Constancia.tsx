@@ -72,6 +72,9 @@ export function Constancia({
                 ) : (
                   " · nenhum corte pela metade"
                 )}
+                {dividendos.crescimento != null && (
+                  <> · {dividendos.crescimento >= 0 ? "cresceu" : "caiu"} <b>{(Math.abs(dividendos.crescimento) * 100).toFixed(1).replace(".", ",")}%</b> ao ano</>
+                )}
               </p>
             ) : (
               <p className="text-sm text-suave">Sem histórico de pagamentos.</p>
