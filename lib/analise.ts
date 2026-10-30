@@ -231,14 +231,17 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   if (achados.length) console.log(`Garimpo: ${achados.map((a) => `${a.ticker} (${a.motivo})`).join("; ")}`);
   tickers.push(...doGarimpo);
   console.log(`Analisando ${tickers.length} ações em ${hoje}`);
-  etapa(`buscando cotações e balanços (${tickers.length} ativos)`);
+  etapa(`atualizando cotações (${tickers.length} ativos; balanços vêm do banco quando já existem)`);
 
   // 1) Dados de mercado (em sequência, para não sobrecarregar as fontes)
   const dados: DadosAcao[] = [];
   const precisaDolar = carteira.some((c) => c.tipo && SO_YAHOO.includes(c.tipo) && c.tipo !== "bdr");
   const dolar = precisaDolar ? await cotacaoDolar().catch((e) => (console.warn(`  ${e.message}`), null)) : null;
   for (const [i, t] of tickers.entries()) {
-    if (i && i % 10 === 0) etapa(`buscando cotações e balanços (${i} de ${tickers.length})`);
+    if (i && i % 10 === 0)
+      etapa(
+        `atualizando cotações (${i} de ${tickers.length}) · balanços: ${usoFontes.fundamentusCache} do banco, ${usoFontes.fundamentus} baixados`,
+      );
     const tipo = minha.get(t)?.tipo;
     try {
       dados.push(tipo && SO_YAHOO.includes(tipo) ? await buscarExterior(t, tipo, dolar) : await buscarAcao(t));
