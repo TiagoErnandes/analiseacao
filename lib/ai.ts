@@ -14,7 +14,7 @@ import { z } from "zod/v4";
 import type { Estrategia, ModoIa } from "./modos";
 export type { ModoIa };
 
-const MODELO_GEMINI_PADRAO = "gemini-2.5-flash";
+const MODELO_GEMINI_PADRAO = "gemini-3.8-flash";
 const CONFIG: Record<Exclude<ModoIa, "sem_ia">, { modelo: string; esforco: "low" | "medium"; buscas: number }> = {
   gratis: { modelo: MODELO_GEMINI_PADRAO, esforco: "low" as const, buscas: 0 },
   economico: { modelo: "claude-haiku-5-5", esforco: "low" as const, buscas: 0 },
@@ -28,10 +28,13 @@ const ESPERA_LOTE_MIN = 60;
 const PRECO: Record<string, [number, number]> = { "claude-haiku-5-5": [0.1, 0.5], "claude-sonnet-5-5": [2, 10] };
 const PRECO_BUSCA = 10 / 1000;
 /**
- * Gemini usado na pesquisa. O 2.5 Flash é o que tem Google Search no plano grátis (500 pesquisas por dia; usamos 1).
+ * Gemini: o 2.5 Flash foi desativado para contas novas; o padrão é o 3.8 Flash (nota e sinal grátis).
+ * A Busca Google nos modelos 3.x exige faturamento ativo no Google (5.000 buscas por mês sem custo); sem isso, segue sem notícias.
  * No plano grátis o Google pode usar o texto enviado para treinar: vão só tickers e perguntas públicas, nada da carteira.
  */
-const MODELO_GEMINI = process.env.GEMINI_MODEL || MODELO_GEMINI_PADRAO;
+/** Modelos tentados em ordem (o Google desativa os antigos para contas novas). GEMINI_MODEL fixa um. */
+const MODELOS_GEMINI = process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : [MODELO_GEMINI_PADRAO, "gemini-3.6-flash", "gemini-3.5-flash-lite"];
+let modeloGemini = MODELOS_GEMINI[0];
 /** O que a IA deve priorizar em cada estratégia da carteira. */
 const REGRAS: Record<Estrategia, string> = {
   oportunidade: `Estratégia OPORTUNIDADE (carteira no começo): priorize as melhores oportunidades de preço com qualidade: maior margem até o teto,
@@ -145,27 +148,47 @@ const ESQUEMA_GEMINI = {
 async function gemini(sistema: string, pergunta: string, opcoes: { buscar?: boolean; json?: boolean }): Promise<{ texto: string; fontes: string[] }> {
   const chave = process.env.GEMINI_API_KEY;
   if (!chave) throw new Error("GEMINI_API_KEY não configurada");
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODELO_GEMINI}:generateContent`, {
-    method: "POST",
-    headers: { "x-goog-api-key": chave, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: sistema }] },
-      contents: [{ role: "user", parts: [{ text: pergunta }] }],
-      ...(opcoes.buscar ? { tools: [{ google_search: {} }] } : {}),
-      ...(opcoes.json ? { generationConfig: { responseMimeType: "application/json", responseSchema: ESQUEMA_GEMINI, maxOutputTokens: 32000 } } : {}),
-    }),
-    signal: AbortSignal.timeout(300_000),
-  });
-  if (!res.ok) {
-    const corpo = (await res.text()).slice(0, 300);
-    throw new Error(`Gemini HTTP ${res.status}${res.status === 429 ? " (limite grátis do dia)" : ""}: ${corpo}`);
+  // Tenta o modelo que já funcionou; se o Google desativar um (HTTP 404), passa para o próximo da lista
+  const ordem = [...new Set([modeloGemini, ...MODELOS_GEMINI])];
+  let ultimoErro: Error | null = null;
+  for (const modelo of ordem) {
+    for (const comEsquema of opcoes.json ? [true, false] : [false]) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+        method: "POST",
+        headers: { "x-goog-api-key": chave, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: sistema }] },
+          contents: [{ role: "user", parts: [{ text: pergunta }] }],
+          ...(opcoes.buscar ? { tools: [{ google_search: {} }] } : {}),
+          ...(opcoes.json
+            ? { generationConfig: { responseMimeType: "application/json", ...(comEsquema ? { responseSchema: ESQUEMA_GEMINI } : {}), maxOutputTokens: 32000 } }
+            : {}),
+        }),
+        signal: AbortSignal.timeout(300_000),
+      });
+      if (!res.ok) {
+        const corpo = (await res.text()).slice(0, 300);
+        ultimoErro = new Error(`Gemini ${modelo} HTTP ${res.status}${res.status === 429 ? " (limite grátis do dia)" : ""}: ${corpo}`);
+        if (res.status === 404) break; // modelo desativado: próximo modelo
+        if (res.status === 400 && comEsquema) continue; // esquema recusado: tenta só com JSON
+        throw ultimoErro;
+      }
+      const j = (await res.json()) as any;
+      const c = j?.candidates?.[0];
+      const texto = ((c?.content?.parts ?? []) as { text?: string; thought?: boolean }[])
+        .filter((p) => !p.thought)
+        .map((p) => p.text ?? "")
+        .join("")
+        .trim()
+        .replace(/^```(?:json)?\s*|\s*```$/g, "");
+      if (!texto) throw new Error(`Gemini sem resposta (${c?.finishReason ?? "vazio"})`);
+      if (modelo !== modeloGemini) console.log(`  Gemini: usando ${modelo}`);
+      modeloGemini = modelo;
+      const fontes = [...new Set(((c?.groundingMetadata?.groundingChunks ?? []) as any[]).map((g) => g?.web?.title).filter(Boolean))] as string[];
+      return { texto, fontes };
+    }
   }
-  const j = (await res.json()) as any;
-  const c = j?.candidates?.[0];
-  const texto = ((c?.content?.parts ?? []) as { text?: string; thought?: boolean }[]).filter((p) => !p.thought).map((p) => p.text ?? "").join("").trim();
-  if (!texto) throw new Error(`Gemini sem resposta (${c?.finishReason ?? "vazio"})`);
-  const fontes = [...new Set(((c?.groundingMetadata?.groundingChunks ?? []) as any[]).map((g) => g?.web?.title).filter(Boolean))] as string[];
-  return { texto, fontes };
+  throw ultimoErro ?? new Error("Gemini: nenhum modelo disponível");
 }
 
 export async function pesquisarComGemini(pergunta: string): Promise<string | null> {
@@ -249,7 +272,7 @@ Responda em tópicos curtos: um de cenário e um por ticker com novidade (com da
   if (!pesquisa && (process.env.GEMINI_API_KEY || modo === "gratis")) {
     try {
       pesquisa = await pesquisarComGemini(pedido(null));
-      if (pesquisa) pesquisaPor = `Gemini (${MODELO_GEMINI})`;
+      if (pesquisa) pesquisaPor = `Gemini (${modeloGemini})`;
     } catch (err) {
       console.warn(`  Pesquisa com Gemini falhou: ${(err as Error).message}${cfg.buscas > 0 ? "; usando o Haiku" : ""}`);
     }
@@ -300,8 +323,8 @@ ${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: d
     } catch (err) {
       throw new Error(`JSON inválido do Gemini: ${(err as Error).message}`.slice(0, 500));
     }
-    console.log(`  IA: Gemini (${MODELO_GEMINI}), grátis`);
-    return { saida: { ...saida, revisao: null }, custo: { ...custo, modelo: MODELO_GEMINI }, pesquisa };
+    console.log(`  IA: Gemini (${modeloGemini}), grátis`);
+    return { saida: { ...saida, revisao: null }, custo: { ...custo, modelo: modeloGemini }, pesquisa };
   }
 
   const r = await chamar(

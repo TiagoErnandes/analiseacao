@@ -131,6 +131,11 @@ export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]
                           <Link href={`/acao/${a.ticker}`} onClick={(e) => e.stopPropagation()} className="hover:text-marca">{a.ticker}</Link>
                           <TipoAtivo tipo={a.tipo} />
                           {a.na_carteira && <span className="rounded bg-[#3987e5]/15 px-1 text-[10px] font-semibold text-[#6da7ec]">CARTEIRA</span>}
+                          {a.garimpo && (
+                            <span className="rounded bg-marca/15 px-1 text-[10px] font-semibold text-marca" title="Achado pelo garimpo automático: fora da sua carteira e da lista fixa">
+                              GARIMPO
+                            </span>
+                          )}
                           {a.alertas && <span className="text-[11px] text-amber-300" title={a.alertas}>⚠</span>}
                         </p>
                         <p className="max-w-40 truncate text-[11px] text-fraco">{a.setor}</p>

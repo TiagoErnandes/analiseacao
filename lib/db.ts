@@ -46,6 +46,7 @@ export type Analise = {
   riscos_ia: string | null;
   score: number | null;
   na_carteira: boolean;
+  garimpo?: boolean; // achado pelo garimpo automático (fora da carteira e da lista)
   qualidade: number | null; // 0 a 10, só balanço
   setor: string | null;
   alertas: string | null; // problemas de dados e de qualidade, separados por "; "
@@ -69,7 +70,7 @@ export type Relatorio = {
 const COLUNAS_ANALISE = [
   "data", "ticker", "nome", "logo", "preco", "variacao_dia", "lpa", "vpa", "dpa_12m", "dpa_medio", "dy_12m", "roe",
   "teto_bazin", "teto_graham", "preco_teto", "margem", "nota_ia", "recomendacao", "resumo_ia", "riscos_ia", "score",
-  "na_carteira", "qualidade", "setor", "alertas", "tipo", "indicadores", "moeda", "cambio",
+  "na_carteira", "garimpo", "qualidade", "setor", "alertas", "tipo", "indicadores", "moeda", "cambio",
 ] as const satisfies readonly (keyof Analise)[];
 
 export async function salvarAnalises(linhas: Analise[]) {
@@ -84,7 +85,7 @@ export async function salvarAnalises(linhas: Analise[]) {
     for (const l of linhas) {
       await client.query(
         `insert into analises (${cols}) values (${marcadores}) on conflict (data, ticker) do update set ${update}`,
-        COLUNAS_ANALISE.map((c) => l[c]),
+        COLUNAS_ANALISE.map((c) => (c === "garimpo" ? !!l.garimpo : l[c])),
       );
     }
     await client.query("commit");
@@ -192,6 +193,7 @@ export async function migrar() {
       link      text
     );
     -- Modo grátis com o Gemini vira o padrão (uma vez; depois vale o que você escolher no painel)
+    alter table analises add column if not exists garimpo boolean not null default false;
     -- Margem passou a ser o potencial até o teto (teto / preço - 1): recalcula o histórico uma vez
     with marca as (insert into config (chave, valor) values ('margem_potencial_aplicada', '1') on conflict (chave) do nothing returning 1)
     update analises set margem = preco_teto / preco - 1 where preco > 0 and preco_teto > 0 and exists (select 1 from marca);
