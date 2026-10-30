@@ -37,6 +37,8 @@ const PRECO_BUSCA = 10 / 1000;
 /** Modelos tentados em ordem (o Google desativa os antigos para contas novas). GEMINI_MODEL fixa um. */
 const MODELOS_GEMINI = process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : [MODELO_GEMINI_PADRAO, "gemini-3.6-flash", "gemini-3.5-flash-lite"];
 let modeloGemini = MODELOS_GEMINI[0];
+/** Ativos por chamada na decisão do Gemini (as partes vão em paralelo). */
+const GEMINI_POR_CHAMADA = 20;
 /** O que a IA deve priorizar em cada estratégia da carteira. */
 const REGRAS: Record<Estrategia, string> = {
   oportunidade: `Estratégia OPORTUNIDADE (carteira no começo): priorize as melhores oportunidades de preço com qualidade: maior margem até o teto,
@@ -165,7 +167,11 @@ async function gemini(
   const ordem = [...new Set([modeloGemini, ...MODELOS_GEMINI])];
   let ultimoErro: Error | null = null;
   for (const modelo of ordem) {
-    for (const comEsquema of opcoes.json ? [true, false] : [false]) {
+    // Se o Google recusar uma opção (HTTP 400), tenta de novo sem ela: primeiro o pensamento curto, depois o esquema
+    const variantes = opcoes.json
+      ? [{ esquema: true, pensarPouco: true }, { esquema: true, pensarPouco: false }, { esquema: false, pensarPouco: false }]
+      : [{ esquema: false, pensarPouco: false }];
+    for (const { esquema: comEsquema, pensarPouco } of variantes) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": chave, "Content-Type": "application/json" },
@@ -174,16 +180,24 @@ async function gemini(
           contents: [{ role: "user", parts: [{ text: pergunta }] }],
           ...(opcoes.buscar ? { tools: [{ google_search: {} }] } : {}),
           ...(opcoes.json
-            ? { generationConfig: { responseMimeType: "application/json", ...(comEsquema ? { responseSchema: ESQUEMA_GEMINI } : {}), maxOutputTokens: 32000 } }
+            ? {
+                generationConfig: {
+                  responseMimeType: "application/json",
+                  ...(comEsquema ? { responseSchema: ESQUEMA_GEMINI } : {}),
+                  // Nota e sinal não precisam de raciocínio longo: pensar pouco deixa a resposta bem mais rápida
+                  ...(pensarPouco ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
+                  maxOutputTokens: 32000,
+                },
+              }
             : {}),
         }),
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(480_000),
       });
       if (!res.ok) {
         const corpo = (await res.text()).slice(0, 300);
         ultimoErro = new Error(`Gemini ${modelo} HTTP ${res.status}${res.status === 429 ? " (limite grátis do dia)" : ""}: ${corpo}`);
         if (res.status === 404) break; // modelo desativado: próximo modelo
-        if (res.status === 400 && comEsquema) continue; // esquema recusado: tenta só com JSON
+        if (res.status === 400 && (comEsquema || pensarPouco)) continue; // opção recusada: tenta sem ela
         throw ultimoErro;
       }
       const j = (await res.json()) as any;
@@ -249,6 +263,30 @@ async function chamar(client: Anthropic, params: Params, lote: boolean): Promise
     }
   }
   return { msg: await client.beta.messages.stream(params).finalMessage(), lote: false };
+}
+
+/**
+ * Junta as respostas do Gemini dadas em partes: as notas de todas, e a ação do dia entre as escolhidas em cada parte
+ * (a de maior nota; na carteira, só entre os ativos da carteira).
+ */
+export function juntarDecisoes(respostas: z.infer<typeof Decisao>[], selecao: LinhaParaIa[], reaproveitadas: NotaReaproveitada[]): z.infer<typeof Decisao> {
+  const acoes = respostas.flatMap((r) => r.acoes);
+  const nota = (t: string) =>
+    acoes.find((a) => a.ticker.toUpperCase() === t.toUpperCase())?.nota ?? reaproveitadas.find((r) => r.ticker === t.toUpperCase())?.nota ?? -1;
+  const naCarteira = new Set([...selecao.filter((l) => l.na_carteira).map((l) => l.ticker), ...reaproveitadas.filter((r) => r.na_carteira).map((r) => r.ticker)]);
+  const melhor = (candidatas: z.infer<typeof Decisao>[]) => candidatas.reduce<z.infer<typeof Decisao> | null>((m, r) => (!m || nota(r.acao_do_dia_geral) > nota(m.acao_do_dia_geral) ? r : m), null);
+  const melhorCarteira = (candidatas: z.infer<typeof Decisao>[]) =>
+    candidatas.reduce<z.infer<typeof Decisao> | null>((m, r) => (!m || nota(r.acao_do_dia_carteira) > nota(m.acao_do_dia_carteira) ? r : m), null);
+  const geral = melhor(respostas) ?? respostas[0];
+  const carteira = melhorCarteira(respostas.filter((r) => naCarteira.has(r.acao_do_dia_carteira.toUpperCase()))) ?? respostas[0];
+  return {
+    contexto_mercado: respostas[0].contexto_mercado,
+    acoes,
+    acao_do_dia_geral: geral.acao_do_dia_geral,
+    justificativa_geral: geral.justificativa_geral,
+    acao_do_dia_carteira: carteira.acao_do_dia_carteira,
+    justificativa_carteira: carteira.justificativa_carteira,
+  };
 }
 
 /**
@@ -326,7 +364,7 @@ Responda em tópicos curtos: um de cenário e um por ticker com novidade (com da
   const ref = reaproveitadas.length
     ? `\n\nAtivos sem mudança desde a última análise (NÃO precisam de nota; use só para escolher a ação do dia):\n${JSON.stringify(reaproveitadas)}`
     : "";
-  const pedidoDecisao = `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia (entre a tabela e os ativos sem mudança).
+  const montarPedido = (tabela: string) => `Hoje é ${hoje}. Dê nota e recomendação para CADA ticker da tabela e escolha a ação do dia (entre a tabela e os ativos sem mudança).
 ${REGRAS[estrategia]}${
             opcoes.yieldExigido
               ? `\nYield exigido hoje no preço teto: ações ${(opcoes.yieldExigido.acao * 100).toFixed(1)}%, FIIs ${(opcoes.yieldExigido.fii * 100).toFixed(1)}%` +
@@ -338,19 +376,27 @@ Não recomende COMPRAR com prejuízo, payout insustentável ou dado claramente e
 Tabela (ordenada pela nota do cálculo, score_sem_ia):
 ${tabela}${ref}
 ${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: decida só pelos números.)"}`;
+  const pedidoDecisao = montarPedido(tabela);
 
   // Modos do Gemini: ele decide (JSON no esquema da decisão). Grátis com a chave grátis; no gemini_busca, com a paga
   if (ehGemini) {
     const paga = modo === "gemini_busca" && !!chaveGemini(true);
-    const { texto, entrada, saida: tokensSaida } = await gemini(SYSTEM, pedidoDecisao, { json: true, paga });
-    custo.entrada += entrada;
-    custo.saida += tokensSaida;
-    let saida: z.infer<typeof Decisao>;
-    try {
-      saida = Decisao.parse(JSON.parse(texto));
-    } catch (err) {
-      throw new Error(`JSON inválido do Gemini: ${(err as Error).message}`.slice(0, 500));
-    }
+    // Em partes de até GEMINI_POR_CHAMADA ativos, em paralelo: com 60+ ativos numa chamada só, o Gemini passava de 5 minutos
+    const partes: LinhaParaIa[][] = [];
+    for (let i = 0; i < selecao.length; i += GEMINI_POR_CHAMADA) partes.push(selecao.slice(i, i + GEMINI_POR_CHAMADA));
+    const respostas = await Promise.all(
+      partes.map(async (parte) => {
+        const r = await gemini(SYSTEM, montarPedido(JSON.stringify(parte)), { json: true, paga });
+        custo.entrada += r.entrada;
+        custo.saida += r.saida;
+        try {
+          return Decisao.parse(JSON.parse(r.texto));
+        } catch (err) {
+          throw new Error(`JSON inválido do Gemini: ${(err as Error).message}`.slice(0, 500));
+        }
+      }),
+    );
+    const saida = juntarDecisoes(respostas, selecao, reaproveitadas);
     console.log(
       `  IA: Gemini (${modeloGemini}), ${paga ? "chave paga (o custo aparece no AI Studio)" : "grátis"}: ${custo.entrada} tokens de entrada, ${custo.saida} de saída`,
     );
