@@ -5,7 +5,8 @@
 //   no completo, se o Gemini falhar ou passar do limite grátis, a pesquisa é feita pelo Haiku (pago, barato);
 // - modo "completo": decisão final com o Sonnet;
 // - análise automática (agendador): pela Batch API, que cobra metade do preço dos tokens;
-// - modo "gratis" (padrão): o Gemini pesquisa as notícias e dá as notas, sem custo (plano grátis do Google);
+// - modo "gratis" (padrão): o Gemini dá as notas sem Busca Google, com a chave grátis (GEMINI_API_KEY);
+// - modo "gemini_busca": o Gemini pesquisa na Busca Google e dá as notas, com a chave paga (GEMINI_API_KEY_PAGO);
 // - modo "sem_ia": nenhuma chamada (o app decide só pelo cálculo).
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
@@ -17,6 +18,7 @@ export type { ModoIa };
 const MODELO_GEMINI_PADRAO = "gemini-3.8-flash";
 const CONFIG: Record<Exclude<ModoIa, "sem_ia">, { modelo: string; esforco: "low" | "medium"; buscas: number }> = {
   gratis: { modelo: MODELO_GEMINI_PADRAO, esforco: "low" as const, buscas: 0 },
+  gemini_busca: { modelo: MODELO_GEMINI_PADRAO, esforco: "low" as const, buscas: 0 },
   economico: { modelo: "claude-haiku-5-5", esforco: "low" as const, buscas: 0 },
   completo: { modelo: "claude-sonnet-5-5", esforco: "medium" as const, buscas: 5 },
 };
@@ -145,9 +147,20 @@ const ESQUEMA_GEMINI = {
 };
 
 /** Chamada ao Gemini (generateContent). Com `buscar`, usa a Busca Google; com `json`, devolve JSON no esquema da decisão. */
-async function gemini(sistema: string, pergunta: string, opcoes: { buscar?: boolean; json?: boolean }): Promise<{ texto: string; fontes: string[] }> {
-  const chave = process.env.GEMINI_API_KEY;
-  if (!chave) throw new Error("GEMINI_API_KEY não configurada");
+/**
+ * Duas chaves: GEMINI_API_KEY (projeto sem faturamento: grátis, sem Busca Google) e GEMINI_API_KEY_PAGO
+ * (projeto com faturamento: cobra os tokens e libera a Busca Google). No Google, quem é grátis ou pago é o projeto da chave.
+ */
+const chaveGemini = (paga: boolean) => (paga ? process.env.GEMINI_API_KEY_PAGO : process.env.GEMINI_API_KEY) || undefined;
+
+async function gemini(
+  sistema: string,
+  pergunta: string,
+  opcoes: { buscar?: boolean; json?: boolean; paga?: boolean },
+): Promise<{ texto: string; fontes: string[]; entrada: number; saida: number }> {
+  const nomeChave = opcoes.paga ? "GEMINI_API_KEY_PAGO" : "GEMINI_API_KEY";
+  const chave = chaveGemini(!!opcoes.paga);
+  if (!chave) throw new Error(`${nomeChave} não configurada`);
   // Tenta o modelo que já funcionou; se o Google desativar um (HTTP 404), passa para o próximo da lista
   const ordem = [...new Set([modeloGemini, ...MODELOS_GEMINI])];
   let ultimoErro: Error | null = null;
@@ -185,20 +198,23 @@ async function gemini(sistema: string, pergunta: string, opcoes: { buscar?: bool
       if (modelo !== modeloGemini) console.log(`  Gemini: usando ${modelo}`);
       modeloGemini = modelo;
       const fontes = [...new Set(((c?.groundingMetadata?.groundingChunks ?? []) as any[]).map((g) => g?.web?.title).filter(Boolean))] as string[];
-      return { texto, fontes };
+      const uso = j?.usageMetadata ?? {};
+      return { texto, fontes, entrada: Number(uso.promptTokenCount) || 0, saida: (Number(uso.candidatesTokenCount) || 0) + (Number(uso.thoughtsTokenCount) || 0) };
     }
   }
   throw ultimoErro ?? new Error("Gemini: nenhum modelo disponível");
 }
 
-export async function pesquisarComGemini(pergunta: string): Promise<string | null> {
-  if (!process.env.GEMINI_API_KEY) return null;
-  const { texto, fontes } = await gemini(
+/** Pesquisa com a Busca Google. Usa a chave paga se houver (a Busca Google exige faturamento); senão, tenta a grátis. */
+export async function pesquisarComGemini(pergunta: string, soPaga = false): Promise<{ texto: string; entrada: number; saida: number } | null> {
+  const paga = !!chaveGemini(true);
+  if (!paga && (soPaga || !chaveGemini(false))) return null;
+  const r = await gemini(
     "Você é um pesquisador do mercado financeiro brasileiro. Responda em português do Brasil, com datas e fontes. Não invente.",
     pergunta,
-    { buscar: true },
+    { buscar: true, paga },
   );
-  return fontes.length ? `${texto}\n\nFontes (Busca Google): ${fontes.slice(0, 15).join(", ")}` : texto;
+  return { ...r, texto: r.fontes.length ? `${r.texto}\n\nFontes (Busca Google): ${r.fontes.slice(0, 15).join(", ")}` : r.texto };
 }
 
 /**
@@ -252,7 +268,8 @@ export async function analisarComIa(
   const cfg = CONFIG[modo];
   const lote = !!opcoes.lote;
   const reaproveitadas = opcoes.reaproveitadas ?? [];
-  const client = modo === "gratis" ? (null as unknown as Anthropic) : new Anthropic({ timeout: 15 * 60 * 1000 });
+  const ehGemini = modo === "gratis" || modo === "gemini_busca";
+  const client = ehGemini ? (null as unknown as Anthropic) : new Anthropic({ timeout: 15 * 60 * 1000 });
   const custo: CustoIa = { usd: 0, modelo: cfg.modelo, entrada: 0, saida: 0, buscas: 0, lote: false };
   const fallback = cfg.modelo.startsWith("claude-sonnet")
     ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
@@ -269,10 +286,18 @@ export async function analisarComIa(
 Pesquise: (1) Selic, IPCA, Ibovespa e dólar hoje, e as notícias de política e economia do Brasil que mais mexem com a bolsa;
 (2) resultados, fatos relevantes, proventos, rebaixamentos, processos e mudanças de gestão nos últimos 30 dias para: ${foco}.
 Responda em tópicos curtos: um de cenário e um por ticker com novidade (com data e fonte). Tickers sem novidade: não mencione.`;
-  if (!pesquisa && (process.env.GEMINI_API_KEY || modo === "gratis")) {
+  // No modo grátis não pesquisa: a Busca Google não funciona sem faturamento e só gastaria tempo
+  if (!pesquisa && modo === "gemini_busca" && !chaveGemini(true)) {
+    console.warn("  Modo Gemini com Busca Google sem GEMINI_API_KEY_PAGO: seguindo sem notícias da internet.");
+  } else if (!pesquisa && modo !== "gratis" && (chaveGemini(true) || chaveGemini(false))) {
     try {
-      pesquisa = await pesquisarComGemini(pedido(null));
-      if (pesquisa) pesquisaPor = `Gemini (${modeloGemini})`;
+      const r = await pesquisarComGemini(pedido(null), modo === "gemini_busca");
+      if (r) {
+        pesquisa = r.texto;
+        pesquisaPor = `Gemini (${modeloGemini}, ${r.entrada} tokens de entrada, ${r.saida} de saída)`;
+        custo.entrada += r.entrada;
+        custo.saida += r.saida;
+      }
     } catch (err) {
       console.warn(`  Pesquisa com Gemini falhou: ${(err as Error).message}${cfg.buscas > 0 ? "; usando o Haiku" : ""}`);
     }
@@ -314,16 +339,21 @@ Tabela (ordenada pela nota do cálculo, score_sem_ia):
 ${tabela}${ref}
 ${pesquisa ? `\nPesquisa do dia:\n${pesquisa}` : "\n(Sem pesquisa na web hoje: decida só pelos números.)"}`;
 
-  // Modo grátis: o Gemini decide (JSON no esquema da decisão), sem custo
-  if (modo === "gratis") {
-    const { texto } = await gemini(SYSTEM, pedidoDecisao, { json: true });
+  // Modos do Gemini: ele decide (JSON no esquema da decisão). Grátis com a chave grátis; no gemini_busca, com a paga
+  if (ehGemini) {
+    const paga = modo === "gemini_busca" && !!chaveGemini(true);
+    const { texto, entrada, saida: tokensSaida } = await gemini(SYSTEM, pedidoDecisao, { json: true, paga });
+    custo.entrada += entrada;
+    custo.saida += tokensSaida;
     let saida: z.infer<typeof Decisao>;
     try {
       saida = Decisao.parse(JSON.parse(texto));
     } catch (err) {
       throw new Error(`JSON inválido do Gemini: ${(err as Error).message}`.slice(0, 500));
     }
-    console.log(`  IA: Gemini (${modeloGemini}), grátis`);
+    console.log(
+      `  IA: Gemini (${modeloGemini}), ${paga ? "chave paga (o custo aparece no AI Studio)" : "grátis"}: ${custo.entrada} tokens de entrada, ${custo.saida} de saída`,
+    );
     return { saida: { ...saida, revisao: null }, custo: { ...custo, modelo: modeloGemini }, pesquisa };
   }
 
