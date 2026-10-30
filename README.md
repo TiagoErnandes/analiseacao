@@ -4,12 +4,12 @@ Todo dia útil às 7h o agendador:
 
 1. Analisa **ações, fundos imobiliários (FIIs) e ETFs**. Busca preço e **histórico de 10 anos de dividendos** (Yahoo Finance) e **balanço** (Fundamentus: LPA, VPA, ROE, DY, P/L, P/VP, dívida, margem, liquidez, crescimento de receita e setor) da sua carteira, das ~30 maiores ações do Ibovespa, de 10 FIIs e 4 ETFs bem negociados. Nos FIIs também P/VP, FFO, vacância e segmento. Tudo gratuito.
 2. Calcula o **preço teto**, de forma conservadora:
-   - **Bazin**: o menor entre o dividendo dos últimos 12 meses e a média de 5 anos, ÷ o **yield exigido** (quando o DY passa de 2%).
+   - **Bazin**: o menor entre o dividendo dos últimos 12 meses e a média de 5 anos, ÷ o **yield exigido** (quando o DY é de pelo menos metade do yield exigido, ≈ 3,5% a 4,5%; abaixo disso a empresa reinveste o lucro e o teto vem do Graham).
    - **Yield exigido ligado ao juro**: acompanha o juro real do **Tesouro IPCA+** (mediana dos títulos de 5 anos ou mais, arquivo público do Tesouro Transparente; plano B: Selic descontada do IPCA de 12 meses, Banco Central). Ações: o juro real, entre 6% e 9%. FIIs: juro real + 1,5 ponto, entre 8% e 11%. Se o título público sem risco paga 7% acima da inflação, um dividendo de 6% não compensa o risco da ação. `lib/juros.ts`.
    - **Graham**: √(22,5 × LPA × VPA) (quando a empresa paga pouco dividendo).
    - **FIIs**: o menor entre o rendimento de 12 meses, o FFO por cota e a média de 5 anos, ÷ o yield exigido dos FIIs.
    - **ETFs**: Bazin se pagam dividendos; senão, a média de preço dos últimos 12 meses.
-   - **Margem** = quanto o preço está abaixo do teto.
+   - **Margem** = quanto o preço pode subir até o teto (teto ÷ preço − 1). Negativa = acima do teto (no máximo −100%).
    - Dados que não batem entre as fontes viram **alertas** (e são descartados do cálculo).
 3. Dá uma **nota de qualidade** (0 a 10) só com o balanço: ROE, payout sustentável, dívida, margem, liquidez, crescimento e **constância em 10 anos**: lucro em todos os anos (balanços anuais da CVM, dados abertos), lucro crescendo e dividendo todo ano sem cortes pela metade.
    - **Fontes oficiais para a IA** (grátis): fatos relevantes, comunicados e avisos aos acionistas dos últimos 45 dias (CVM, dados abertos, baixados uma vez por dia) e proventos anunciados com data-com (B3). Um documento novo faz a IA olhar o ativo de novo. Tudo aparece na página de cada ação. `lib/cvm.ts`.

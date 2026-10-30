@@ -25,10 +25,13 @@ export function precoTeto(bazin: number | null, graham: number | null): number |
   return bazin ?? graham ?? null;
 }
 
-/** Margem de segurança: quanto o preço está abaixo do teto (0.2 = 20% abaixo). Negativo = acima do teto. */
+/**
+ * Margem (potencial até o teto): quanto o preço pode subir até chegar ao teto (0.3 = 30%).
+ * Negativo = acima do teto, e nunca passa de -100% (antes era calculada sobre o teto e chegava a -390%).
+ */
 export function margem(preco: number | null, teto: number | null): number | null {
   if (!preco || !teto) return null;
-  return (teto - preco) / teto;
+  return teto / preco - 1;
 }
 
 /**
@@ -44,7 +47,9 @@ export function scoreFinal(opts: {
   faltaParaIdeal?: number | null; // fração: 0.05 = está 5 pontos percentuais abaixo do ideal
   balancear?: boolean; // padrão: true
 }): number {
-  const m = Math.max(-0.3, Math.min(0.5, opts.margem ?? -0.3));
+  // A escala do score usa o desconto sobre o teto ((teto - preço) / teto), que é a margem / (1 + margem)
+  const desconto = opts.margem == null || opts.margem <= -1 ? -0.3 : opts.margem / (1 + opts.margem);
+  const m = Math.max(-0.3, Math.min(0.5, desconto));
   const parteMargem = (m + 0.3) / 0.8; // 0..1
   const parteQualidade = Math.max(0, Math.min(10, opts.qualidade ?? 0)) / 10;
   const falta = Math.max(0, Math.min(0.1, opts.faltaParaIdeal ?? 0)) / 0.1;
@@ -156,12 +161,15 @@ export function calcularIndicadores(d: {
   }
 
   const dy12m = dpa12m && d.preco ? dpa12m / d.preco : null;
+  // Bazin só para quem paga de verdade: DY de pelo menos metade do yield exigido (≈ 3,5% a 4,5%).
+  // Quem reinveste o lucro (Sabesp, BTG, Raia, WEG...) seria "caríssimo" pelo dividendo; o Graham mede melhor.
+  const dyMinimo = Math.max(DY_MINIMO_PAGADORA, exigido / 2);
   let bazin: number | null = null;
-  if (dy12m != null && dy12m >= DY_MINIMO_PAGADORA) {
+  if (dy12m != null && dy12m >= dyMinimo) {
     const base = Math.min(dpa12m ?? Infinity, dpaMedio ?? Infinity);
     bazin = tetoBazin(Number.isFinite(base) ? base : null, exigido);
   } else {
-    alertas.push("paga pouco ou nenhum dividendo, teto pelo Graham");
+    alertas.push(`paga pouco dividendo (DY abaixo de ${(dyMinimo * 100).toFixed(1).replace(".", ",")}%), teto pelo Graham`);
     if (!dpa12m) dpa12m = null;
   }
 

@@ -45,13 +45,20 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
     return { ind, qual: calcularQualidadeEtf(d.historico, ind.dy12m) };
   }
   const ind = calcularIndicadores(d, hoje, exigido.acao);
-  return {
-    ind,
-    qual: calcularQualidade({
-      roe: d.roe, lpa: d.lpa, dpa12m: ind.dpa12m, fundamentos: d.fundamentos,
-      lucros, dividendos: consistenciaDividendos(d.proventos, hoje),
-    }),
-  };
+  // Lucro de 12 meses do Fundamentus quase zero (ROE < 1%) mas a empresa lucrou no último balanço anual da CVM:
+  // o dado do Fundamentus está errado (ex.: TIMS3 com P/L 1.914). A nota não usa ROE, P/L, payout e margem dele.
+  const ultimoLucro = lucros?.lucros.at(-1)?.lucro ?? 0;
+  const lpaSuspeito = d.lpa != null && !!d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01 && ultimoLucro > 0;
+  const qual = calcularQualidade({
+    roe: lpaSuspeito ? null : d.roe,
+    lpa: lpaSuspeito ? null : d.lpa,
+    dpa12m: ind.dpa12m,
+    fundamentos: lpaSuspeito && d.fundamentos ? { ...d.fundamentos, pl: null, margemLiquida: null } : d.fundamentos,
+    lucros,
+    dividendos: consistenciaDividendos(d.proventos, hoje),
+  });
+  if (lpaSuspeito) qual.alertas.push("lucro de 12 meses do Fundamentus não bate com o balanço da CVM: ROE, P/L e margem ignorados na nota");
+  return { ind, qual };
 }
 
 let custoDaExecucao: CustoIa | null = null;
@@ -86,7 +93,7 @@ export async function modoIa(): Promise<ModoIa> {
 function sinalPorCalculo(l: { margem: number | null; qualidade: number | null; tipo: string }): string | null {
   if (l.tipo === "cripto" || l.margem == null) return null;
   if (l.margem > 0 && (l.qualidade ?? 0) >= 6) return "COMPRAR";
-  if (l.margem < -0.2 || (l.qualidade != null && l.qualidade < 4)) return "EVITAR";
+  if (l.margem < -0.17 || (l.qualidade != null && l.qualidade < 4)) return "EVITAR"; // preço 20% acima do teto
   return "AGUARDAR";
 }
 
@@ -276,7 +283,8 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   } else {
     try {
       // Só vai para a IA o que mudou desde a última nota; o resto reaproveita a nota guardada
-      const selecao = selecionarParaIa(paraIa);
+      // No modo grátis (Gemini) não há custo por ativo: todos vão para a IA
+      const selecao = selecionarParaIa(paraIa, modo === "gratis" ? Infinity : undefined);
       const guardadas = new Map(
         (
           await query<{ ticker: string; assinatura: string; nota: number | null; recomendacao: string | null; resumo: string | null; riscos: string | null }>(

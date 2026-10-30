@@ -192,6 +192,9 @@ export async function migrar() {
       link      text
     );
     -- Modo grátis com o Gemini vira o padrão (uma vez; depois vale o que você escolher no painel)
+    -- Margem passou a ser o potencial até o teto (teto / preço - 1): recalcula o histórico uma vez
+    with marca as (insert into config (chave, valor) values ('margem_potencial_aplicada', '1') on conflict (chave) do nothing returning 1)
+    update analises set margem = preco_teto / preco - 1 where preco > 0 and preco_teto > 0 and exists (select 1 from marca);
     with marca as (insert into config (chave, valor) values ('modo_gratis_aplicado', '1') on conflict (chave) do nothing returning 1)
     insert into config (chave, valor) select 'modo_ia', 'gratis' from marca
     on conflict (chave) do update set valor = excluded.valor;

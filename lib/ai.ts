@@ -45,10 +45,10 @@ não há limite de concentração por setor nesta fase: se as melhores oportunid
 export const MAX_FORA_DA_CARTEIRA = 8;
 
 /** Os ativos que interessam à IA: toda a carteira + os melhores de fora pelo cálculo. */
-export function selecionarParaIa<T extends LinhaParaIa>(linhas: T[]): T[] {
+export function selecionarParaIa<T extends LinhaParaIa>(linhas: T[], maxFora = MAX_FORA_DA_CARTEIRA): T[] {
   return [
     ...linhas.filter((l) => l.na_carteira),
-    ...linhas.filter((l) => !l.na_carteira).sort((a, b) => b.score_sem_ia - a.score_sem_ia).slice(0, MAX_FORA_DA_CARTEIRA),
+    ...linhas.filter((l) => !l.na_carteira).sort((a, b) => b.score_sem_ia - a.score_sem_ia).slice(0, maxFora),
   ];
 }
 
@@ -64,7 +64,7 @@ comprar abaixo do preço teto e diversificação ao longo do tempo.
 O preço teto já vem calculado de forma conservadora: ações por Bazin (dividendo ÷ yield exigido, ligado ao juro real do Tesouro IPCA+, mínimo 6%) ou Graham;
 FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ yield exigido (mínimo 8%);
 ETFs, BDRs, stocks e REITs por Bazin se pagam dividendos, senão pela média de 12 meses; cripto não tem teto (trate como parcela pequena e de alto risco).
-"margem" > 0 significa abaixo do teto. "qualidade" (0 a 10) vem do balanço ou do histórico. "alertas" lista problemas já detectados; leve-os em conta.
+"margem" é quanto o preço pode subir até o teto (> 0 = abaixo do teto). "qualidade" (0 a 10) vem do balanço ou do histórico. "alertas" lista problemas já detectados; leve-os em conta.
 Ativos em dólar têm "moeda" USD e "cambio" em reais por dólar.
 "lucro_10a" e "dividendos_10a" mostram a constância em até 10 anos. "documentos_cvm" são fatos relevantes e comunicados oficiais recentes,
 e "proventos_anunciados" vêm da B3: são fontes oficiais, pese-as mais que notícias.

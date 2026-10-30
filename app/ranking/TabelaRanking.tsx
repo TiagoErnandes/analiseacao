@@ -20,7 +20,7 @@ type Coluna = { id: string; rotulo: string; valor: (a: Analise) => number | stri
 const COLUNAS: Coluna[] = [
   { id: "preco", rotulo: "Cotação", valor: (a) => a.preco, alinhar: "right" },
   { id: "teto", rotulo: "Preço teto", valor: (a) => a.preco_teto, alinhar: "right", dica: "Bazin quando paga dividendos; senão Graham" },
-  { id: "margem", rotulo: "Margem", valor: (a) => a.margem, alinhar: "right", dica: "Quanto o preço está abaixo do teto" },
+  { id: "margem", rotulo: "Margem", valor: (a) => a.margem, alinhar: "right", dica: "Quanto o preço pode subir até o teto (negativo: está acima do teto)" },
   { id: "dy", rotulo: "DY 12m", valor: (a) => a.dy_12m, alinhar: "right" },
   { id: "pl", rotulo: "P/L", valor: (a) => (a.preco && a.lpa && a.lpa > 0 ? a.preco / a.lpa : null), alinhar: "right" },
   { id: "pvp", rotulo: "P/VP", valor: (a) => (a.preco && a.vpa && a.vpa > 0 ? a.preco / a.vpa : null), alinhar: "right" },
