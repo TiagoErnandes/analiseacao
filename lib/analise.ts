@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { analisarComIa, selecionarParaIa, type CustoIa, type LinhaParaIa, type ModoIa, type NotaReaproveitada, type SaidaIa } from "./ai";
 import { buscarAcao, buscarExterior, cotacaoDolar, usoFontes, zerarUsoFontes, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
+import { garimpar } from "./garimpo";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, type Qualidade } from "./qualidade";
 import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, scoreFinal, type Indicadores } from "./valuation";
@@ -48,7 +49,9 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
   // Lucro de 12 meses do Fundamentus quase zero (ROE < 1%) mas a empresa lucrou no último balanço anual da CVM:
   // o dado do Fundamentus está errado (ex.: TIMS3 com P/L 1.914). A nota não usa ROE, P/L, payout e margem dele.
   const ultimoLucro = lucros?.lucros.at(-1)?.lucro ?? 0;
-  const lpaSuspeito = d.lpa != null && !!d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01 && ultimoLucro > 0;
+  // Também quando paga dividendo relevante (DY ≥ 4%): ninguém paga 8% de DY com ROE de 0,1% de verdade
+  const lpaSuspeito =
+    d.lpa != null && !!d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01 && (ultimoLucro > 0 || (ind.dy12m ?? 0) >= 0.04);
   const qual = calcularQualidade({
     roe: lpaSuspeito ? null : d.roe,
     lpa: lpaSuspeito ? null : d.lpa,
@@ -57,7 +60,7 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
     lucros,
     dividendos: consistenciaDividendos(d.proventos, hoje),
   });
-  if (lpaSuspeito) qual.alertas.push("lucro de 12 meses do Fundamentus não bate com o balanço da CVM: ROE, P/L e margem ignorados na nota");
+  if (lpaSuspeito) qual.alertas.push("lucro de 12 meses do Fundamentus parece errado (ROE quase zero): ROE, P/L e margem ignorados na nota");
   return { ind, qual };
 }
 
@@ -137,6 +140,11 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
 
   const minha = new Map(carteira.map((c) => [c.ticker.toUpperCase(), c]));
   const tickers = [...new Set([...minha.keys(), ...universo.map((u) => u.ticker.toUpperCase())])];
+  // Garimpo: boas ações e FIIs fora da lista, achados na tabela pública do Fundamentus
+  const achados = await garimpar(new Set(tickers)).catch((e) => (console.warn(`  Garimpo: ${e.message}`), []));
+  const doGarimpo = new Set(achados.map((a) => a.ticker));
+  if (achados.length) console.log(`Garimpo: ${achados.map((a) => `${a.ticker} (${a.motivo})`).join("; ")}`);
+  tickers.push(...doGarimpo);
   console.log(`Analisando ${tickers.length} ações em ${hoje}`);
 
   // 1) Dados de mercado (em sequência, para não sobrecarregar as fontes)
@@ -237,6 +245,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       setor,
       peso_setor_na_carteira: pesoDoSetor || null,
       na_carteira: !!pos,
+      garimpo: doGarimpo.has(d.ticker), // achado pelo garimpo (fora da sua lista)
       peso_atual: pesoAtual,
       falta_para_ideal: falta,
       preco: d.preco,
@@ -389,6 +398,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       riscos_ia: a?.riscos ?? null,
       score: scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: a?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }),
       na_carteira: l.na_carteira,
+      garimpo: l.garimpo,
       qualidade: l.qualidade,
       setor: l.setor,
       alertas: l.alertas.length ? l.alertas.join("; ") : null,
