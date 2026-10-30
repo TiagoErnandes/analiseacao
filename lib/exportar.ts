@@ -19,11 +19,37 @@ const ROTULOS: Record<string, string> = {
   vacancia: "Vacância", qtdImoveis: "Imóveis", capRate: "Cap rate", volumeMedio: "Volume médio/dia", valorMercado: "Valor de mercado",
   patrimonio: "Patrimônio", media12m: "Média de preço 12m", retornoAnual5a: "Retorno anual 5a", quedaMaxima5a: "Queda máxima 5a",
   volumeMensalMedio: "Volume mensal médio", anos: "Anos de histórico", setor: "Setor", subsetor: "Subsetor",
+  lucros10a: "Lucro (CVM)", dividendos10a: "Dividendos 10a", documentosCvm: "CVM recente", proventosAnunciados: "Proventos anunciados",
+  ebit12m: "EBIT 12m", divLiquida: "Dívida líquida",
 };
 const EM_PCT = new Set(["margemLiquida", "roic", "crescReceita5a", "dy", "ffoYield", "vacancia", "capRate", "retornoAnual5a", "quedaMaxima5a"]);
 const EM_REAIS = new Set(["lucroLiquido12m", "volumeMedio", "valorMercado", "patrimonio", "volumeMensalMedio"]);
-const fmtIndicador = (k: string, v: unknown) =>
-  typeof v !== "number" ? String(v) : EM_PCT.has(k) ? pct(v) : EM_REAIS.has(k) ? brl(v).replace(",00", "") : num(v);
+const EM_REAIS_MI = new Set(["ebit12m", "divLiquida"]);
+const bilhoes = (v: number) => (Math.abs(v) >= 1e9 ? `R$ ${num(v / 1e9, 1)} bi` : `R$ ${num(v / 1e6, 0)} mi`);
+/** Texto legível de um indicador; null quando não há o que mostrar (vazio ou sem dado). */
+export function fmtIndicador(k: string, v: unknown): string | null {
+  if (v == null || v === "" || (Array.isArray(v) && !v.length)) return null;
+  const o = v as any;
+  switch (k) {
+    case "lucros10a": // balanços anuais da CVM
+      return o?.anos
+        ? `lucro em ${o.anosComLucro} de ${o.anos} anos` + (o.crescimentoAnual != null ? `, crescendo ${pct(o.crescimentoAnual)} ao ano` : "") +
+            (Array.isArray(o.lucros) && o.lucros.length ? ` (${o.lucros.map((l: any) => `${l.ano}: ${bilhoes(l.lucro)}`).join(", ")})` : "")
+        : null;
+    case "dividendos10a":
+      return o?.anos
+        ? `pagou em ${o.anosPagos} de ${o.anos} anos, ${o.cortes} corte(s) pela metade` + (o.crescimento != null ? `, crescendo ${pct(o.crescimento)} ao ano` : "")
+        : null;
+    case "documentosCvm":
+      return (o as any[]).slice(0, 3).map((d) => `${d.data} ${d.categoria}${d.assunto ? `: ${String(d.assunto).slice(0, 80)}` : ""}`).join(" | ");
+    case "proventosAnunciados":
+      return (o as any[]).map((p) => `${p.tipo ?? "provento"}${p.valor != null ? ` R$ ${num(p.valor, 4)}` : ""}${p.dataCom ? ` (data-com ${p.dataCom})` : ""}`).join("; ");
+    case "yieldExigido":
+      return null; // já explicado nas observações do fim
+  }
+  if (typeof v === "number") return EM_PCT.has(k) ? pct(v) : EM_REAIS.has(k) ? brl(v).replace(",00", "") : EM_REAIS_MI.has(k) ? bilhoes(v) : num(v);
+  return typeof v === "object" ? null : String(v);
+}
 
 export async function montarExportacao() {
   const [p, y] = await Promise.all([carregarPainel(), yieldAtual()]);
@@ -241,7 +267,9 @@ function detalhe(x: {
   if (x.score_0a100 != null) base.push(`Nota final ${x.score_0a100}/100`);
   const ind = Object.entries(x.indicadores)
     .filter(([k]) => k !== "setor" && k !== "subsetor")
-    .map(([k, v]) => `${ROTULOS[k] ?? k} ${fmtIndicador(k, v)}`);
+    .map(([k, v]) => [k, fmtIndicador(k, v)] as const)
+    .filter(([, t]) => t != null)
+    .map(([k, t]) => `${ROTULOS[k] ?? k} ${t}`);
   if (base.length || ind.length) out.push(`- Indicadores: ${[...base, ...ind].join(" · ")}`);
   if (x.resumo_ia) out.push(`- Análise: ${x.resumo_ia}`);
   if (x.riscos_ia) out.push(`- Risco: ${x.riscos_ia}`);
