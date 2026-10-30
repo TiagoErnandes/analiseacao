@@ -24,7 +24,7 @@ export default async function Ranking({ searchParams }: { searchParams: Promise<
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Ranking do dia</h1>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-suave">
           Score de 0 a 100: 35% qualidade do balanço, 25% nota da IA e 40% desconto em relação ao preço teto (30% desconto e 10% peso
-          faltando na carteira, na estratégia Balanceamento). Desconto acima de 40% não soma mais: costuma ser armadilha.
+          faltando na carteira, na estratégia Balanceamento). Desconto acima de 40% não soma mais: costuma ser armadilha. Foco em ações: FIIs entram com 85% do score, e ativos com alerta grave com 75%.
           Preço teto: ações por Bazin (dividendo conservador ÷ {pct(y.acao)}) ou Graham ajustado ao juro real; FIIs pelo rendimento
           sustentável ÷ {pct(y.fii)}; ETFs por Bazin ou pela média de preço de 12 meses. Clique numa linha para ver o comentário da IA.
           {y.juroReal && (

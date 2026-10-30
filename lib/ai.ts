@@ -82,6 +82,8 @@ Critérios clássicos para pesar a nota (empresa sólida, que paga bem, comprada
 - aristocratas de dividendos: lucro em todos os anos e dividendo crescendo acima da inflação valem mais que um DY alto num ano só;
 - governança: Novo Mercado e tag along de 100% ajudam; estatal tem risco de interferência política no dividendo;
 - margem de segurança (Graham): quanto maior a margem com qualidade alta, melhor; margem muito alta com qualidade baixa costuma ser armadilha.
+FOCO DO INVESTIDOR: ações. FIIs são complemento: só recomende COMPRAR um FII de fora da carteira se ele for claramente melhor que as ações disponíveis,
+e prefira sempre uma ação como ação do dia quando houver uma boa opção.
 Seja direto, em português do Brasil, e não invente números: use a tabela e, quando houver, a pesquisa.`
 
 const Acao = z.object({

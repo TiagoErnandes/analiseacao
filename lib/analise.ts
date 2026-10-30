@@ -135,6 +135,9 @@ const ALERTA_GRAVE =
 const temAlertaGrave = (alertas: string[]) => alertas.some((a) => ALERTA_GRAVE.test(a));
 /** Ativo com alerta grave cai no ranking (score × 0,75): pode ser barato, mas não é o perfil "empresa sólida". */
 const PENALIDADE_GRAVE = 0.75;
+/** Foco em ações: FII entra no ranking com 85% do score (só passa uma ação boa se for claramente melhor). */
+const PESO_FII = 0.85;
+const fatorScore = (l: { tipo: string; alertas: string[] }) => (temAlertaGrave(l.alertas) ? PENALIDADE_GRAVE : 1) * (l.tipo === "fii" ? PESO_FII : 1);
 
 /** Sinal sem IA: comprar abaixo do teto com qualidade boa e sem alerta grave; evitar bem acima do teto ou com qualidade baixa. */
 function sinalPorCalculo(l: { margem: number | null; qualidade: number | null; tipo: string; alertas?: string[] }): string | null {
@@ -319,7 +322,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       preco_teto: ind.teto,
       margem: ind.margem,
       score_sem_ia: Math.round(
-        scoreFinal({ margem: ind.margem, qualidade: qual.nota, notaIa: null, faltaParaIdeal: falta, balancear }) * (temAlertaGrave(alertas) ? PENALIDADE_GRAVE : 1),
+        scoreFinal({ margem: ind.margem, qualidade: qual.nota, notaIa: null, faltaParaIdeal: falta, balancear }) * fatorScore({ tipo: d.tipo, alertas }),
       ),
       alertas,
     };
@@ -370,7 +373,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
           ...l,
           score_sem_ia: Math.round(
             scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: reaproveitadas.get(l.ticker)?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }) *
-              (temAlertaGrave(l.alertas) ? PENALIDADE_GRAVE : 1),
+              fatorScore(l),
           ),
         }));
         ia = decisaoPorCalculo(comNota, "Nenhum ativo mudou desde a última análise com IA: as notas foram reaproveitadas, sem custo.");
@@ -456,7 +459,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       riscos_ia: a?.riscos ?? null,
       score: Math.round(
         scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: a?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }) *
-          (temAlertaGrave(l.alertas) ? PENALIDADE_GRAVE : 1),
+          fatorScore(l),
       ),
       na_carteira: l.na_carteira,
       garimpo: l.garimpo,

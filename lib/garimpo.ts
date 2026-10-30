@@ -6,7 +6,7 @@ const UA = { "User-Agent": "Mozilla/5.0 (compatible; analiseacao/1.0)" };
 
 /** Quantos ativos o garimpo acrescenta por dia. */
 export const MAX_ACOES = 15; // os que não passam na trava de segurança (5 anos de lucro, porte) são descartados depois
-export const MAX_FIIS = 5;
+export const MAX_FIIS = 2; // foco em ações: poucos FIIs de fora
 
 type Linha = Record<string, string>;
 
