@@ -98,6 +98,7 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
     fundamentos: lpaSuspeito && d.fundamentos ? { ...d.fundamentos, pl: null, margemLiquida: null } : d.fundamentos,
     lucros,
     dividendos: consistenciaDividendos(d.proventos, hoje),
+    dpaMedio: ind.dpaMedio,
   });
   if (lpaSuspeito) qual.alertas.push("lucro de 12 meses do Fundamentus parece errado (ROE quase zero): ROE, P/L e margem ignorados na nota");
   // Trava de segurança: lucro em todos os últimos 5 anos (balanços da CVM) e empresa de porte
@@ -313,7 +314,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
     const cd = cvmDe(d.ticker);
     const lucro = cd ? (lucros.get(cd) ?? null) : null;
     const { ind, qual } = avaliar(d, exigido, lucro);
-    const div10 = d.tipo === "acao" || d.tipo === "fii" ? consistenciaDividendos(d.proventos) : null;
+    const div10 = d.tipo === "acao" || d.tipo === "fii" ? consistenciaDividendos(d.proventos, new Date(), d.tipo === "fii") : null;
     if (doGarimpo.has(d.ticker)) {
       const m = foraDoPadraoPrevidencia(d, lucro, div10);
       if (m.length) foraDoPadrao.set(d.ticker, m);

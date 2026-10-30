@@ -175,6 +175,7 @@ export async function gemini(
   // Tenta o modelo que já funcionou; se o Google desativar um (HTTP 404), passa para o próximo da lista
   const ordem = [...new Set([modeloGemini, ...MODELOS_GEMINI])];
   let ultimoErro: Error | null = null;
+  let semCota = false; // um modelo melhor só estava sem cota hoje: não fica preso ao modelo reserva
   for (const modelo of ordem) {
     // Se o Google recusar uma opção (HTTP 400), tenta de novo sem ela: primeiro o pensamento curto, depois o esquema
     const variantes = opcoes.json
@@ -227,6 +228,11 @@ export async function gemini(
         const corpo = (await res.text()).slice(0, 300);
         ultimoErro = new Error(`Gemini ${modelo} HTTP ${res.status}${res.status === 429 ? " (limite grátis do dia)" : ""}: ${corpo}`);
         if (res.status === 404) break; // modelo desativado: próximo modelo
+        if (res.status === 429) {
+          semCota = true;
+          console.warn(`  Gemini ${modelo}: cota do dia acabou; tentando o próximo modelo.`);
+          break;
+        }
         if (res.status === 400 && (comEsquema || pensarPouco)) continue; // opção recusada: tenta sem ela
         throw ultimoErro;
       }
@@ -240,7 +246,7 @@ export async function gemini(
         .replace(/^```(?:json)?\s*|\s*```$/g, "");
       if (!texto) throw new Error(`Gemini sem resposta (${c?.finishReason ?? "vazio"})`);
       if (modelo !== modeloGemini) console.log(`  Gemini: usando ${modelo}`);
-      modeloGemini = modelo;
+      if (!semCota) modeloGemini = modelo;
       const fontes = [...new Set(((c?.groundingMetadata?.groundingChunks ?? []) as any[]).map((g) => g?.web?.title).filter(Boolean))] as string[];
       const uso = j?.usageMetadata ?? {};
       return { texto, fontes, entrada: Number(uso.promptTokenCount) || 0, saida: (Number(uso.candidatesTokenCount) || 0) + (Number(uso.thoughtsTokenCount) || 0) };

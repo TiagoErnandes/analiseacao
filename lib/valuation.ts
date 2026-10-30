@@ -100,7 +100,12 @@ export type ConsistenciaDividendos = { anos: number; anosPagos: number; cortes: 
  * Nos últimos 10 anos completos (a partir do primeiro com dado): em quantos pagou dividendo
  * e quantas vezes o total do ano caiu mais da metade em relação ao ano anterior.
  */
-export function consistenciaDividendos(proventos: { valor: number; data: Date }[], hoje = new Date()): ConsistenciaDividendos | null {
+export function consistenciaDividendos(
+  proventos: { valor: number; data: Date }[],
+  hoje = new Date(),
+  /** FIIs: o Yahoo tem buracos no histórico antigo; conta a partir da sequência contínua mais recente. */
+  soSequenciaRecente = false,
+): ConsistenciaDividendos | null {
   const atual = hoje.getFullYear();
   const porAno = new Map<number, number>();
   for (const p of proventos) {
@@ -108,7 +113,12 @@ export function consistenciaDividendos(proventos: { valor: number; data: Date }[
     if (a >= atual - 10 && a < atual) porAno.set(a, (porAno.get(a) ?? 0) + p.valor);
   }
   if (!porAno.size) return null;
-  const primeiro = Math.min(...porAno.keys());
+  let primeiro = Math.min(...porAno.keys());
+  if (soSequenciaRecente) {
+    primeiro = atual - 1;
+    while ((porAno.get(primeiro - 1) ?? 0) > 0) primeiro--;
+    if (!((porAno.get(primeiro) ?? 0) > 0)) return null;
+  }
   let anosPagos = 0;
   let cortes = 0;
   for (let a = primeiro; a < atual; a++) {
@@ -124,7 +134,9 @@ export function consistenciaDividendos(proventos: { valor: number; data: Date }[
     const media = (de: number) => [0, 1, 2].reduce((s, i) => s + (porAno.get(de + i) ?? 0), 0) / 3;
     const ini = media(primeiro);
     const fim = media(atual - 3);
-    if (ini > 0 && fim > 0) crescimento = Math.pow(fim / ini, 1 / (anos - 3)) - 1;
+    // Só com todos os 6 anos pagos: um ano sem dado no começo (histórico incompleto) inflava o crescimento
+    const completos = [0, 1, 2].every((i) => (porAno.get(primeiro + i) ?? 0) > 0 && (porAno.get(atual - 3 + i) ?? 0) > 0);
+    if (completos && ini > 0 && fim > 0) crescimento = Math.pow(fim / ini, 1 / (anos - 3)) - 1;
   }
   return { anos, anosPagos, cortes, crescimento };
 }
