@@ -58,7 +58,7 @@ let custoDaExecucao: CustoIa | null = null;
 let economiaDaExecucao = 0; // US$ que deixaram de ser gastos (notas reaproveitadas + desconto do lote)
 
 /** Por quantos dias a nota da IA vale para um ativo cujos dados não mudaram. */
-const VALIDADE_NOTA_DIAS: Record<Exclude<ModoIa, "sem_ia">, number> = { economico: 7, completo: 3 };
+const VALIDADE_NOTA_DIAS: Record<Exclude<ModoIa, "sem_ia">, number> = { gratis: 1, economico: 7, completo: 3 };
 
 /**
  * O que precisa mudar para a IA olhar o ativo de novo: balanço (LPA, VPA, dividendos), qualidade, alertas, setor
@@ -78,8 +78,8 @@ let pesquisaDoDia: string | null = null;
 
 export async function modoIa(): Promise<ModoIa> {
   const [c] = await query<{ valor: string }>("select valor from config where chave = 'modo_ia'");
-  const v = c?.valor ?? process.env.MODO_IA ?? "economico";
-  return v === "sem_ia" || v === "completo" ? v : "economico";
+  const v = c?.valor ?? process.env.MODO_IA ?? "gratis";
+  return v === "sem_ia" || v === "completo" || v === "economico" ? v : "gratis";
 }
 
 /** Sinal sem IA: comprar abaixo do teto com qualidade boa; evitar bem acima do teto ou com qualidade baixa. */
@@ -184,7 +184,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   const estrategia = await estrategiaAtual();
   const LIMITE_SETOR = estrategia.limiteSetor;
   const balancear = estrategia.atual === "balanceamento";
-  console.log(`Estratégia: ${estrategia.atual} (setor até ${LIMITE_SETOR * 100}%)`);
+  console.log(`Estratégia: ${estrategia.atual} (${LIMITE_SETOR < 1 ? `setor até ${LIMITE_SETOR * 100}%` : "sem limite por setor"})`);
   const valorPos = (d: DadosAcao) => (minha.get(d.ticker)?.quantidade ?? 0) * (d.preco ?? 0) * d.cambio; // em reais
   const totalCarteira = dados.reduce((s, d) => s + valorPos(d), 0);
   const pesoIdeal = minha.size > 0 ? 1 / minha.size : 0;
@@ -213,7 +213,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
     const pesoAtual = pos && totalCarteira > 0 ? valorPos(d) / totalCarteira : null;
     const pesoDoSetor = pesoSetor.get(setor) ?? 0;
     const alertas = [...ind.alertas, ...qual.alertas];
-    if (pesoDoSetor > LIMITE_SETOR) {
+    if (LIMITE_SETOR < 1 && pesoDoSetor > LIMITE_SETOR) {
       alertas.push(`setor ${setor} já é ${Math.round(pesoDoSetor * 100)}% da carteira (limite ${LIMITE_SETOR * 100}%)`);
     }
     // Peso faltando só conta no balanceamento e se o setor ainda não estiver concentrado
@@ -473,14 +473,15 @@ export async function ultimaExecucao(): Promise<Execucao | null> {
  */
 async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id: number } | { motivo: string }> {
   await garantirTabela();
-  const intervalo = origem === "botao" && (await modoIa()) !== "sem_ia" ? INTERVALO_MINIMO_MIN : 0;
+  const modo = await modoIa();
+  const intervalo = origem === "botao" && modo !== "sem_ia" && modo !== "gratis" ? INTERVALO_MINIMO_MIN : 0;
   const [r] = await query<{ id: number }>(
     `insert into execucoes (origem, status)
      select $1, 'rodando'
      where not exists (
        select 1 from execucoes
         where (status = 'rodando' and inicio > now() - interval '${TIMEOUT_MIN} minutes')
-           or (status <> 'erro' and modelo is not null and inicio > now() - make_interval(mins => $2::int))
+           or (status <> 'erro' and modelo like 'claude%' and inicio > now() - make_interval(mins => $2::int))
      )
      returning id`,
     [origem, intervalo],
@@ -491,7 +492,7 @@ async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id:
   const [ia] = await query<{ ultima: string; libera: string }>(
     `select to_char(max(inicio) at time zone 'America/Sao_Paulo', 'DD/MM/YYYY "às" HH24:MI') as ultima,
             to_char((max(inicio) + make_interval(mins => $1::int)) at time zone 'America/Sao_Paulo', 'HH24:MI') as libera
-       from execucoes where status <> 'erro' and modelo is not null`,
+       from execucoes where status <> 'erro' and modelo like 'claude%'`,
     [INTERVALO_MINIMO_MIN],
   );
   return {

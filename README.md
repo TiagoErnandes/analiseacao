@@ -15,8 +15,9 @@ Todo dia útil às 7h o agendador:
    - **Fontes oficiais para a IA** (grátis): fatos relevantes, comunicados e avisos aos acionistas dos últimos 45 dias (CVM, dados abertos, baixados uma vez por dia) e proventos anunciados com data-com (B3). Um documento novo faz a IA olhar o ativo de novo. Tudo aparece na página de cada ação. `lib/cvm.ts`.
 4. Mede o **peso de cada setor** na carteira. Setor acima de 30% não ganha bônus de "peso faltando" e recebe alerta.
 5. A **IA é opcional e barata**. O modo é escolhido no painel, ao lado do botão "Rodar análise agora":
-   - **Sem IA** (grátis): o app decide só pelo cálculo (preço teto, qualidade e score).
-   - **Econômico** (padrão, ≈ R$ 0,02 por análise): o Claude Haiku dá nota e sinal aos ativos da carteira e aos 8 melhores de fora, sem pesquisa na web.
+   - **Grátis (Gemini)** (padrão, sem custo): o Gemini 2.5 Flash pesquisa as notícias do dia na Busca Google e dá nota e sinal aos ativos da carteira e aos 8 melhores de fora. Usa o plano grátis do Google (precisa de `GEMINI_API_KEY`). Se o Gemini falhar ou passar do limite, a análise segue só pelo cálculo, com as notas guardadas.
+   - **Só cálculo** (grátis): o app decide só pelo cálculo (preço teto, qualidade e score).
+   - **Econômico** (≈ R$ 0,02 por análise): o Claude Haiku dá nota e sinal aos ativos da carteira e aos 8 melhores de fora, sem pesquisa na web.
    - **Completo** (≈ R$ 0,30 a 0,70): pesquisa de notícias na web e o Claude Sonnet toma a decisão final. A pesquisa do dia fica guardada e não é paga de novo se você rodar outra vez.
    - **Pesquisa de notícias com o Gemini (grátis)**: com `GEMINI_API_KEY` no `.env.production`, o Gemini 2.5 Flash com Busca Google pesquisa o cenário e as novidades de cada ativo, nos modos Econômico e Completo (o plano grátis permite 500 por dia; a análise usa 1). O Claude continua tomando a decisão. Se o Gemini falhar ou passar do limite, o Completo pesquisa com o Claude Haiku (até 5 buscas) e o Econômico segue sem notícias. No plano grátis, o Google pode usar o texto enviado (tickers e perguntas) para treinar modelos. Modelo trocável em `GEMINI_MODEL`.
    - **Só reanalisa o que mudou**: cada ativo guarda uma "assinatura" dos dados que a IA viu (balanço, dividendos, qualidade, alertas e a margem até o teto em faixas de 5 pontos). Se nada mudou, a nota anterior é reaproveitada (vale 7 dias no Econômico e 3 no Completo). Se nenhum ativo mudou, a IA nem é chamada. Tabela `cache_ia`.
@@ -52,6 +53,6 @@ npx tsx --env-file=.env.local scripts/analise.ts   # roda a análise na hora
 - **Yield exigido do Bazin** (juro real, entre 6% e 9%; FIIs entre 8% e 11%): `yieldExigido` em `lib/juros.ts`.
 - **Pesos da nota final**: `scoreFinal` em `lib/valuation.ts`.
 - **Instruções da IA**: `lib/ai.ts`.
-- **Estratégia da carteira** (seletor no painel): *Oportunidade* prioriza as ações mais baratas e de boa qualidade, sem buscar o peso ideal (setor até 50%); *Balanceamento* completa o peso ideal e segura setores acima de 30%. No *Automático*, vale Oportunidade nos primeiros 6 meses a partir da primeira compra lançada (`config.inicio_carteira`) e depois Balanceamento. Limites e prazo em `lib/modos.ts`.
+- **Estratégia da carteira** (seletor no painel): *Oportunidade* prioriza as ações mais baratas e de boa qualidade, sem buscar o peso ideal e sem limite por setor; *Balanceamento* completa o peso ideal e segura setores acima de 30%. No *Automático*, vale Oportunidade nos primeiros 12 meses a partir da primeira compra lançada (`config.inicio_carteira`) e depois Balanceamento. Limites e prazo em `lib/modos.ts`.
 
 > Ferramenta de apoio à decisão. Não é recomendação de investimento.

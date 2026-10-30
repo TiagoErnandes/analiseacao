@@ -182,7 +182,7 @@ export function SimuladorAporte(props: Props) {
       <div className="flex flex-wrap justify-between gap-2 text-xs text-suave tabular-nums">
         <span>Usado: <b className="text-texto">{brl(valor - r.resto)}</b> · Sobra: {brl(r.resto)}</span>
         <span>
-          Só entram ativos abaixo do teto, sem “Evitar” e com setor até {pct(props.limiteSetor, 0)}.{" "}
+          Só entram ativos abaixo do teto, sem “Evitar”{props.limiteSetor < 1 ? ` e com setor até ${pct(props.limiteSetor, 0)}` : ""}.{" "}
           {props.estrategia === "oportunidade"
             ? `Estratégia Oportunidade: as ${TOP_OPORTUNIDADE} de maior nota, da carteira ou novas, dividem o aporte, sem olhar o peso ideal.`
             : `Oportunidades novas (sinal “Comprar” e qualidade ≥ 6) ficam com até ${pct(COTA_NOVAS, 0)} do aporte.`}
