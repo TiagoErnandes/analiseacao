@@ -68,7 +68,7 @@ let custoDaExecucao: CustoIa | null = null;
 let economiaDaExecucao = 0; // US$ que deixaram de ser gastos (notas reaproveitadas + desconto do lote)
 
 /** Por quantos dias a nota da IA vale para um ativo cujos dados não mudaram. */
-const VALIDADE_NOTA_DIAS: Record<Exclude<ModoIa, "sem_ia">, number> = { gratis: 1, economico: 7, completo: 3 };
+const VALIDADE_NOTA_DIAS: Record<Exclude<ModoIa, "sem_ia">, number> = { gratis: 1, gemini_busca: 1, economico: 7, completo: 3 };
 
 /**
  * O que precisa mudar para a IA olhar o ativo de novo: balanço (LPA, VPA, dividendos), qualidade, alertas, setor
@@ -89,7 +89,7 @@ let pesquisaDoDia: string | null = null;
 export async function modoIa(): Promise<ModoIa> {
   const [c] = await query<{ valor: string }>("select valor from config where chave = 'modo_ia'");
   const v = c?.valor ?? process.env.MODO_IA ?? "gratis";
-  return v === "sem_ia" || v === "completo" || v === "economico" ? v : "gratis";
+  return v === "sem_ia" || v === "completo" || v === "economico" || v === "gemini_busca" ? v : "gratis";
 }
 
 /** Sinal sem IA: comprar abaixo do teto com qualidade boa; evitar bem acima do teto ou com qualidade baixa. */
@@ -292,8 +292,8 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   } else {
     try {
       // Só vai para a IA o que mudou desde a última nota; o resto reaproveita a nota guardada
-      // No modo grátis (Gemini) não há custo por ativo: todos vão para a IA
-      const selecao = selecionarParaIa(paraIa, modo === "gratis" ? Infinity : undefined);
+      // Nos modos do Gemini todos vão para a IA (grátis, ou centavos no pago)
+      const selecao = selecionarParaIa(paraIa, modo === "gratis" || modo === "gemini_busca" ? Infinity : undefined);
       const guardadas = new Map(
         (
           await query<{ ticker: string; assinatura: string; nota: number | null; recomendacao: string | null; resumo: string | null; riscos: string | null }>(
@@ -492,7 +492,7 @@ export async function ultimaExecucao(): Promise<Execucao | null> {
 async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id: number } | { motivo: string }> {
   await garantirTabela();
   const modo = await modoIa();
-  const intervalo = origem === "botao" && modo !== "sem_ia" && modo !== "gratis" ? INTERVALO_MINIMO_MIN : 0;
+  const intervalo = origem === "botao" && modo !== "sem_ia" && modo !== "gratis" && modo !== "gemini_busca" ? INTERVALO_MINIMO_MIN : 0;
   const [r] = await query<{ id: number }>(
     `insert into execucoes (origem, status)
      select $1, 'rodando'
