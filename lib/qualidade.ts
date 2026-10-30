@@ -18,6 +18,8 @@ export function tipoDeSetor(f: Fundamentos | null): "perene" | "ciclico" | "outr
   const s = `${f?.setor ?? ""} ${f?.subsetor ?? ""}`.trim();
   if (!s) return null;
   // Cíclico primeiro: "Petróleo, Gás e Biocombustíveis" é commodity, mesmo com "gás" no nome
+  // Farmácias, hospitais e saúde: demanda estável, mesmo quando o setor oficial é "Comércio"
+  if (/medicament|farm[aá]c|drogar|hospital|sa[úu]de|diagn[óo]st/i.test(s)) return "outro";
   return SETORES_CICLICOS.test(s) ? "ciclico" : SETORES_PERENES.test(s) ? "perene" : "outro";
 }
 
@@ -32,6 +34,7 @@ export function calcularQualidade(d: {
   fundamentos: Fundamentos | null;
   lucros?: HistoricoLucro | null; // lucro de cada ano nos balanços da CVM (até 10 anos)
   dividendos?: ConsistenciaDividendos | null; // dividendos de cada ano (até 10 anos)
+  dpaMedio?: number | null; // dividendo médio por ano (5 anos)
 }): Qualidade {
   const f = d.fundamentos;
   const pontos: string[] = [];
@@ -56,7 +59,13 @@ export function calcularQualidade(d: {
   // Dividendos sustentáveis: payout entre 25% e 90% do lucro
   const payout = d.dpa12m != null && d.lpa != null && d.lpa > 0 ? d.dpa12m / d.lpa : null;
   criterio(2, payout, (v) => (v >= 0.25 && v <= 0.9 ? 2 : v > 0.9 && v <= 1.1 ? 1 : 0), "payout sustentável");
-  if (payout != null && payout > 1.1) alertas.push(`paga ${Math.round(payout * 100)}% do lucro em dividendos (insustentável)`);
+  if (payout != null && payout > 1.1) {
+    // Se a média de 5 anos cabe no lucro, o excesso dos 12 meses é dividendo extraordinário (não se repete), não um vício
+    const payoutMedio = d.dpaMedio != null && d.lpa != null && d.lpa > 0 ? d.dpaMedio / d.lpa : null;
+    if (payoutMedio != null && payoutMedio <= 1)
+      alertas.push(`dividendo extraordinário: os últimos 12 meses pagaram ${Math.round(payout * 100)}% do lucro, mas a média de 5 anos é ${Math.round(payoutMedio * 100)}% (não conte com esse DY)`);
+    else alertas.push(`paga ${Math.round(payout * 100)}% do lucro em dividendos (insustentável)`);
+  }
 
   // Crescimento de receita em 5 anos (taxa anual)
   criterio(2, f?.crescReceita5a, (v) => (v >= 0.05 ? 2 : v > 0 ? 1 : 0), "receita crescendo");

@@ -197,7 +197,7 @@ export function lucrosDaDre(linhas: Record<string, string>[], ano: number): Map<
     const cd = Number.parseInt(r.CD_CVM, 10);
     const valor = Number.parseFloat(r.VL_CONTA) * (/mil/i.test(r.ESCALA_MOEDA ?? "") ? 1000 : 1);
     const versao = Number.parseInt(r.VERSAO, 10) || 0;
-    if (!cd || !Number.isFinite(valor)) continue;
+    if (!cd || !Number.isFinite(valor) || valor === 0) continue; // linha zerada (ex.: TIM) não é o lucro do ano
     const m = melhor.get(cd);
     if (!m || versao > m.versao || (versao === m.versao && conta > m.conta)) melhor.set(cd, { versao, conta, valor });
   }
@@ -247,7 +247,7 @@ export async function historicoLucros(codigos: number[], hoje = new Date()): Pro
     [codigos, hoje.getFullYear() - 10],
   );
   const porEmpresa = new Map<number, { ano: number; lucro: number }[]>();
-  for (const l of linhas) porEmpresa.set(l.cd_cvm, [...(porEmpresa.get(l.cd_cvm) ?? []), { ano: l.ano, lucro: l.lucro }]);
+  for (const l of linhas.filter((x) => Number(x.lucro) !== 0)) porEmpresa.set(l.cd_cvm, [...(porEmpresa.get(l.cd_cvm) ?? []), { ano: l.ano, lucro: l.lucro }]);
   for (const [cd, lucros] of porEmpresa) mapa.set(cd, resumirLucros(lucros));
   return mapa;
 }

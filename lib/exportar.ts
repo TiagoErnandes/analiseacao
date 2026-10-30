@@ -382,7 +382,7 @@ export function rankingMarkdown(e: ExportacaoRanking): string {
     L.push("", `### ${a.posicao}. ${a.ticker}${a.nome ? ` (${a.nome})` : ""}`);
     if (a.lucro_ultimos_5a) L.push(`- Lucro dos últimos 5 anos (CVM): ${a.lucro_ultimos_5a}`);
     const extra = [
-      a.crescimento_lucro_10a != null ? `lucro cresce ${pctSinal(a.crescimento_lucro_10a)} ao ano` : null,
+      a.crescimento_lucro_10a != null ? `lucro cresce ${pctSinal(a.crescimento_lucro_10a)} ao ano (início x fim de 10 anos)` : null,
       a.crescimento_dividendo != null ? `dividendo cresce ${pctSinal(a.crescimento_dividendo)} ao ano` : null,
       a.cortes_dividendo ? `${a.cortes_dividendo} cortes do dividendo pela metade` : null,
       a.div_liq_patrim != null ? `dív. líq./patrim. ${num(a.div_liq_patrim)}` : null,
