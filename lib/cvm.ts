@@ -121,9 +121,10 @@ export function proventosRecentes(p: ProventoAnunciado[], hoje: string): Provent
 const CATEGORIAS = /fato relevante|comunicado ao mercado|aviso aos acionistas|dados econ/i;
 
 /** Baixa os documentos do ano (uma vez por dia) e guarda os dos últimos 120 dias. */
-export async function atualizarDocumentosCvm(hoje = new Date()): Promise<number> {
+/** `idadeMaxima`: em dias; o vigia de alertas usa um valor menor para ver fatos relevantes no mesmo dia. */
+export async function atualizarDocumentosCvm(hoje = new Date(), idadeMaxima = 0.8): Promise<number> {
   const c = await lerCache<{ ok: true }>("cvm_ipe");
-  if (c && c.idadeDias < 0.8) return 0;
+  if (c && c.idadeDias < idadeMaxima) return 0;
   const ano = hoje.getFullYear();
   const anos = hoje.getMonth() < 4 ? [ano - 1, ano] : [ano]; // no começo do ano, o arquivo novo ainda tem pouco
   const limite = new Date(hoje.getTime() - 120 * 86_400_000).toISOString().slice(0, 10);

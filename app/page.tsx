@@ -13,6 +13,8 @@ import { ProventosMes } from "./ProventosMes";
 import { Projecao } from "./Projecao";
 import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
 import { SeletorEstrategia } from "./SeletorEstrategia";
+import { AlertasVenda } from "./AlertasVenda";
+import { alertasRecentes } from "@/lib/alertas";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +66,7 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 
 export default async function Painel() {
   const { exec, modo, estrategia, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel();
+  const alertas = await alertasRecentes();
   const botao = (
     <BotaoAnalise
       status={exec?.status ?? null}
@@ -128,6 +131,8 @@ export default async function Painel() {
       </section>
 
       <SeletorEstrategia escolha={estrategia.escolha} atual={estrategia.atual} trocaEm={estrategia.trocaEm} />
+
+      <AlertasVenda alertas={alertas} />
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi

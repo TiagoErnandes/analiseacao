@@ -24,3 +24,18 @@ export async function salvarEstrategia(escolha: EscolhaEstrategia) {
   await query("insert into config (chave, valor) values ('estrategia', $1) on conflict (chave) do update set valor = excluded.valor", [escolha]);
   revalidatePath("/");
 }
+
+/** Manda um alerta de teste para o celular (confere se o Telegram ou o ntfy estão configurados). */
+export async function testarAlerta(): Promise<{ ok: boolean; mensagem: string }> {
+  const { enviar } = await import("@/lib/alertas");
+  const ok = await enviar({
+    ticker: "TESTE",
+    nivel: "ATENCAO",
+    titulo: "Teste do alerta de venda",
+    motivo: "Se você recebeu isto, os alertas da sua carteira vão chegar aqui.",
+    link: null,
+  });
+  return ok
+    ? { ok, mensagem: "Alerta de teste enviado. Confira o celular." }
+    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID (ou NTFY_TOPICO) no .env.production." };
+}

@@ -129,7 +129,7 @@ async function historicoYahoo(simbolo: string): Promise<HistoricoBruto & { fresc
 }
 
 /** Preço de agora e variação do dia (pedido leve, todo dia). */
-async function precoYahoo(simbolo: string): Promise<{ preco: number | null; variacaoDia: number | null }> {
+export async function precoYahoo(simbolo: string): Promise<{ preco: number | null; variacaoDia: number | null }> {
   const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=1d&interval=1d`, { headers: UA });
   if (!res.ok) throw new Error(`Yahoo ${simbolo}: HTTP ${res.status}`);
   const m = ((await res.json()) as any)?.chart?.result?.[0]?.meta;
