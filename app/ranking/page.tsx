@@ -3,8 +3,9 @@ import { dataBr, pct } from "@/lib/format";
 import { yieldAtual } from "@/lib/juros";
 import { query, type Analise, type Relatorio } from "@/lib/db";
 import { ultimaExecucao } from "@/lib/analise";
-import { Vazio } from "../ui";
+import { Cartao, Vazio } from "../ui";
 import { TabelaRanking } from "./TabelaRanking";
+import { ExportarCarteira } from "../carteira/ExportarCarteira";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Ranking" };
@@ -31,6 +32,14 @@ export default async function Ranking({ searchParams }: { searchParams: Promise<
           )}
         </p>
       </div>
+      {analises.length > 0 && (
+        <Cartao titulo="Exportar o ranking">
+          <ExportarCarteira
+            rota="/ranking/exportar"
+            descricao="Leva o ranking inteiro para outra IA (ou para o Claude) avaliar: preço teto, margem, qualidade, lucro e dividendos de 10 anos, porte, alertas e o comentário da IA de cada ativo."
+          />
+        </Cartao>
+      )}
       {analises.length ? <TabelaRanking analises={analises} filtroInicial={filtro} /> : <Vazio>Ainda não há análise.</Vazio>}
     </div>
   );

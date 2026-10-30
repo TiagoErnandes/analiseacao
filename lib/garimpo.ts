@@ -5,7 +5,7 @@ import { lerCache, numeroBr, salvarCache } from "./mercado";
 const UA = { "User-Agent": "Mozilla/5.0 (compatible; analiseacao/1.0)" };
 
 /** Quantos ativos o garimpo acrescenta por dia. */
-export const MAX_ACOES = 12;
+export const MAX_ACOES = 15; // os que não passam na trava de segurança (5 anos de lucro, porte) são descartados depois
 export const MAX_FIIS = 5;
 
 type Linha = Record<string, string>;
@@ -40,6 +40,7 @@ export function filtrarAcoes(linhas: Linha[], ja: Set<string>, max = MAX_ACOES):
       roe: col(l, /^ROE$/i),
       liq: col(l, /liq\.?\s*2\s*meses/i),
       divida: col(l, /d[ií]v\.?\s*brut/i),
+      patrimonio: col(l, /patrim/i),
     }))
     .filter(
       (c) =>
@@ -49,7 +50,8 @@ export function filtrarAcoes(linhas: Linha[], ja: Set<string>, max = MAX_ACOES):
         c.roe != null && c.roe >= 0.12 &&
         c.dy != null && c.dy >= 0.05 && c.dy <= 0.2 && // acima de 20% costuma ser dividendo extraordinário
         c.pvp != null && c.pvp > 0 &&
-        (c.divida == null || c.divida <= 1.5),
+        (c.divida == null || c.divida <= 1.5) &&
+        (c.patrimonio == null || c.patrimonio >= 1_000_000_000), // empresa de porte (patrimônio de R$ 1 bi ou mais)
     )
     .map((c) => ({
       ...c,

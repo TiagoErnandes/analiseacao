@@ -21,6 +21,10 @@ function hojeSaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 }
 
+/** Abaixo disso a empresa é pequena demais para o perfil (mais risco, menos liquidez, menos governança). */
+const VALOR_MINIMO_ACAO = 2_000_000_000;
+const PATRIMONIO_MINIMO_FII = 500_000_000;
+
 /** Preço teto e qualidade conforme o tipo de ativo. `exigido`: yield do Bazin ligado ao juro real. */
 function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | null): { ind: Indicadores; qual: Qualidade } {
   const hoje = new Date();
@@ -32,7 +36,10 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
       dyFundamentus: d.dyFundamentus,
       proventos: d.proventos,
     }, hoje, exigido.fii);
-    return { ind, qual: calcularQualidadeFii(d.fii, ind.dpa12m) };
+    const qual = calcularQualidadeFii(d.fii, ind.dpa12m);
+    const pl = d.fii?.patrimonio;
+    if (pl != null && pl > 0 && pl < PATRIMONIO_MINIMO_FII) qual.alertas.push(`fundo pequeno (patrimônio R$ ${Math.round(pl / 1e6)} mi)`);
+    return { ind, qual };
   }
   if (d.tipo === "cripto") {
     const ind = calcularIndicadoresEtf({ preco: d.preco, media12m: null, proventos: [] });
@@ -62,6 +69,15 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
     dividendos: consistenciaDividendos(d.proventos, hoje),
   });
   if (lpaSuspeito) qual.alertas.push("lucro de 12 meses do Fundamentus parece errado (ROE quase zero): ROE, P/L e margem ignorados na nota");
+  // Trava de segurança: lucro em todos os últimos 5 anos (balanços da CVM) e empresa de porte
+  if (lucros && lucros.lucros.length) {
+    const ult5 = lucros.lucros.slice(-5);
+    const comPrejuizo = ult5.filter((l) => l.lucro <= 0).map((l) => l.ano);
+    if (comPrejuizo.length) qual.alertas.push(`prejuízo em algum dos últimos 5 anos (${comPrejuizo.join(", ")})`);
+    else if (ult5.length < 5) qual.alertas.push(`menos de 5 anos de balanço na CVM (${ult5.length})`);
+  }
+  const vm = d.fundamentos?.valorMercado;
+  if (vm != null && vm > 0 && vm < VALOR_MINIMO_ACAO) qual.alertas.push(`empresa pequena (valor de mercado R$ ${(vm / 1e9).toFixed(1).replace(".", ",")} bi)`);
   return { ind, qual };
 }
 
@@ -114,12 +130,16 @@ export async function modoIa(): Promise<ModoIa> {
 }
 
 /** Alertas que impedem o COMPRAR do cálculo, mesmo abaixo do teto: são os sinais clássicos de armadilha de dividendo. */
-const ALERTA_GRAVE = /prejuízo nos últimos 12 meses|insustentável|dívida líquida acima|anos de EBIT|EBIT negativo|acima do que gera|dividendo caindo/;
+const ALERTA_GRAVE =
+  /prejuízo nos últimos 12 meses|prejuízo em algum dos últimos 5 anos|menos de 5 anos de balanço|empresa pequena|fundo pequeno|insustentável|dívida líquida acima|anos de EBIT|EBIT negativo|acima do que gera|dividendo caindo/;
+const temAlertaGrave = (alertas: string[]) => alertas.some((a) => ALERTA_GRAVE.test(a));
+/** Ativo com alerta grave cai no ranking (score × 0,75): pode ser barato, mas não é o perfil "empresa sólida". */
+const PENALIDADE_GRAVE = 0.75;
 
 /** Sinal sem IA: comprar abaixo do teto com qualidade boa e sem alerta grave; evitar bem acima do teto ou com qualidade baixa. */
 function sinalPorCalculo(l: { margem: number | null; qualidade: number | null; tipo: string; alertas?: string[] }): string | null {
   if (l.tipo === "cripto" || l.margem == null) return null;
-  if (l.margem > 0 && (l.qualidade ?? 0) >= 6 && !(l.alertas ?? []).some((a) => ALERTA_GRAVE.test(a))) return "COMPRAR";
+  if (l.margem > 0 && (l.qualidade ?? 0) >= 6 && !temAlertaGrave(l.alertas ?? [])) return "COMPRAR";
   if (l.margem < -0.17 || (l.qualidade != null && l.qualidade < 4)) return "EVITAR"; // preço 20% acima do teto
   return "AGUARDAR";
 }
@@ -240,7 +260,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
     }
   }
 
-  const linhas = dados.map((d) => {
+  const todas = dados.map((d) => {
     const cd = cvmDe(d.ticker);
     const lucro = cd ? (lucros.get(cd) ?? null) : null;
     const { ind, qual } = avaliar(d, exigido, lucro);
@@ -298,10 +318,16 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       teto_graham: ind.graham,
       preco_teto: ind.teto,
       margem: ind.margem,
-      score_sem_ia: scoreFinal({ margem: ind.margem, qualidade: qual.nota, notaIa: null, faltaParaIdeal: falta, balancear }),
+      score_sem_ia: Math.round(
+        scoreFinal({ margem: ind.margem, qualidade: qual.nota, notaIa: null, faltaParaIdeal: falta, balancear }) * (temAlertaGrave(alertas) ? PENALIDADE_GRAVE : 1),
+      ),
       alertas,
     };
   });
+  // Garimpo só traz o que passa na trava de segurança (os da sua lista continuam, com o alerta)
+  const barrados = todas.filter((l) => l.garimpo && temAlertaGrave(l.alertas));
+  if (barrados.length) console.log(`Garimpo descartou: ${barrados.map((l) => `${l.ticker} (${l.alertas.filter((a) => ALERTA_GRAVE.test(a)).join("; ")})`).join("; ")}`);
+  const linhas = todas.filter((l) => !barrados.includes(l));
 
   // 4) IA (opcional e barata). Sem créditos ou com erro, o app decide só pelo cálculo.
   const paraIa: LinhaParaIa[] = linhas
@@ -342,7 +368,10 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
         // Nada mudou: nenhuma chamada. A ação do dia sai da nota final, que já inclui as notas guardadas da IA.
         const comNota = linhas.map((l) => ({
           ...l,
-          score_sem_ia: scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: reaproveitadas.get(l.ticker)?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }),
+          score_sem_ia: Math.round(
+            scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: reaproveitadas.get(l.ticker)?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }) *
+              (temAlertaGrave(l.alertas) ? PENALIDADE_GRAVE : 1),
+          ),
         }));
         ia = decisaoPorCalculo(comNota, "Nenhum ativo mudou desde a última análise com IA: as notas foram reaproveitadas, sem custo.");
         ia.acoes = [...reaproveitadas.values()];
@@ -418,10 +447,17 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       preco_teto: l.preco_teto,
       margem: l.margem,
       nota_ia: a?.nota ?? null,
-      recomendacao: a?.recomendacao ?? sinalPorCalculo(l),
-      resumo_ia: a?.resumo ?? null,
+      // Trava de segurança: a IA não consegue dar COMPRAR para ativo com alerta grave
+      recomendacao: a?.recomendacao === "COMPRAR" && temAlertaGrave(l.alertas) ? "AGUARDAR" : (a?.recomendacao ?? sinalPorCalculo(l)),
+      resumo_ia:
+        a?.recomendacao === "COMPRAR" && temAlertaGrave(l.alertas)
+          ? `Trava de segurança (COMPRAR virou AGUARDAR): ${l.alertas.filter((x) => ALERTA_GRAVE.test(x)).join("; ")}. ${a.resumo ?? ""}`.trim()
+          : (a?.resumo ?? null),
       riscos_ia: a?.riscos ?? null,
-      score: scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: a?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }),
+      score: Math.round(
+        scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: a?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }) *
+          (temAlertaGrave(l.alertas) ? PENALIDADE_GRAVE : 1),
+      ),
       na_carteira: l.na_carteira,
       garimpo: l.garimpo,
       qualidade: l.qualidade,
