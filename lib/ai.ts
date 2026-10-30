@@ -153,12 +153,12 @@ const ESQUEMA_GEMINI = {
  * Duas chaves: GEMINI_API_KEY (projeto sem faturamento: grátis, sem Busca Google) e GEMINI_API_KEY_PAGO
  * (projeto com faturamento: cobra os tokens e libera a Busca Google). No Google, quem é grátis ou pago é o projeto da chave.
  */
-const chaveGemini = (paga: boolean) => (paga ? process.env.GEMINI_API_KEY_PAGO : process.env.GEMINI_API_KEY) || undefined;
+export const chaveGemini = (paga: boolean) => (paga ? process.env.GEMINI_API_KEY_PAGO : process.env.GEMINI_API_KEY) || undefined;
 
-async function gemini(
+export async function gemini(
   sistema: string,
   pergunta: string,
-  opcoes: { buscar?: boolean; json?: boolean; paga?: boolean },
+  opcoes: { buscar?: boolean; json?: boolean; paga?: boolean; esquema?: object },
 ): Promise<{ texto: string; fontes: string[]; entrada: number; saida: number }> {
   const nomeChave = opcoes.paga ? "GEMINI_API_KEY_PAGO" : "GEMINI_API_KEY";
   const chave = chaveGemini(!!opcoes.paga);
@@ -183,7 +183,7 @@ async function gemini(
             ? {
                 generationConfig: {
                   responseMimeType: "application/json",
-                  ...(comEsquema ? { responseSchema: ESQUEMA_GEMINI } : {}),
+                  ...(comEsquema ? { responseSchema: opcoes.esquema ?? ESQUEMA_GEMINI } : {}),
                   // Nota e sinal não precisam de raciocínio longo: pensar pouco deixa a resposta bem mais rápida
                   ...(pensarPouco ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
                   maxOutputTokens: 32000,

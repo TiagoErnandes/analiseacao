@@ -6,6 +6,7 @@ import { analisarComIa, selecionarParaIa, type CustoIa, type LinhaParaIa, type M
 import { buscarAcao, buscarExterior, cotacaoDolar, usoFontes, zerarUsoFontes, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
 import { garimpar } from "./garimpo";
+import { alertasDaAnalise } from "./alertas";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, type Qualidade } from "./qualidade";
 import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, scoreFinal, type Indicadores } from "./valuation";
@@ -410,6 +411,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   });
 
   await salvarAnalises(registros);
+  await alertasDaAnalise().catch((e) => console.warn(`  Alertas da análise: ${e.message}`));
 
   // Histórico de proventos (para "proventos recebidos") e a foto do patrimônio do dia
   for (const d of dados) {

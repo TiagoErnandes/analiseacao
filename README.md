@@ -58,3 +58,14 @@ npx tsx --env-file=.env.local scripts/analise.ts   # roda a análise na hora
 - **Estratégia da carteira** (seletor no painel): *Oportunidade* prioriza as ações mais baratas e de boa qualidade, sem buscar o peso ideal e sem limite por setor; *Balanceamento* completa o peso ideal e segura setores acima de 30%. No *Automático*, vale Oportunidade nos primeiros 12 meses a partir da primeira compra lançada (`config.inicio_carteira`) e depois Balanceamento. Limites e prazo em `lib/modos.ts`.
 
 > Ferramenta de apoio à decisão. Não é recomendação de investimento.
+
+## Alertas de venda
+
+O agendador vigia os ativos da carteira (ações e FIIs) a cada 30 minutos, das 7h às 22h, todos os dias:
+- **Notícias** das últimas 24 horas no Google Notícias. O Gemini (chave grátis) separa em VENDER (fato que pode destruir a tese: fraude, recuperação judicial, corte de dividendos, intervenção...), ATENÇÃO ou nada. Sem Gemini, a triagem é por palavras-chave.
+- **Fatos relevantes e comunicados** novos na CVM.
+- **Queda de 7% ou mais** no dia (pede uma olhada, não é venda).
+- **Análise do dia**: ativo da carteira que passa para EVITAR.
+
+Cada alerta é enviado uma vez só, no Telegram (`TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID`) e/ou no app ntfy (`NTFY_TOPICO`), e aparece no painel ("Alertas da carteira", com botão para testar o envio).
+
