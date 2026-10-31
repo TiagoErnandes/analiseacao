@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { usuarioAtual } from "@/lib/auth";
 import { cotacaoHistorica, ehPeriodo } from "@/lib/cotacao";
 import { simboloYahoo, TIPOS, type Tipo } from "@/lib/tipos";
 
@@ -6,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 /** GET /api/cotacao/PETR4?tipo=acao&periodo=1a */
 export async function GET(req: Request, { params }: { params: Promise<{ ticker: string }> }) {
+  if (!(await usuarioAtual())) return NextResponse.json({ erro: "Entre com sua conta Google." }, { status: 401 });
   const ticker = (await params).ticker.toUpperCase();
   const u = new URL(req.url);
   const periodo = u.searchParams.get("periodo") ?? "1a";

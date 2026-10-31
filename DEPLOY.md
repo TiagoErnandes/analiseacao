@@ -32,6 +32,28 @@ Clique em **Rodar análise agora** no site (ou, no Git Bash, `bash deploy/analis
 
 Leva alguns minutos (a IA pesquisa notícias). Depois abra `https://SEU_SUBDOMINIO_AQUI`.
 
+## Login com o Google (site para outras pessoas)
+
+Com o login ligado, cada pessoa entra com a conta Google e vê só a própria carteira. A carteira que já existe fica com
+o seu e-mail (`ADMIN_EMAIL`); quem entrar depois começa com a carteira vazia. O ranking, a análise e o placar são os mesmos
+para todos. Só o dono roda a análise na hora, escolhe o modo da IA, mexe na lista da análise diária e recebe os alertas no celular.
+
+1. Abra https://console.cloud.google.com, crie um projeto (ex.: "Preço Teto").
+2. **APIs e serviços → Tela de consentimento OAuth** (ou "Google Auth Platform"): tipo **Externo**, nome do app, seu e-mail
+   de suporte e de contato. Não precisa adicionar escopos (o login usa só nome, e-mail e foto).
+3. Em **Público-alvo**, clique em **Publicar app** (em "Teste", só os e-mails da lista de testadores conseguem entrar).
+   Como o app só pede nome, e-mail e foto, o Google não exige verificação.
+4. **Credenciais → Criar credenciais → ID do cliente OAuth → Aplicativo da Web**:
+   - Origens JavaScript autorizadas: `https://acoes.179.197.233.72.sslip.io`
+   - URIs de redirecionamento autorizados: `https://acoes.179.197.233.72.sslip.io/api/auth/callback`
+   - (para testar no seu computador, adicione também `http://localhost:3000/api/auth/callback`)
+5. Copie o **ID do cliente** e a **Chave secreta** e rode, no Git Bash: `bash deploy/login-google.sh`
+   (ele pergunta o ID, a chave e o seu e-mail, grava no `.env.production` e reinicia o site).
+6. Abra o site e entre com o seu e-mail primeiro: a carteira atual, as compras, o histórico do patrimônio e a estratégia passam para a sua conta.
+
+Para desligar o login, apague `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` do `.env.production` e reinicie: o site volta a ter
+uma carteira só (a do dono). Se o Google recusar o endereço sslip.io, use um domínio próprio (troque nos passos 4 e 5 e no Nginx).
+
 ## Dia a dia
 
 - Mudou o código: `bash deploy/deploy.sh`

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Navegacao } from "./Navegacao";
 import { BuscaAtivo } from "./BuscaAtivo";
 import { FaixaIndices } from "./FaixaIndices";
+import { loginAtivo, usuarioAtual, type Usuario } from "@/lib/auth";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -28,7 +29,42 @@ function Marca() {
   );
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+/** Quem está logado e o botão de sair (só com o login do Google ligado). */
+function MenuUsuario({ u }: { u: Usuario }) {
+  const nome = u.nome ?? u.email ?? "";
+  return (
+    <form action="/api/auth/sair" method="post" className="flex items-center gap-2">
+      {u.foto ? (
+        <img src={u.foto} alt="" referrerPolicy="no-referrer" className="h-7 w-7 rounded-full" title={`${nome}${u.admin ? " (dono)" : ""}`} />
+      ) : (
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-painel2 text-xs font-semibold" title={nome}>
+          {nome.slice(0, 1).toUpperCase()}
+        </span>
+      )}
+      <button type="submit" className="rounded-lg px-2 py-1.5 text-[13px] text-suave transition hover:text-texto sm:text-sm">
+        Sair
+      </button>
+    </form>
+  );
+}
+
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const usuario = await usuarioAtual().catch(() => null);
+  if (!usuario) {
+    // Tela de entrar: sem busca, índices nem navegação (tudo isso exige login)
+    return (
+      <html lang="pt-BR">
+        <body className="min-h-screen">
+          <header className="border-b border-borda">
+            <div className="mx-auto flex max-w-7xl items-center px-4 py-2.5">
+              <Marca />
+            </div>
+          </header>
+          <main className="mx-auto max-w-7xl px-4 py-6 sm:py-8">{children}</main>
+        </body>
+      </html>
+    );
+  }
   return (
     <html lang="pt-BR">
       <body className="min-h-screen">
@@ -39,8 +75,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="order-last w-full md:order-none md:ml-4 md:w-auto md:max-w-md md:flex-1">
               <BuscaAtivo />
             </div>
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-1">
               <Navegacao />
+              {loginAtivo() && <MenuUsuario u={usuario} />}
             </div>
           </div>
         </header>

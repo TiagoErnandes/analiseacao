@@ -116,6 +116,13 @@ export async function salvarRelatorio(r: Relatorio) {
   );
 }
 
+/** Dono do site (quem tem a carteira original). Sem dono ainda: null, que é o "usuario_id" da carteira original. */
+export async function idDoDono(): Promise<number | null> {
+  await migrar();
+  const [d] = await query<{ id: number }>("select id from usuarios where admin order by id limit 1");
+  return d?.id ?? null;
+}
+
 let migrado = false;
 /** Cria tabelas e colunas novas em bancos que já existiam antes delas (roda uma vez por processo). */
 export async function migrar() {
@@ -222,6 +229,42 @@ export async function migrar() {
       ('HGLG11'),('KNRI11'),('XPML11'),('BTLG11'),('VISC11'),('KNCR11'),('MXRF11'),('HGRU11'),('XPLG11'),('CPTS11'),
       ('BOVA11'),('IVVB11'),('DIVO11'),('SMAL11')
     on conflict (ticker) do nothing;
+    -- Login com o Google: cada usuário tem a sua carteira. usuario_id vazio = carteira original, até o dono entrar.
+    create table if not exists usuarios (
+      id            serial primary key,
+      google_sub    text not null unique,
+      email         text not null,
+      nome          text,
+      foto          text,
+      admin         boolean not null default false,
+      criado_em     timestamptz not null default now(),
+      ultimo_acesso timestamptz
+    );
+    create table if not exists sessoes (
+      token_hash  text primary key,
+      usuario_id  int not null references usuarios (id) on delete cascade,
+      criado_em   timestamptz not null default now(),
+      expira_em   timestamptz not null
+    );
+    alter table carteira add column if not exists usuario_id int references usuarios (id) on delete cascade;
+    alter table carteira drop constraint if exists carteira_pkey;
+    create unique index if not exists carteira_usuario_ticker on carteira (usuario_id, ticker) nulls not distinct;
+    alter table operacoes add column if not exists usuario_id int references usuarios (id) on delete cascade;
+    create index if not exists operacoes_usuario on operacoes (usuario_id, data desc);
+    alter table patrimonio_diario add column if not exists usuario_id int references usuarios (id) on delete cascade;
+    alter table patrimonio_diario drop constraint if exists patrimonio_diario_pkey;
+    create unique index if not exists patrimonio_usuario_data on patrimonio_diario (usuario_id, data) nulls not distinct;
+    create table if not exists config_usuario (
+      usuario_id  int references usuarios (id) on delete cascade,
+      chave       text not null,
+      valor       text not null
+    );
+    create unique index if not exists config_usuario_chave on config_usuario (usuario_id, chave) nulls not distinct;
+    -- A estratégia e o início da carteira passam a ser de cada usuário (uma vez: os atuais ficam com a carteira original)
+    with marca as (insert into config (chave, valor) values ('config_usuario_migrada', '1') on conflict (chave) do nothing returning 1)
+    insert into config_usuario (usuario_id, chave, valor)
+    select null, chave, valor from config where chave in ('estrategia', 'inicio_carteira') and exists (select 1 from marca)
+    on conflict do nothing;
   `);
   migrado = true;
 }

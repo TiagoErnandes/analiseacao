@@ -37,6 +37,16 @@ Todo dia útil às 7h o agendador:
 
 Score do ranking: 35% qualidade, 25% nota da IA e 40% desconto ao teto (no Balanceamento, 30% desconto e 10% quanto falta para o peso ideal). O desconto conta até 40% abaixo do teto. Sem nota da IA, os outros pesos são reescalados.
 
+## Várias pessoas (login com o Google)
+
+Com `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` no `.env.production`, o site pede login com o Google e cada pessoa tem a
+própria carteira, compras, estratégia e evolução do patrimônio (tabelas com `usuario_id`). A análise do dia é uma só: ela
+cobre a lista, o garimpo e os ativos de todas as carteiras. A IA, os pesos da carteira e a "melhor compra na sua carteira"
+do relatório seguem a carteira do dono; para os outros, a melhor compra da carteira sai do ranking. O dono é o `ADMIN_EMAIL`
+(ou o primeiro login, se ficar vazio) e herda a carteira que já existia; só ele roda a análise na hora, troca o modo da IA,
+acompanha ativos novos na lista e recebe os alertas no celular. Sem as variáveis, nada muda: uma carteira só, sem login.
+Passo a passo das credenciais em [DEPLOY.md](DEPLOY.md#login-com-o-google-site-para-outras-pessoas). `lib/auth.ts`.
+
 ## Como colocar no ar
 
 Roda na VPS da Hostinger, ao lado do Fresh Tech, com Docker Compose (Postgres + site + agendador das 7h).

@@ -3,6 +3,8 @@ import { dataBr, pct } from "@/lib/format";
 import { yieldAtual } from "@/lib/juros";
 import { query, type Analise, type Relatorio } from "@/lib/db";
 import { ultimaExecucao } from "@/lib/analise";
+import { exigirUsuario } from "@/lib/auth";
+import { carteiraDe, marcarCarteira } from "@/lib/painel";
 import { Cartao, Vazio } from "../ui";
 import { TabelaRanking } from "./TabelaRanking";
 import { ExportarCarteira } from "../carteira/ExportarCarteira";
@@ -11,9 +13,11 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Ranking" };
 
 export default async function Ranking({ searchParams }: { searchParams: Promise<{ filtro?: string }> }) {
+  const usuario = await exigirUsuario();
   await ultimaExecucao(); // garante as colunas novas
   const [rel] = await query<Pick<Relatorio, "data">>("select data from relatorio_diario order by data desc limit 1");
-  const analises = rel ? await query<Analise>("select * from analises where data = $1", [rel.data]) : [];
+  const meus = (await carteiraDe(usuario.id)).map((c) => c.ticker);
+  const analises = rel ? marcarCarteira(await query<Analise>("select * from analises where data = $1", [rel.data]), meus) : [];
   const { filtro } = await searchParams;
   const y = await yieldAtual();
 

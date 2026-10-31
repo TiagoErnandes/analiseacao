@@ -3,7 +3,7 @@
 // O Gemini (chave grátis) separa o que é grave do que é ruído; sem Gemini, palavras-chave fazem a triagem.
 import { chaveGemini, gemini } from "./ai";
 import { atualizarDocumentosCvm, infoB3 } from "./cvm";
-import { query } from "./db";
+import { migrar, query } from "./db";
 import { precoYahoo } from "./mercado";
 
 export type Nivel = "VENDER" | "ATENCAO";
@@ -17,6 +17,7 @@ const QUEDA_FORTE = -0.07;
 const GRAVE = /recupera[çc][ãa]o judicial|fal[êe]ncia|fraude|inconsist[êe]ncia cont[áa]bil|rombo|opera[çc][ãa]o da pf|pol[íi]cia federal|cvm (abre|instaura)|calote|default|rebaixa|corta (os )?dividendos|suspende (os )?dividendos|preju[íi]zo bilion|renúncia do (ceo|presidente)|interven[çc][ãa]o|delist|fechamento de capital|OPA/i;
 
 async function garantirTabela() {
+  await migrar(); // usuarios e carteira por usuário
   await query(`create table if not exists alertas (
     chave     text primary key,
     ticker    text not null,
@@ -154,7 +155,10 @@ Seja rigoroso: queda de preço sozinha não é motivo para vender. Responda só 
 /** Vigia a carteira: notícias, fatos relevantes da CVM e queda forte. Roda várias vezes ao dia (agendador). */
 export async function vigiarCarteira(): Promise<number> {
   await garantirTabela();
-  const carteira = await query<{ ticker: string; tipo: string | null }>("select ticker, tipo from carteira where quantidade > 0");
+  const carteira = await query<{ ticker: string; tipo: string | null }>(
+    // Os alertas no celular são do dono do site (Telegram/ntfy do servidor)
+    "select ticker, tipo from carteira where quantidade > 0 and usuario_id is not distinct from (select id from usuarios where admin order by id limit 1)",
+  );
   const tickers = carteira
     .filter((c) => !c.tipo || c.tipo === "acao" || c.tipo === "fii")
     .map((c) => c.ticker.toUpperCase());

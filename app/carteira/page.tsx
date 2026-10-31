@@ -12,16 +12,19 @@ import { TIPOS } from "@/lib/tipos";
 import { TipoAtivo } from "../TipoAtivo";
 import { PrecoMedio } from "./PrecoMedio";
 import { ExportarCarteira } from "./ExportarCarteira";
+import { exigirUsuario } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Carteira" };
 
 export default async function CarteiraPage() {
-  const { posicoes, resumo } = await carregarPainel(); // também cria a tabela de operações
+  const usuario = await exigirUsuario();
+  const { posicoes, resumo } = await carregarPainel(usuario); // também cria a tabela de operações
   const operacoes = await query<{ id: number; data: string; ticker: string; tipo: "C" | "V"; quantidade: number; preco: number; custos: number; moeda: string }>(
     `select id, data::text, ticker, tipo, quantidade, preco, custos,
             case when tipo_ativo in ('stock', 'etf_int', 'reit') then 'USD' else 'BRL' end as moeda
-       from operacoes order by data desc, id desc limit 30`,
+       from operacoes where usuario_id is not distinct from $1 order by data desc, id desc limit 30`,
+    [usuario.id],
   );
   const dinheiro = (v: number, moeda: string) => v.toLocaleString("pt-BR", { style: "currency", currency: moeda });
   const importador = <ImportadorB3 atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio }))} />;

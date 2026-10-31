@@ -5,6 +5,7 @@ import { query, type Analise, type Carteira, type Relatorio } from "./db";
 import { infoTipo } from "./tipos";
 import { proventosRecebidos } from "./proventos";
 import { compararDesde } from "./indices";
+import type { Usuario } from "./auth";
 
 /** Limite de concentração por setor de referência para previdência (a estratégia Balanceamento usa este). */
 export const LIMITE_SETOR = 0.3;
@@ -21,12 +22,51 @@ export type Posicao = Carteira & {
   recebido: number; // proventos que você recebeu desde a compra (estimado), em reais
 };
 
-export async function carregarPainel() {
+/** Carteira de um usuário (null = carteira original, ainda sem dono). */
+export async function carteiraDe(usuarioId: number | null) {
+  return query<Carteira & { desde: string }>(
+    "select ticker, quantidade, preco_medio, tipo, criado_em::date::text as desde from carteira where usuario_id is not distinct from $1 order by ticker",
+    [usuarioId],
+  );
+}
+
+/** A análise é uma só para todos; o "na carteira" de cada linha passa a ser o de quem está vendo. */
+export function marcarCarteira<T extends { ticker: string; na_carteira: boolean }>(analises: T[], tickers: Iterable<string>): T[] {
+  const meus = new Set(tickers);
+  return analises.map((a) => ({ ...a, na_carteira: meus.has(a.ticker) }));
+}
+
+/**
+ * A "melhor compra na sua carteira" do relatório é a do dono (a IA olha a carteira dele).
+ * Para os outros usuários, sai do cálculo: maior score entre os ativos da carteira abaixo do teto e com qualidade boa.
+ */
+function melhorDaCarteira(analises: Analise[]): { ticker: string; justificativa: string } | null {
+  const minhas = analises.filter((a) => a.na_carteira).sort((x, y) => (y.score ?? 0) - (x.score ?? 0));
+  const boa = minhas.find((a) => (a.margem ?? -1) > 0 && (a.qualidade ?? 0) >= 6 && a.recomendacao !== "EVITAR");
+  const a = boa ?? minhas[0];
+  if (!a) return null;
+  return {
+    ticker: a.ticker,
+    justificativa:
+      `Maior nota do ranking entre os seus ativos (${a.score ?? "—"}): margem de ${Math.round((a.margem ?? 0) * 100)}% até o preço teto e qualidade ${a.qualidade ?? "—"}.` +
+      (boa ? "" : " Nenhum ativo da sua carteira cumpre todas as regras hoje; este é o mais próximo.") +
+      (a.resumo_ia ? ` ${a.resumo_ia}` : ""),
+  };
+}
+
+export async function carregarPainel(usuario: Usuario) {
   const exec = await ultimaExecucao(); // também garante as colunas novas no banco
-  const [rel] = await query<Relatorio>("select * from relatorio_diario order by data desc limit 1");
-  const carteira = await query<Carteira & { desde: string }>("select ticker, quantidade, preco_medio, tipo, criado_em::date::text as desde from carteira order by ticker");
-  const analises = rel ? await query<Analise>("select * from analises where data = $1", [rel.data]) : [];
+  const [relDia] = await query<Relatorio>("select * from relatorio_diario order by data desc limit 1");
+  const carteira = await carteiraDe(usuario.id);
+  const analises = relDia
+    ? marcarCarteira(await query<Analise>("select * from analises where data = $1", [relDia.data]), carteira.map((c) => c.ticker))
+    : [];
   const porTicker = new Map(analises.map((a) => [a.ticker, a]));
+  let rel = relDia;
+  if (rel && !usuario.admin) {
+    const m = melhorDaCarteira(analises);
+    rel = { ...rel, acao_do_dia_carteira: m?.ticker ?? null, justificativa_carteira: m?.justificativa ?? "Sua carteira ainda está vazia. Lance a primeira compra na página Carteira." };
+  }
 
   const base = carteira.map((c) => {
     const a = porTicker.get(c.ticker) ?? null;
@@ -45,14 +85,15 @@ export async function carregarPainel() {
     };
   });
   const patrimonio = base.reduce((s, p) => s + p.valor, 0);
-  const recebidos = await proventosRecebidos(base.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, cambio: p.cambio, desde: p.desde })));
+  const recebidos = await proventosRecebidos(base.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, cambio: p.cambio, desde: p.desde })), usuario.id);
   const posicoes: Posicao[] = base.map((p) => ({
     ...p,
     peso: patrimonio > 0 ? p.valor / patrimonio : null,
     recebido: recebidos.porTicker.get(p.ticker)?.total ?? 0,
   }));
   const evolucao = await query<{ data: string; investido: number; patrimonio: number }>(
-    "select data::text, investido, patrimonio from patrimonio_diario where data > current_date - 400 order by data",
+    "select data::text, investido, patrimonio from patrimonio_diario where usuario_id is not distinct from $1 and data > current_date - 400 order by data",
+    [usuario.id],
   );
 
   const investido = posicoes.reduce((s, p) => s + p.investido, 0);
@@ -82,7 +123,7 @@ export async function carregarPainel() {
   return {
     exec,
     modo: await modoIa(),
-    estrategia: await estrategiaAtual(),
+    estrategia: await estrategiaAtual(usuario.id),
     classes: [...classes.keys()]
       .map((nome) => ({ nome, valor: classes.get(nome) ?? 0, peso: patrimonio > 0 ? (classes.get(nome) ?? 0) / patrimonio : 0 }))
       .filter((c) => c.valor > 0)

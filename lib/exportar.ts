@@ -1,5 +1,6 @@
 // Exporta a carteira com tudo o que o site sabe, para mandar a outra IA analisar (Markdown, JSON ou CSV).
-import { carregarPainel } from "./painel";
+import { carregarPainel, carteiraDe, marcarCarteira } from "./painel";
+import type { Usuario } from "./auth";
 import { query, type Analise } from "./db";
 import { yieldAtual } from "./juros";
 import { infoTipo } from "./tipos";
@@ -51,8 +52,8 @@ export function fmtIndicador(k: string, v: unknown): string | null {
   return typeof v === "object" ? null : String(v);
 }
 
-export async function montarExportacao() {
-  const [p, y] = await Promise.all([carregarPainel(), yieldAtual()]);
+export async function montarExportacao(usuario: Usuario) {
+  const [p, y] = await Promise.all([carregarPainel(usuario), yieldAtual()]);
   const yp = (v: number) => `${(v * 100).toFixed(1).replace(".", ",")}%`;
   const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 
@@ -302,11 +303,14 @@ type Lucros10a = { anos: number; anosComLucro: number; crescimentoAnual: number 
 type Div10a = { anos: number; anosPagos: number; cortes: number; crescimento?: number | null } | null;
 
 /** O ranking inteiro do dia, com o que pesa na decisão: preço teto, qualidade, constância, porte, alertas e a IA. */
-export async function montarRanking() {
+export async function montarRanking(usuario: Usuario) {
   const [rel] = await query<{ data: string; contexto_mercado: string | null }>(
     "select data::text, contexto_mercado from relatorio_diario order by data desc limit 1",
   );
-  const analises = rel ? await query<Analise>("select * from analises where data = $1 order by score desc nulls last", [rel.data]) : [];
+  const meus = (await carteiraDe(usuario.id)).map((c) => c.ticker);
+  const analises = rel
+    ? marcarCarteira(await query<Analise>("select * from analises where data = $1 order by score desc nulls last", [rel.data]), meus)
+    : [];
   const y = await yieldAtual();
   const ativos = analises.map((a, i) => {
     const ind = (a.indicadores ?? {}) as Record<string, unknown>;
