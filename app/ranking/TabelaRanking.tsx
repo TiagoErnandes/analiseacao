@@ -1,5 +1,6 @@
 "use client";
 
+import { ehBesst } from "@/lib/besst";
 import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 import type { Analise } from "@/lib/db";
@@ -8,12 +9,13 @@ import { Logo } from "../Logo";
 import { TipoAtivo } from "../TipoAtivo";
 import { Alertas, Nota, Score, Sinal, Variacao } from "../ui";
 
-type Filtro = "todas" | "carteira" | "comprar" | "abaixo";
+type Filtro = "todas" | "carteira" | "comprar" | "abaixo" | "besst";
 const FILTROS: { id: Filtro; rotulo: string }[] = [
   { id: "todas", rotulo: "Todas" },
   { id: "carteira", rotulo: "Na carteira" },
   { id: "comprar", rotulo: "Sinal Comprar" },
   { id: "abaixo", rotulo: "Abaixo do teto" },
+  { id: "besst", rotulo: "BESST" },
 ];
 
 type Coluna = { id: string; rotulo: string; valor: (a: Analise) => number | string | null; alinhar?: "right" | "center"; dica?: string };
@@ -45,7 +47,7 @@ export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]
     const termo = busca.trim().toUpperCase();
     return analises
       .filter((a) =>
-        filtro === "carteira" ? a.na_carteira : filtro === "comprar" ? a.recomendacao === "COMPRAR" : filtro === "abaixo" ? (a.margem ?? -1) > 0 : true,
+        filtro === "carteira" ? a.na_carteira : filtro === "comprar" ? a.recomendacao === "COMPRAR" : filtro === "abaixo" ? (a.margem ?? -1) > 0 : filtro === "besst" ? ehBesst(a) : true,
       )
       .filter((a) => !setor || a.setor === setor)
       .filter((a) => !tipo || a.tipo === tipo)

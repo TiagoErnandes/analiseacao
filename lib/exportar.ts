@@ -1,6 +1,7 @@
 // Exporta a carteira com tudo o que o site sabe, para mandar a outra IA analisar (Markdown, JSON ou CSV).
 import { carregarPainel, carteiraDe, marcarCarteira } from "./painel";
 import type { Usuario } from "./auth";
+import { ehBesst } from "./besst";
 import { query, type Analise } from "./db";
 import { yieldAtual } from "./juros";
 import { infoTipo } from "./tipos";
@@ -97,7 +98,7 @@ export async function montarExportacao(usuario: Usuario) {
     }));
 
   const oportunidades = p.analises
-    .filter((a) => !a.na_carteira && (a.margem ?? -1) > 0 && a.recomendacao !== "EVITAR")
+    .filter((a) => !a.na_carteira && ehBesst(a) && (a.margem ?? -1) > 0 && a.recomendacao !== "EVITAR")
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 10)
     .map((a) => ({
