@@ -10,12 +10,16 @@ export type InfoEstrategia = {
   limiteSetor: number;
 };
 
-export async function estrategiaAtual(): Promise<InfoEstrategia> {
+/** `usuarioId`: dono da carteira (null = carteira original, ainda sem dono). */
+export async function estrategiaAtual(usuarioId: number | null): Promise<InfoEstrategia> {
   await migrar();
   const cfg = new Map(
-    (await query<{ chave: string; valor: string }>("select chave, valor from config where chave in ('estrategia', 'inicio_carteira')")).map(
-      (c) => [c.chave, c.valor],
-    ),
+    (
+      await query<{ chave: string; valor: string }>(
+        "select chave, valor from config_usuario where usuario_id is not distinct from $1 and chave in ('estrategia', 'inicio_carteira')",
+        [usuarioId],
+      )
+    ).map((c) => [c.chave, c.valor]),
   );
   const e = cfg.get("estrategia");
   const escolha: EscolhaEstrategia = e === "oportunidade" || e === "balanceamento" ? e : "auto";
@@ -24,10 +28,14 @@ export async function estrategiaAtual(): Promise<InfoEstrategia> {
   let inicio = cfg.get("inicio_carteira");
   if (!inicio) {
     const [o] = await query<{ d: string | null }>(
-      "select coalesce(min(data), (now() at time zone 'America/Sao_Paulo')::date)::text as d from operacoes",
+      "select coalesce(min(data), (now() at time zone 'America/Sao_Paulo')::date)::text as d from operacoes where usuario_id is not distinct from $1",
+      [usuarioId],
     );
     inicio = o.d!;
-    await query("insert into config (chave, valor) values ('inicio_carteira', $1) on conflict (chave) do nothing", [inicio]);
+    await query(
+      "insert into config_usuario (usuario_id, chave, valor) values ($1, 'inicio_carteira', $2) on conflict (usuario_id, chave) do nothing",
+      [usuarioId, inicio],
+    );
   }
   const [t] = await query<{ troca: string; antes: boolean }>(
     `select ($1::date + make_interval(months => $2::int))::date::text as troca,

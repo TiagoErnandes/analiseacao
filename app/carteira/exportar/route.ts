@@ -1,4 +1,5 @@
 // Baixa a carteira para outra IA analisar: ?formato=md (padrão), json ou csv. ?baixar=1 salva como arquivo.
+import { usuarioAtual } from "@/lib/auth";
 import { montarExportacao, paraCsv, paraMarkdown } from "@/lib/exportar";
 
 export const dynamic = "force-dynamic";
@@ -6,7 +7,9 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const formato = url.searchParams.get("formato") ?? "md";
-  const e = await montarExportacao();
+  const usuario = await usuarioAtual();
+  if (!usuario) return new Response("Entre com sua conta Google.", { status: 401 });
+  const e = await montarExportacao(usuario);
   const nome = `carteira-${e.gerado_em}`;
   const [corpo, tipo, ext] =
     formato === "json"

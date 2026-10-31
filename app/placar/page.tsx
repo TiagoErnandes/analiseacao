@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { brl, dataBr } from "@/lib/format";
 import { ultimaExecucao } from "@/lib/analise";
+import { exigirUsuario } from "@/lib/auth";
 import { carregarPlacar, HORIZONTES, type Grupo, type Horizonte, type Resultado } from "@/lib/placar";
 import { Cartao, Sinal, Vazio, Variacao } from "../ui";
 
@@ -27,6 +28,7 @@ function Celula({ r }: { r: Resultado }) {
 }
 
 export default async function Placar() {
+  await exigirUsuario();
   await ultimaExecucao(); // garante as tabelas
   const { resumos, sinais, inicio } = await carregarPlacar();
 

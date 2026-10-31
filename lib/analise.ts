@@ -7,7 +7,7 @@ import { buscarAcao, lerCache, salvarCache, buscarExterior, cotacaoDolar, usoFon
 import { SO_YAHOO, infoTipo } from "./tipos";
 import { garimpar } from "./garimpo";
 import { alertasDaAnalise } from "./alertas";
-import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
+import { idDoDono, migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, tipoDeSetor, type Qualidade } from "./qualidade";
 import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, scoreFinal, type Indicadores } from "./valuation";
 import { juroReal, yieldAtual, yieldExigido, type YieldExigido } from "./juros";
@@ -219,13 +219,21 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   const hoje = hojeSaoPaulo();
   await migrar();
 
-  const [carteira, universo] = await Promise.all([
-    query<Carteira>("select ticker, quantidade, preco_medio, tipo from carteira"),
+  // A IA, os pesos e a "melhor compra na sua carteira" seguem a carteira do dono do site.
+  // Os ativos das carteiras dos outros usuários também são analisados (preço teto, qualidade e nota).
+  const dono = await idDoDono();
+  const [todasCarteiras, universo] = await Promise.all([
+    query<Carteira & { usuario_id: number | null }>("select usuario_id, ticker, quantidade, preco_medio, tipo from carteira"),
     query<{ ticker: string }>("select ticker from universo where ativo"),
   ]);
-
+  const carteira = todasCarteiras.filter((c) => c.usuario_id === dono);
   const minha = new Map(carteira.map((c) => [c.ticker.toUpperCase(), c]));
-  const tickers = [...new Set([...minha.keys(), ...universo.map((u) => u.ticker.toUpperCase())])];
+  const tipoDe = new Map<string, Carteira["tipo"]>();
+  for (const c of todasCarteiras) if (c.tipo && !tipoDe.has(c.ticker.toUpperCase())) tipoDe.set(c.ticker.toUpperCase(), c.tipo);
+  for (const c of carteira) tipoDe.set(c.ticker.toUpperCase(), c.tipo);
+  const tickers = [
+    ...new Set([...minha.keys(), ...todasCarteiras.map((c) => c.ticker.toUpperCase()), ...universo.map((u) => u.ticker.toUpperCase())]),
+  ];
   // Garimpo: boas ações e FIIs fora da lista, achados na tabela pública do Fundamentus
   const achados = await garimpar(new Set(tickers)).catch((e) => (console.warn(`  Garimpo: ${e.message}`), []));
   const doGarimpo = new Set(achados.map((a) => a.ticker));
@@ -236,14 +244,14 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
 
   // 1) Dados de mercado (em sequência, para não sobrecarregar as fontes)
   const dados: DadosAcao[] = [];
-  const precisaDolar = carteira.some((c) => c.tipo && SO_YAHOO.includes(c.tipo) && c.tipo !== "bdr");
+  const precisaDolar = todasCarteiras.some((c) => c.tipo && SO_YAHOO.includes(c.tipo) && c.tipo !== "bdr");
   const dolar = precisaDolar ? await cotacaoDolar().catch((e) => (console.warn(`  ${e.message}`), null)) : null;
   for (const [i, t] of tickers.entries()) {
     if (i && i % 10 === 0)
       etapa(
         `atualizando cotações (${i} de ${tickers.length}) · balanços: ${usoFontes.fundamentusCache} do banco, ${usoFontes.fundamentus} baixados`,
       );
-    const tipo = minha.get(t)?.tipo;
+    const tipo = tipoDe.get(t);
     try {
       dados.push(tipo && SO_YAHOO.includes(tipo) ? await buscarExterior(t, tipo, dolar) : await buscarAcao(t));
     } catch (err) {
@@ -289,7 +297,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
 
   // 3) Preço teto, qualidade e pesos da carteira (por ação e por setor)
   // Na estratégia Oportunidade não há bônus por "peso faltando" e o limite por setor é mais folgado.
-  const estrategia = await estrategiaAtual();
+  const estrategia = await estrategiaAtual(dono);
   const LIMITE_SETOR = estrategia.limiteSetor;
   const balancear = estrategia.atual === "balanceamento";
   console.log(`Estratégia: ${estrategia.atual} (${LIMITE_SETOR < 1 ? `setor até ${LIMITE_SETOR * 100}%` : "sem limite por setor"})`);
@@ -543,15 +551,25 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       );
     }
   }
-  const investido = dados.reduce((s, d) => {
-    const c = minha.get(d.ticker);
-    return s + (c ? c.quantidade * c.preco_medio * d.cambio : 0);
-  }, 0);
-  await query(
-    `insert into patrimonio_diario (data, investido, patrimonio) values ($1, $2, $3)
-     on conflict (data) do update set investido = excluded.investido, patrimonio = excluded.patrimonio`,
-    [hoje, investido, totalCarteira],
-  );
+  // Foto do patrimônio de cada carteira (a do dono e a de cada usuário)
+  const porDado = new Map(dados.map((d) => [d.ticker, d]));
+  const fotos = new Map<number | null, { investido: number; patrimonio: number }>();
+  for (const c of todasCarteiras) {
+    const d = porDado.get(c.ticker.toUpperCase());
+    const f = fotos.get(c.usuario_id) ?? { investido: 0, patrimonio: 0 };
+    fotos.set(c.usuario_id, f);
+    if (!d) continue; // sem cotação hoje: fica fora da foto, como antes
+    f.investido += c.quantidade * c.preco_medio * d.cambio;
+    f.patrimonio += c.quantidade * (d.preco ?? 0) * d.cambio;
+  }
+  if (!fotos.has(dono)) fotos.set(dono, { investido: 0, patrimonio: 0 });
+  for (const [usuario, f] of fotos) {
+    await query(
+      `insert into patrimonio_diario (usuario_id, data, investido, patrimonio) values ($1, $2, $3, $4)
+       on conflict (usuario_id, data) do update set investido = excluded.investido, patrimonio = excluded.patrimonio`,
+      [usuario, hoje, f.investido, f.patrimonio],
+    );
+  }
   etapa("salvando o resultado");
   const errosIndices = await atualizarIndices();
   if (errosIndices.length) console.warn(`  Índices de referência: ${errosIndices.join("; ")}`);

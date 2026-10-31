@@ -15,9 +15,21 @@ import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
 import { SeletorEstrategia } from "./SeletorEstrategia";
 import { AlertasVenda } from "./AlertasVenda";
 import { alertasRecentes } from "@/lib/alertas";
+import { exigirUsuario } from "@/lib/auth";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
 
 export const dynamic = "force-dynamic";
+
+/** Para quem não é o dono: só mostra quando foi a última análise (rodar e escolher o modo da IA é do dono). */
+function StatusAnalise({ status, inicio }: { status: string | null; inicio: string | null }) {
+  if (!inicio) return null;
+  const quando = new Date(inicio).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
+  return (
+    <p className="text-xs text-fraco">
+      {status === "rodando" ? `Análise em andamento desde ${quando}` : `Última análise em ${quando}`} · roda sozinha às 7h em dias úteis
+    </p>
+  );
+}
 
 function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; justificativa: string | null }) {
   return (
@@ -65,10 +77,14 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 }
 
 export default async function Painel() {
-  const { exec, modo, estrategia, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel();
-  const alertas = await alertasRecentes();
+  const usuario = await exigirUsuario();
+  const { exec, modo, estrategia, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel(usuario);
+  // Os alertas no celular vigiam a carteira do dono (Telegram/ntfy configurados no servidor)
+  const alertas = usuario.admin ? await alertasRecentes() : [];
   const urgentes = alertas.filter((a) => a.nivel === "VENDER");
-  const botao = (
+  const botao = !usuario.admin ? (
+    <StatusAnalise status={exec?.status ?? null} inicio={exec?.inicio ?? null} />
+  ) : (
     <BotaoAnalise
       status={exec?.status ?? null}
       inicio={exec?.inicio ?? null}
@@ -84,7 +100,7 @@ export default async function Painel() {
   if (!rel) {
     return (
       <Vazio>
-        <p className="mb-4">Ainda não há análise. Ela roda sozinha às 7h em dias úteis, ou clique para rodar agora.</p>
+        <p className="mb-4">Ainda não há análise. Ela roda sozinha às 7h em dias úteis{usuario.admin ? ", ou clique para rodar agora" : ""}.</p>
         <div className="flex justify-center">{botao}</div>
       </Vazio>
     );
@@ -133,6 +149,16 @@ export default async function Painel() {
       </section>
 
       <SeletorEstrategia escolha={estrategia.escolha} atual={estrategia.atual} trocaEm={estrategia.trocaEm} />
+
+      {posicoes.length === 0 && (
+        <div className="flex flex-col gap-3 rounded-xl border border-marca/30 bg-marca/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-suave">
+            <b className="text-texto">Sua carteira está vazia.</b> Lance suas compras ou importe da B3. Os ativos novos ganham preço teto e nota
+            na próxima análise (às 7h em dias úteis); o ranking e as oportunidades já valem para você.
+          </p>
+          <Link href="/carteira" className="whitespace-nowrap rounded-lg bg-marca px-3 py-2 text-xs font-semibold text-fundo">Montar carteira</Link>
+        </div>
+      )}
 
       {urgentes.length > 0 && (
         <a
@@ -289,7 +315,7 @@ export default async function Painel() {
         </Cartao>
       )}
 
-      <AlertasVenda alertas={alertas} />
+      {usuario.admin && <AlertasVenda alertas={alertas} />}
 
       {posicoes.some((p) => p.a?.alertas) && (
         <Cartao titulo="Pontos de atenção nos dados (análise de hoje)">

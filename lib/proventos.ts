@@ -14,6 +14,7 @@ export type ProventosRecebidos = {
 
 export async function proventosRecebidos(
   posicoes: { ticker: string; quantidade: number; cambio: number; desde: string }[],
+  usuarioId: number | null,
   hoje = new Date(),
 ): Promise<ProventosRecebidos> {
   const porTicker = new Map<string, { total: number; ultimos12m: number }>();
@@ -26,7 +27,8 @@ export async function proventosRecebidos(
   if (posicoes.length === 0) return { total: 0, ultimos12m: 0, porTicker, porMes };
   const tickers = posicoes.map((p) => p.ticker);
   const [ops, divs] = await Promise.all([
-    query<Op>("select ticker, data::text, tipo, quantidade from operacoes where ticker = any($1) order by data, id", [tickers]),
+    query<Op>("select ticker, data::text, tipo, quantidade from operacoes where ticker = any($1) and usuario_id is not distinct from $2 order by data, id",
+      [tickers, usuarioId],),
     query<{ ticker: string; data: string; valor: number }>(
       "select ticker, data::text, valor from proventos where ticker = any($1) order by data",
       [tickers],

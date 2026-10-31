@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { importarB3, type ResultadoB3 } from "@/lib/b3";
 import { pool, query } from "@/lib/db";
 import { infoTipo, type Tipo } from "@/lib/tipos";
+import { usuarioOuErro } from "@/lib/auth";
 
 const numero = (v: FormDataEntryValue | null) => {
   const t = String(v ?? "").trim();
@@ -11,6 +12,7 @@ const numero = (v: FormDataEntryValue | null) => {
 };
 
 export async function salvarAtivo(form: FormData) {
+  const { id: dono } = await usuarioOuErro();
   const info = infoTipo(String(form.get("tipo") ?? "acao"));
   if (!info) throw new Error("Tipo de ativo inválido");
   const ticker = String(form.get("ticker") ?? "").trim().toUpperCase();
@@ -20,17 +22,18 @@ export async function salvarAtivo(form: FormData) {
   if (!(quantidade >= 0) || !(preco_medio >= 0)) throw new Error("Quantidade e preço médio devem ser números");
 
   await query(
-    `insert into carteira (ticker, quantidade, preco_medio, tipo) values ($1, $2, $3, $4)
-     on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio, tipo = excluded.tipo`,
-    [ticker, quantidade, preco_medio, info.id],
+    `insert into carteira (usuario_id, ticker, quantidade, preco_medio, tipo) values ($5, $1, $2, $3, $4)
+     on conflict (usuario_id, ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio, tipo = excluded.tipo`,
+    [ticker, quantidade, preco_medio, info.id, dono],
   );
   revalidatePath("/carteira");
   revalidatePath("/");
 }
 
 export async function removerAtivo(form: FormData) {
+  const { id: dono } = await usuarioOuErro();
   const ticker = String(form.get("ticker") ?? "");
-  await query("delete from carteira where ticker = $1", [ticker]);
+  await query("delete from carteira where ticker = $1 and usuario_id is not distinct from $2", [ticker, dono]);
   revalidatePath("/carteira");
   revalidatePath("/");
 }
@@ -41,6 +44,7 @@ const TAMANHO_MAXIMO = 8 * 1024 * 1024;
 
 export async function lerArquivosB3(form: FormData): Promise<{ ok: true; resultado: ResultadoB3 } | { ok: false; erro: string }> {
   try {
+    const { id: dono } = await usuarioOuErro();
     const arquivos = form.getAll("arquivos").filter((f): f is File => f instanceof File && f.size > 0);
     if (arquivos.length === 0) return { ok: false, erro: "Escolha pelo menos um arquivo." };
     if (arquivos.length > 5) return { ok: false, erro: "Envie no máximo 5 arquivos por vez." };
@@ -49,7 +53,10 @@ export async function lerArquivosB3(form: FormData): Promise<{ ok: true; resulta
       return { ok: false, erro: "Use o arquivo em Excel (.xlsx) baixado da B3." };
     }
 
-    const carteira = await query<{ ticker: string; preco_medio: number }>("select ticker, preco_medio from carteira");
+    const carteira = await query<{ ticker: string; preco_medio: number }>(
+      "select ticker, preco_medio from carteira where usuario_id is not distinct from $1",
+      [dono],
+    );
     const resultado = importarB3(
       await Promise.all(arquivos.map(async (f) => ({ nome: f.name, dados: new Uint8Array(await f.arrayBuffer()) }))),
       new Map(carteira.map((c) => [c.ticker, c.preco_medio])),
@@ -69,21 +76,25 @@ export async function aplicarImportacaoB3(
   );
   if (validos.length !== itens.length) return { ok: false, mensagem: "Há linhas com código, quantidade ou preço médio inválidos." };
   if (validos.length === 0) return { ok: false, mensagem: "Nenhum ativo para importar." };
+  const { id: dono } = await usuarioOuErro();
 
   const client = await pool().connect();
   try {
     await client.query("begin");
     let removidas = 0;
     if (modo === "substituir") {
-      const r = await client.query("delete from carteira where not (ticker = any($1::text[]))", [validos.map((i) => i.ticker)]);
+      const r = await client.query("delete from carteira where usuario_id is not distinct from $2 and not (ticker = any($1::text[]))", [
+        validos.map((i) => i.ticker),
+        dono,
+      ]);
       removidas = r.rowCount ?? 0;
     }
     for (const i of validos) {
       await client.query(
-        `insert into carteira (ticker, quantidade, preco_medio, tipo) values ($1, $2, $3, $4)
-         on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio,
+        `insert into carteira (usuario_id, ticker, quantidade, preco_medio, tipo) values ($5, $1, $2, $3, $4)
+         on conflict (usuario_id, ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio,
            tipo = coalesce(excluded.tipo, carteira.tipo)`,
-        [i.ticker, i.quantidade, i.preco_medio, infoTipo(i.tipo)?.id ?? null],
+        [i.ticker, i.quantidade, i.preco_medio, infoTipo(i.tipo)?.id ?? null, dono],
       );
     }
     await client.query("commit");
@@ -122,13 +133,14 @@ export async function registrarOperacao(dados: {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dados.data)) return { ok: false, mensagem: "Data inválida." };
   const simbolo = info.moeda === "USD" ? "US$" : "R$";
   const fmt = (v: number) => `${simbolo} ${v.toFixed(2).replace(".", ",")}`;
+  const { id: dono } = await usuarioOuErro();
 
   const client = await pool().connect();
   try {
     await client.query("begin");
     const { rows } = await client.query<{ quantidade: string; preco_medio: string; tipo: string | null }>(
-      "select quantidade::text, preco_medio::text, tipo from carteira where ticker = $1 for update",
-      [ticker],
+      "select quantidade::text, preco_medio::text, tipo from carteira where ticker = $1 and usuario_id is not distinct from $2 for update",
+      [ticker, dono],
     );
     const qtdAtual = rows[0] ? Number(rows[0].quantidade) : 0;
     const pmAtual = rows[0] ? Number(rows[0].preco_medio) : 0;
@@ -143,10 +155,10 @@ export async function registrarOperacao(dados: {
       // Os custos (corretagem, taxas) entram no preço médio
       const pm = (qtdAtual * pmAtual + dados.quantidade * dados.preco + custos) / qtd;
       await client.query(
-        `insert into carteira (ticker, quantidade, preco_medio, tipo) values ($1, $2, $3, $4)
-         on conflict (ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio,
+        `insert into carteira (usuario_id, ticker, quantidade, preco_medio, tipo) values ($5, $1, $2, $3, $4)
+         on conflict (usuario_id, ticker) do update set quantidade = excluded.quantidade, preco_medio = excluded.preco_medio,
            tipo = coalesce(carteira.tipo, excluded.tipo)`,
-        [ticker, qtd, pm, info.id],
+        [ticker, qtd, pm, info.id, dono],
       );
       mensagem = `Compra registrada. ${ticker}: ${qtd} a preço médio de ${fmt(pm)}.`;
     } else {
@@ -155,14 +167,14 @@ export async function registrarOperacao(dados: {
         return { ok: false, mensagem: `Você tem ${qtdAtual} de ${ticker}; não dá para vender ${dados.quantidade}.` };
       }
       const qtd = qtdAtual - dados.quantidade;
-      if (qtd === 0) await client.query("delete from carteira where ticker = $1", [ticker]);
-      else await client.query("update carteira set quantidade = $2 where ticker = $1", [ticker, qtd]);
+      if (qtd === 0) await client.query("delete from carteira where ticker = $1 and usuario_id is not distinct from $2", [ticker, dono]);
+      else await client.query("update carteira set quantidade = $2 where ticker = $1 and usuario_id is not distinct from $3", [ticker, qtd, dono]);
       const resultado = dados.preco * dados.quantidade - custos - pmAtual * dados.quantidade;
       mensagem = `Venda registrada. ${resultado >= 0 ? "Lucro" : "Prejuízo"} de ${fmt(Math.abs(resultado))} sobre o preço médio.`;
     }
     await client.query(
-      "insert into operacoes (data, ticker, tipo, quantidade, preco, custos, tipo_ativo) values ($1, $2, $3, $4, $5, $6, $7)",
-      [dados.data, ticker, dados.tipo, dados.quantidade, dados.preco, custos, info.id],
+      "insert into operacoes (data, ticker, tipo, quantidade, preco, custos, tipo_ativo, usuario_id) values ($1, $2, $3, $4, $5, $6, $7, $8)",
+      [dados.data, ticker, dados.tipo, dados.quantidade, dados.preco, custos, info.id, dono],
     );
     await client.query("commit");
     revalidatePath("/carteira");
@@ -183,7 +195,11 @@ export async function registrarOperacao(dados: {
 export async function editarPrecoMedio(ticker: string, novoPreco: number): Promise<{ ok: boolean; mensagem: string }> {
   if (!(novoPreco > 0)) return { ok: false, mensagem: "Informe um preço maior que zero." };
   try {
-    const r = await query<{ ticker: string }>("update carteira set preco_medio = $2 where ticker = $1 returning ticker", [ticker, novoPreco]);
+    const { id: dono } = await usuarioOuErro();
+    const r = await query<{ ticker: string }>(
+      "update carteira set preco_medio = $2 where ticker = $1 and usuario_id is not distinct from $3 returning ticker",
+      [ticker, novoPreco, dono],
+    );
     if (!r[0]) return { ok: false, mensagem: `${ticker} não está na carteira.` };
     revalidatePath("/carteira");
     revalidatePath("/");

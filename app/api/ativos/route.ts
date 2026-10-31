@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { usuarioAtual } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { lerCache } from "@/lib/mercado";
 
@@ -11,6 +12,7 @@ type Ativo = { ticker: string; nome: string | null; tipo: string | null; logo: s
  * que estão na tabela pública do Fundamentus (guardada pelo garimpo), que são analisados na hora ao abrir.
  */
 export async function GET() {
+  if (!(await usuarioAtual())) return NextResponse.json({ erro: "Entre com sua conta Google." }, { status: 401 });
   const lista: Ativo[] = [];
   try {
     const linhas = await query<Omit<Ativo, "analisado">>(

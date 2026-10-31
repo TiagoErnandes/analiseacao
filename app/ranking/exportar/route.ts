@@ -1,4 +1,5 @@
 // Baixa o ranking do dia: ?formato=md (padrão, pronto para colar numa IA), json ou csv. ?baixar=1 salva como arquivo.
+import { usuarioAtual } from "@/lib/auth";
 import { montarRanking, rankingCsv, rankingMarkdown } from "@/lib/exportar";
 
 export const dynamic = "force-dynamic";
@@ -6,7 +7,9 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const formato = url.searchParams.get("formato") ?? "md";
-  const e = await montarRanking();
+  const usuario = await usuarioAtual();
+  if (!usuario) return new Response("Entre com sua conta Google.", { status: 401 });
+  const e = await montarRanking(usuario);
   const [corpo, tipo, ext] =
     formato === "json"
       ? [JSON.stringify(e, null, 2), "application/json", "json"]

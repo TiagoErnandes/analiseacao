@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { brl, dataBr, dinheiro, num, pct } from "@/lib/format";
 import { carregarPainel, historicoDe } from "@/lib/painel";
+import { exigirUsuario } from "@/lib/auth";
 import { query, type Analise } from "@/lib/db";
 import { Logo } from "../../Logo";
 import { TipoAtivo } from "../../TipoAtivo";
@@ -40,10 +41,12 @@ function Indicador({ rotulo, valor, dica }: { rotulo: string; valor: React.React
 
 export default async function AcaoPage({ params }: Params) {
   const ticker = (await params).ticker.toUpperCase();
-  const { rel, porTicker, posicoes } = await carregarPainel();
+  const usuario = await exigirUsuario();
+  const { rel, porTicker, posicoes } = await carregarPainel(usuario);
   let a: Analise | undefined = porTicker.get(ticker);
   if (!a) {
     [a] = await query<Analise>("select * from analises where ticker = $1 order by data desc limit 1", [ticker]);
+    if (a) a = { ...a, na_carteira: posicoes.some((p) => p.ticker === ticker) };
   }
   // Fora da lista: analisa na hora (mesmo cálculo, sem IA, não entra no ranking)
   const avulso = !a;
@@ -105,9 +108,10 @@ export default async function AcaoPage({ params }: Params) {
         <div className="flex flex-col gap-3 rounded-xl border border-[#3987e5]/30 bg-[#3987e5]/5 p-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm leading-relaxed text-suave">
             <b className="text-texto">{a.ticker} não está na sua lista.</b> Esta análise foi feita agora, com o mesmo cálculo de preço teto
-            e qualidade, mas sem a nota da IA. Para ele ganhar nota da IA, histórico e entrar no ranking, acompanhe na análise diária.
+            e qualidade, mas sem a nota da IA. Para ele ganhar nota da IA, histórico e entrar no ranking,{" "}
+            {usuario.admin ? "acompanhe na análise diária." : "lance uma compra dele na sua carteira: os ativos das carteiras entram na análise diária."}
           </p>
-          <BotaoAcompanhar ticker={a.ticker} jaAcompanha={jaAcompanha} />
+          {usuario.admin && <BotaoAcompanhar ticker={a.ticker} jaAcompanha={jaAcompanha} />}
         </div>
       )}
 
