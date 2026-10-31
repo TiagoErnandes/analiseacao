@@ -14,6 +14,8 @@ import { Constancia } from "./Constancia";
 import { Alertas, Cartao, Nota, ReguaTeto, Score, Sinal, Variacao } from "../../ui";
 import { GraficoHistorico } from "./GraficoHistorico";
 import { GraficoCotacao } from "./GraficoCotacao";
+import { BotaoAcompanhar } from "./BotaoAcompanhar";
+import { analisarAvulso } from "@/lib/analise";
 import { Dica } from "../../ui";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +45,13 @@ export default async function AcaoPage({ params }: Params) {
   if (!a) {
     [a] = await query<Analise>("select * from analises where ticker = $1 order by data desc limit 1", [ticker]);
   }
+  // Fora da lista: analisa na hora (mesmo cálculo, sem IA, não entra no ranking)
+  const avulso = !a;
+  if (!a) a = (await analisarAvulso(ticker)) ?? undefined;
   if (!a) notFound();
+  const jaAcompanha = avulso
+    ? (await query<{ ativo: boolean }>("select ativo from universo where ticker = $1", [ticker]).catch(() => []))[0]?.ativo === true
+    : true;
 
   const [historico, exigido] = await Promise.all([historicoDe(ticker), yieldAtual()]);
   const yAcao = pct(exigido.acao, 1);
@@ -80,7 +88,7 @@ export default async function AcaoPage({ params }: Params) {
     { id: "indicadores", rotulo: "Indicadores" },
     ...(temConstancia ? [{ id: "dividendos", rotulo: tipo === "fii" ? "Rendimentos" : "Lucros e dividendos" }] : []),
     ...(pos ? [{ id: "posicao", rotulo: "Minha posição" }] : []),
-    { id: "historico", rotulo: "Histórico" },
+    ...(avulso ? [] : [{ id: "historico", rotulo: "Histórico" }]),
   ];
 
   return (
@@ -92,6 +100,16 @@ export default async function AcaoPage({ params }: Params) {
         <span className="text-fraco">/</span>
         <span className="text-texto">{a.ticker}</span>
       </nav>
+
+      {avulso && (
+        <div className="flex flex-col gap-3 rounded-xl border border-[#3987e5]/30 bg-[#3987e5]/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm leading-relaxed text-suave">
+            <b className="text-texto">{a.ticker} não está na sua lista.</b> Esta análise foi feita agora, com o mesmo cálculo de preço teto
+            e qualidade, mas sem a nota da IA. Para ele ganhar nota da IA, histórico e entrar no ranking, acompanhe na análise diária.
+          </p>
+          <BotaoAcompanhar ticker={a.ticker} jaAcompanha={jaAcompanha} />
+        </div>
+      )}
 
       <section className="cartao flex flex-col gap-5 p-5 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-4">
@@ -105,7 +123,7 @@ export default async function AcaoPage({ params }: Params) {
               {ehDoDia && <span className="rounded bg-marca/15 px-1.5 py-0.5 text-[10px] font-semibold text-marca">AÇÃO DO DIA</span>}
             </div>
             <p className="text-sm text-suave">{a.nome}</p>
-            <p className="text-xs text-fraco">{a.setor} · análise de {dataBr(a.data)}</p>
+            <p className="text-xs text-fraco">{a.setor} · {avulso ? "analisado agora, sem IA" : `análise de ${dataBr(a.data)}`}</p>
           </div>
         </div>
         <div className="flex items-end gap-6">
@@ -181,7 +199,7 @@ export default async function AcaoPage({ params }: Params) {
               <div><p className="rotulo mb-1">Qualidade</p><Nota v={a.qualidade} /></div>
               <div><p className="rotulo mb-1">Sinal</p><Sinal r={a.recomendacao} /></div>
             </div>
-            <p className="text-sm leading-relaxed">{a.resumo_ia ?? "Sem comentário da IA nesta análise."}</p>
+            <p className="text-sm leading-relaxed">{a.resumo_ia ?? (avulso ? "Ativo fora da lista: analisado só pelo cálculo. A IA comenta quando ele entrar na análise diária." : "Sem comentário da IA nesta análise.")}</p>
             {a.riscos_ia && (
               <p className="rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-200/90">
                 <b>Principal risco:</b> {a.riscos_ia}
@@ -265,9 +283,11 @@ export default async function AcaoPage({ params }: Params) {
         </Cartao>
       )}
 
-      <Cartao titulo="Histórico das análises: cotação × preço teto" id="historico">
-        <GraficoHistorico pontos={[...historico].reverse()} />
-      </Cartao>
+      {!avulso && (
+        <Cartao titulo="Histórico das análises: cotação × preço teto" id="historico">
+          <GraficoHistorico pontos={[...historico].reverse()} />
+        </Cartao>
+      )}
 
       {historico.length > 0 && (
         <Cartao titulo="Histórico das análises">

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Logo } from "./Logo";
 import { TipoAtivo } from "./TipoAtivo";
 
-type Ativo = { ticker: string; nome: string | null; tipo: string | null; logo: string | null };
+type Ativo = { ticker: string; nome: string | null; tipo: string | null; logo: string | null; analisado?: boolean };
 
 const semAcento = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
@@ -47,7 +47,9 @@ export function BuscaAtivo() {
       .map((a) => {
         const t = a.ticker.toLowerCase();
         const n = semAcento(a.nome ?? "");
-        const pontos = t === q ? 0 : t.startsWith(q) ? 1 : n.startsWith(q) ? 2 : t.includes(q) || n.includes(q) ? 3 : 9;
+        const base = t === q ? 0 : t.startsWith(q) ? 1 : n.startsWith(q) ? 2 : t.includes(q) || n.includes(q) ? 3 : 9;
+        // Os já analisados aparecem antes dos que serão analisados na hora
+        const pontos = base === 9 ? 9 : base + (a.analisado === false ? 0.5 : 0);
         return { a, pontos };
       })
       .filter((r) => r.pontos < 9)
@@ -119,13 +121,14 @@ export function BuscaAtivo() {
                     <span className="font-semibold">{a.ticker}</span>
                     <span className="min-w-0 flex-1 truncate text-xs text-suave">{a.nome}</span>
                     <TipoAtivo tipo={a.tipo} />
+                    {a.analisado === false && <span className="whitespace-nowrap text-[10px] text-fraco">analisa na hora</span>}
                   </button>
                 </li>
               ))}
             </ul>
           ) : (
             <p className="px-3 py-3 text-xs text-suave">
-              {ativos?.length ? "Nenhum ativo analisado com esse nome." : "Carregando..."} Enter abre <b className="text-texto">{texto.trim().toUpperCase()}</b>.
+              {ativos?.length ? "Não está na lista." : "Carregando..."} Enter busca <b className="text-texto">{texto.trim().toUpperCase()}</b> e analisa na hora (ações e FIIs da B3 ou stocks dos EUA).
             </p>
           )}
         </div>
