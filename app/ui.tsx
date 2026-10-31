@@ -2,9 +2,21 @@
 import type { ReactNode } from "react";
 import { brl, num, pctSinal } from "@/lib/format";
 
-export function Cartao({ titulo, acao, children, className = "" }: { titulo?: ReactNode; acao?: ReactNode; children: ReactNode; className?: string }) {
+export function Cartao({
+  titulo,
+  acao,
+  children,
+  className = "",
+  id,
+}: {
+  titulo?: ReactNode;
+  acao?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  id?: string;
+}) {
   return (
-    <section className={`cartao ${className}`}>
+    <section id={id} className={`cartao scroll-mt-32 ${className}`}>
       {(titulo || acao) && (
         <div className="flex items-center justify-between gap-3 border-b border-borda px-4 py-3">
           {titulo && <h2 className="text-sm font-semibold">{titulo}</h2>}
@@ -113,3 +125,24 @@ export function Vazio({ children }: { children: ReactNode }) {
   return <div className="cartao p-8 text-center text-sm text-suave">{children}</div>;
 }
 
+
+/** Ícone (i) com explicação ao passar o mouse ou focar com o teclado. */
+export function Dica({ texto }: { texto: string }) {
+  return (
+    <span className="group/dica relative inline-flex normal-case tracking-normal">
+      <span
+        tabIndex={0}
+        aria-label={texto}
+        className="grid h-3.5 w-3.5 cursor-help place-items-center rounded-full border border-fraco/60 text-[9px] font-bold leading-none text-fraco outline-none hover:border-suave hover:text-suave focus:border-marca"
+      >
+        i
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 w-52 -translate-x-1/2 rounded-lg border border-borda bg-fundo px-3 py-2 text-[11px] font-normal leading-snug text-texto opacity-0 shadow-xl transition group-hover/dica:opacity-100 group-focus-within/dica:opacity-100"
+      >
+        {texto}
+      </span>
+    </span>
+  );
+}

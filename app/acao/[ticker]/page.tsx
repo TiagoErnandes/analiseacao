@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { brl, dataBr, num, pct } from "@/lib/format";
+import { brl, dataBr, dinheiro, num, pct } from "@/lib/format";
 import { carregarPainel, historicoDe } from "@/lib/painel";
 import { query, type Analise } from "@/lib/db";
 import { Logo } from "../../Logo";
@@ -13,6 +13,8 @@ import type { ConsistenciaDividendos } from "@/lib/valuation";
 import { Constancia } from "./Constancia";
 import { Alertas, Cartao, Nota, ReguaTeto, Score, Sinal, Variacao } from "../../ui";
 import { GraficoHistorico } from "./GraficoHistorico";
+import { GraficoCotacao } from "./GraficoCotacao";
+import { Dica } from "../../ui";
 
 export const dynamic = "force-dynamic";
 
@@ -24,8 +26,11 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 
 function Indicador({ rotulo, valor, dica }: { rotulo: string; valor: React.ReactNode; dica?: string }) {
   return (
-    <div className="rounded-lg bg-painel2 p-3" title={dica}>
-      <p className="text-[10px] font-medium uppercase tracking-wider text-fraco">{rotulo}</p>
+    <div className="rounded-lg bg-painel2 p-3 transition hover:bg-painel2/70 hover:ring-1 hover:ring-borda">
+      <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-fraco">
+        {rotulo}
+        {dica && <Dica texto={dica} />}
+      </p>
       <div className="mt-1 text-base font-semibold tabular-nums">{valor}</div>
     </div>
   );
@@ -67,10 +72,26 @@ export default async function AcaoPage({ params }: Params) {
     proventosAnunciados?: ProventoAnunciado[];
   };
   const ehDoDia = rel && (rel.acao_do_dia_carteira === ticker || rel.acao_do_dia_geral === ticker);
+  const moeda = a.moeda ?? "BRL";
+  const temConstancia = tipo === "acao" || tipo === "fii";
+  const secoes = [
+    { id: "grafico", rotulo: "Gráfico" },
+    { id: "valuation", rotulo: "Preço teto e IA" },
+    { id: "indicadores", rotulo: "Indicadores" },
+    ...(temConstancia ? [{ id: "dividendos", rotulo: tipo === "fii" ? "Rendimentos" : "Lucros e dividendos" }] : []),
+    ...(pos ? [{ id: "posicao", rotulo: "Minha posição" }] : []),
+    { id: "historico", rotulo: "Histórico" },
+  ];
 
   return (
     <div className="space-y-5">
-      <Link href="/ranking" className="text-xs text-suave hover:text-texto">← Ranking</Link>
+      <nav aria-label="Caminho" className="flex items-center gap-1.5 text-xs text-suave">
+        <Link href="/" className="hover:text-texto">Painel</Link>
+        <span className="text-fraco">/</span>
+        <Link href="/ranking" className="hover:text-texto">Ranking</Link>
+        <span className="text-fraco">/</span>
+        <span className="text-texto">{a.ticker}</span>
+      </nav>
 
       <section className="cartao flex flex-col gap-5 p-5 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-4">
@@ -90,7 +111,7 @@ export default async function AcaoPage({ params }: Params) {
         <div className="flex items-end gap-6">
           <div>
             <p className="rotulo">Cotação</p>
-            <p className="text-3xl font-semibold tabular-nums tracking-tight">{brl(a.preco)}</p>
+            <p className="text-3xl font-semibold tabular-nums tracking-tight">{dinheiro(a.preco, moeda)}</p>
             <p className="text-sm"><Variacao v={a.variacao_dia} casas={2} seta /> <span className="text-xs text-fraco">no dia</span></p>
           </div>
           <div>
@@ -100,12 +121,27 @@ export default async function AcaoPage({ params }: Params) {
         </div>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-3">
+      <nav
+        aria-label="Seções"
+        className="sticky top-[97px] z-10 flex gap-1 overflow-x-auto rounded-xl border border-borda bg-fundo/90 p-1 text-sm backdrop-blur md:top-[57px]"
+      >
+        {secoes.map((s) => (
+          <a key={s.id} href={`#${s.id}`} className="whitespace-nowrap rounded-md px-3 py-1.5 text-suave transition hover:bg-painel2 hover:text-texto">
+            {s.rotulo}
+          </a>
+        ))}
+      </nav>
+
+      <Cartao titulo={`Cotação de ${a.ticker}`} id="grafico">
+        <GraficoCotacao ticker={a.ticker} tipo={tipo} moeda={moeda} teto={a.preco_teto} precoMedio={pos?.preco_medio ?? null} />
+      </Cartao>
+
+      <section id="valuation" className="grid scroll-mt-32 gap-4 lg:grid-cols-3">
         <Cartao titulo="Preço teto" className="lg:col-span-1">
           <div className="space-y-4 p-4">
             <div className="flex items-end justify-between">
               <div>
-                <p className="text-3xl font-semibold tabular-nums">{brl(a.preco_teto)}</p>
+                <p className="text-3xl font-semibold tabular-nums">{dinheiro(a.preco_teto, moeda)}</p>
                 <p className="text-xs text-suave">{metodo ?? "Sem dados suficientes"}</p>
               </div>
               <div className="text-right">
@@ -156,7 +192,7 @@ export default async function AcaoPage({ params }: Params) {
         </Cartao>
       </section>
 
-      <Cartao titulo="Indicadores">
+      <Cartao titulo="Indicadores" id="indicadores">
         <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-6">
           {tipo === "fii" ? (
             <>
@@ -204,7 +240,8 @@ export default async function AcaoPage({ params }: Params) {
         </div>
       </Cartao>
 
-      {(tipo === "acao" || tipo === "fii") && (
+      {temConstancia && (
+        <div id="dividendos" className="scroll-mt-32">
         <Constancia
           lucros={extras.lucros10a ?? null}
           dividendos={extras.dividendos10a ?? null}
@@ -212,13 +249,14 @@ export default async function AcaoPage({ params }: Params) {
           proventos={extras.proventosAnunciados ?? []}
           ehAcao={tipo === "acao"}
         />
+        </div>
       )}
 
       {pos && (
-        <Cartao titulo="Minha posição" acao={<Link href="/carteira" className="text-xs text-marca hover:underline">Editar</Link>}>
+        <Cartao titulo="Minha posição" id="posicao" acao={<Link href="/carteira" className="text-xs text-marca hover:underline">Editar</Link>}>
           <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-6">
             <Indicador rotulo="Quantidade" valor={pos.quantidade} />
-            <Indicador rotulo="Preço médio" valor={brl(pos.preco_medio)} />
+            <Indicador rotulo="Preço médio" valor={dinheiro(pos.preco_medio, moeda)} />
             <Indicador rotulo="Posição" valor={brl(pos.valor)} />
             <Indicador rotulo="Rentabilidade" valor={<Variacao v={pos.rentabilidade} />} />
             <Indicador rotulo="Peso na carteira" valor={pct(pos.peso)} />
@@ -227,7 +265,7 @@ export default async function AcaoPage({ params }: Params) {
         </Cartao>
       )}
 
-      <Cartao titulo="Cotação × preço teto">
+      <Cartao titulo="Histórico das análises: cotação × preço teto" id="historico">
         <GraficoHistorico pontos={[...historico].reverse()} />
       </Cartao>
 
