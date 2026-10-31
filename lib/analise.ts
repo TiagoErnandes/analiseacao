@@ -10,7 +10,7 @@ import { alertasDaAnalise } from "./alertas";
 import { migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, tipoDeSetor, type Qualidade } from "./qualidade";
 import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, scoreFinal, type Indicadores } from "./valuation";
-import { juroReal, yieldExigido, type YieldExigido } from "./juros";
+import { juroReal, yieldAtual, yieldExigido, type YieldExigido } from "./juros";
 import {
   atualizarDocumentosCvm, atualizarLucrosCvm, documentosRecentes, historicoLucros, infoB3, proventosRecentes,
   type Documento, type HistoricoLucro, type ProventoAnunciado,
@@ -689,4 +689,104 @@ export async function rodarAnalise(origem: "agendador" | "botao" | "manual") {
       if (execucaoAtual === reserva.id) execucaoAtual = null;
     });
   return { id: reserva.id, termino };
+}
+
+/** Códigos da B3 (ações, units, FIIs, ETFs e BDRs): 4 letras + 1 ou 2 dígitos. */
+const CODIGO_B3 = /^[A-Z]{4}\d{1,2}$/;
+/** Códigos dos EUA (stocks e ETFs/REITs de lá): 1 a 5 letras, com classe opcional (BRK.B). */
+const CODIGO_EUA = /^[A-Z]{1,5}(\.[A-Z])?$/;
+
+/**
+ * Análise na hora de um ativo que não está na sua lista (busca do topo): mesmos cálculos da análise diária
+ * (preço teto, qualidade, score e sinal), sem IA, sem entrar no ranking. Guardada 6 horas.
+ * Devolve null se nenhuma fonte conhece o código.
+ */
+export async function analisarAvulso(tickerBruto: string): Promise<Analise | null> {
+  const ticker = tickerBruto.toUpperCase();
+  const b3 = CODIGO_B3.test(ticker);
+  if (!b3 && !CODIGO_EUA.test(ticker)) return null;
+  const chave = `avulso:${ticker}`;
+  const c = await lerCache<Analise | null>(chave);
+  if (c && c.idadeDias < 0.25) return c.dados;
+
+  const hoje = hojeSaoPaulo();
+  let d: DadosAcao;
+  try {
+    d = b3 ? await buscarAcao(ticker) : await buscarExterior(ticker, "stock", await cotacaoDolar());
+  } catch {
+    await salvarCache(chave, null); // código que não existe: não pergunta às fontes de novo a cada clique
+    return null;
+  }
+  // BDR: 4 letras + 32/33/34/35, não está no Fundamentus
+  if (b3 && /3[2-5]$/.test(ticker) && !d.fundamentos && !d.fii) d = { ...d, tipo: "bdr" };
+  if (d.preco == null) {
+    await salvarCache(chave, null);
+    return null;
+  }
+
+  const exigido = await yieldAtual();
+  // Lucro de 10 anos (CVM), documentos e proventos anunciados (B3): só ações, e qualquer um pode faltar
+  const info = d.tipo === "acao" ? await infoB3(ticker).catch(() => null) : null;
+  const cd = info?.codigoCvm ?? null;
+  const [lucro, documentos] = cd
+    ? await Promise.all([
+        historicoLucros([cd]).then((m) => m.get(cd) ?? null).catch(() => null),
+        documentosRecentes([cd]).then((m) => m.get(cd) ?? []).catch(() => [] as Documento[]),
+      ])
+    : [null, [] as Documento[]];
+  const { ind, qual } = avaliar(d, exigido, lucro);
+  const div10 = d.tipo === "acao" || d.tipo === "fii" ? consistenciaDividendos(d.proventos, new Date(), d.tipo === "fii") : null;
+  const alertas = [...ind.alertas, ...qual.alertas];
+  const linha = { tipo: d.tipo, margem: ind.margem, qualidade: qual.nota, alertas };
+  const setor =
+    d.tipo === "fii"
+      ? `FII ${d.fii?.segmento ?? "sem segmento"}`
+      : d.tipo === "acao"
+        ? (d.fundamentos?.subsetor ?? d.fundamentos?.setor ?? "Sem setor")
+        : (infoTipo(d.tipo)?.nome ?? "Outros");
+  const a: Analise = {
+    data: hoje,
+    ticker,
+    nome: d.nome,
+    logo: d.logo,
+    preco: d.preco,
+    variacao_dia: d.variacaoDia,
+    lpa: d.lpa,
+    vpa: d.vpa,
+    dpa_12m: ind.dpa12m,
+    dpa_medio: ind.dpaMedio,
+    dy_12m: ind.dy12m,
+    roe: d.roe,
+    teto_bazin: ind.bazin,
+    teto_graham: ind.graham,
+    preco_teto: ind.teto,
+    margem: ind.margem,
+    nota_ia: null,
+    recomendacao: sinalPorCalculo(linha),
+    resumo_ia: null,
+    riscos_ia: null,
+    score: Math.round(scoreFinal({ margem: ind.margem, qualidade: qual.nota, notaIa: null, faltaParaIdeal: null, balancear: false }) * fatorScore(linha)),
+    na_carteira: false,
+    qualidade: qual.nota,
+    setor,
+    alertas: alertas.length ? alertas.join("; ") : null,
+    tipo: d.tipo,
+    moeda: d.moeda,
+    cambio: d.cambio,
+    indicadores:
+      d.tipo === "fii"
+        ? { ...d.fii, dividendos10a: div10 }
+        : d.tipo === "acao"
+          ? {
+              ...d.fundamentos,
+              lucros10a: lucro,
+              dividendos10a: div10,
+              documentosCvm: documentos,
+              proventosAnunciados: proventosRecentes(info?.proventos ?? [], hoje),
+              yieldExigido: exigido.acao,
+            }
+          : (d.historico as Record<string, unknown> | null),
+  };
+  await salvarCache(chave, a);
+  return a;
 }
