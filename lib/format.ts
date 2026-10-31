@@ -27,3 +27,7 @@ export const dataCurta = (iso: string) => {
   const [, m, d] = iso.split("-");
   return `${d}/${m}`;
 };
+
+/** Valor na moeda do ativo: R$ 12,30 / US$ 189,71. */
+export const dinheiro = (v: number | null | undefined, moeda: string | null | undefined = "BRL") =>
+  v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: moeda || "BRL" });

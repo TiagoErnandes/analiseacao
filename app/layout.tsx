@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { Navegacao } from "./Navegacao";
+import { BuscaAtivo } from "./BuscaAtivo";
+import { FaixaIndices } from "./FaixaIndices";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -30,16 +32,41 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR">
       <body className="min-h-screen">
+        <FaixaIndices />
         <header className="sticky top-0 z-20 border-b border-borda bg-fundo/85 backdrop-blur">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
             <Marca />
-            <Navegacao />
+            <div className="order-last w-full md:order-none md:ml-4 md:w-auto md:max-w-md md:flex-1">
+              <BuscaAtivo />
+            </div>
+            <div className="ml-auto">
+              <Navegacao />
+            </div>
           </div>
         </header>
         <main className="mx-auto max-w-7xl px-4 py-6 sm:py-8">{children}</main>
-        <footer className="mx-auto max-w-7xl border-t border-borda px-4 py-6 text-xs leading-relaxed text-fraco">
-          Ferramenta de apoio à decisão para investimento de longo prazo. Não é recomendação de compra ou venda.
-          Dados: Yahoo Finance e Fundamentus (podem ter atraso). Análise qualitativa gerada por IA.
+        <footer className="mt-6 border-t border-borda">
+          <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 text-xs leading-relaxed text-fraco sm:grid-cols-[1.4fr_1fr_1fr]">
+            <div className="space-y-2">
+              <Marca />
+              <p className="max-w-sm">
+                Ferramenta de apoio à decisão para investimento de longo prazo (previdência e buy and hold). Não é recomendação de compra ou venda.
+              </p>
+            </div>
+            <div>
+              <p className="rotulo mb-2">Navegação</p>
+              <ul className="space-y-1.5">
+                <li><Link href="/" className="hover:text-texto">Painel</Link></li>
+                <li><Link href="/ranking" className="hover:text-texto">Ranking</Link></li>
+                <li><Link href="/carteira" className="hover:text-texto">Carteira</Link></li>
+                <li><Link href="/placar" className="hover:text-texto">Placar</Link></li>
+              </ul>
+            </div>
+            <div>
+              <p className="rotulo mb-2">Fontes de dados</p>
+              <p>Cotações: Yahoo Finance (atraso de até 15 min). Balanços: Fundamentus e CVM. Proventos: B3. Juro real: Tesouro Transparente. Análise qualitativa gerada por IA.</p>
+            </div>
+          </div>
         </footer>
       </body>
     </html>
