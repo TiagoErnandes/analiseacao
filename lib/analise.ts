@@ -6,6 +6,7 @@ import { analisarComIa, selecionarParaIa, type CustoIa, type LinhaParaIa, type M
 import { buscarAcao, lerCache, salvarCache, buscarExterior, cotacaoDolar, usoFontes, zerarUsoFontes, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
 import { garimpar } from "./garimpo";
+import { precosRendaFixa } from "./rendafixa";
 import { alertasDaAnalise } from "./alertas";
 import { idDoDono, migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, tipoDeSetor, type Qualidade } from "./qualidade";
@@ -211,7 +212,8 @@ function decisaoPorCalculo(
   };
 }
 
-export async function executarAnalise(origem: "agendador" | "botao" | "manual" = "manual") {
+/** `forcarModo`: roda neste modo da IA em vez do escolhido no painel (as outras contas só rodam no grátis). */
+export async function executarAnalise(origem: "agendador" | "botao" | "manual" = "manual", forcarModo?: ModoIa) {
   custoDaExecucao = null;
   economiaDaExecucao = 0;
   zerarUsoFontes();
@@ -222,10 +224,14 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   // A IA, os pesos e a "melhor compra na sua carteira" seguem a carteira do dono do site.
   // Os ativos das carteiras dos outros usuários também são analisados (preço teto, qualidade e nota).
   const dono = await idDoDono();
-  const [todasCarteiras, universo] = await Promise.all([
-    query<Carteira & { usuario_id: number | null }>("select usuario_id, ticker, quantidade, preco_medio, tipo from carteira"),
+  const [comRendaFixa, universo] = await Promise.all([
+    query<Carteira & { usuario_id: number | null }>(
+      "select usuario_id, ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao::text from carteira",
+    ),
     query<{ ticker: string }>("select ticker from universo where ativo"),
   ]);
+  // Renda fixa e outros bens não têm cotação nem análise: só entram na foto do patrimônio
+  const todasCarteiras = comRendaFixa.filter((c) => c.tipo !== "renda_fixa");
   const carteira = todasCarteiras.filter((c) => c.usuario_id === dono);
   const minha = new Map(carteira.map((c) => [c.ticker.toUpperCase(), c]));
   const tipoDe = new Map<string, Carteira["tipo"]>();
@@ -400,7 +406,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   const paraIa: LinhaParaIa[] = linhas
     .map(({ logo, variacao_dia, indicadores, pontos_fortes, nome, ...resto }) => resto)
     .sort((a, b) => b.score_sem_ia - a.score_sem_ia);
-  const modo = await modoIa();
+  const modo = forcarModo ?? (await modoIa());
   const reaproveitadas = new Map<string, SaidaIa["acoes"][number]>();
   let ia: SaidaIa;
   let custo: CustoIa | null = null;
@@ -562,6 +568,13 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
     f.investido += c.quantidade * c.preco_medio * d.cambio;
     f.patrimonio += c.quantidade * (d.preco ?? 0) * d.cambio;
   }
+  const precoRf = await precosRendaFixa(comRendaFixa);
+  for (const c of comRendaFixa.filter((x) => x.tipo === "renda_fixa")) {
+    const f = fotos.get(c.usuario_id) ?? { investido: 0, patrimonio: 0 };
+    fotos.set(c.usuario_id, f);
+    f.investido += c.quantidade * c.preco_medio;
+    f.patrimonio += c.quantidade * (precoRf.get(c.ticker) ?? 1);
+  }
   if (!fotos.has(dono)) fotos.set(dono, { investido: 0, patrimonio: 0 });
   for (const [usuario, f] of fotos) {
     await query(
@@ -646,10 +659,10 @@ export async function ultimaExecucao(): Promise<Execucao | null> {
  * que usou IA começou há mais de INTERVALO_MINIMO_MIN (a análise grátis não conta e não tem espera).
  * Devolve o id, ou um motivo quando não pode rodar.
  */
-async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id: number } | { motivo: string }> {
+async function reservar(origem: "agendador" | "botao" | "manual", forcarModo?: ModoIa): Promise<{ id: number } | { motivo: string }> {
   await garantirTabela();
   await fecharTravadas();
-  const modo = await modoIa();
+  const modo = forcarModo ?? (await modoIa());
   const intervalo = origem === "botao" && modo !== "sem_ia" && modo !== "gratis" && modo !== "gemini_busca" ? INTERVALO_MINIMO_MIN : 0;
   const [r] = await query<{ id: number }>(
     `insert into execucoes (origem, status)
@@ -677,14 +690,14 @@ async function reservar(origem: "agendador" | "botao" | "manual"): Promise<{ id:
 }
 
 /** Roda a análise registrando início, fim e erro. Usado pelo agendador, pelo botão e pelo `npm run analise`. */
-export async function rodarAnalise(origem: "agendador" | "botao" | "manual") {
-  const reserva = await reservar(origem);
+export async function rodarAnalise(origem: "agendador" | "botao" | "manual", forcarModo?: ModoIa) {
+  const reserva = await reservar(origem, forcarModo);
   if ("motivo" in reserva) return reserva;
 
   // Sinal de vida: se o processo morrer no meio, o painel percebe em poucos minutos e libera o botão
   execucaoAtual = reserva.id;
   const sinal = setInterval(() => void query("update execucoes set batida = now() where id = $1", [reserva.id]).catch(() => {}), 30_000);
-  const termino = executarAnalise(origem)
+  const termino = executarAnalise(origem, forcarModo)
     .then(() =>
       (async () =>
         query("update execucoes set status = 'ok', fim = now(), custo_usd = $2, modelo = $3, dolar = $4, economia_usd = $5 where id = $1", [

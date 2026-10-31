@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { registrarOperacao } from "./carteira/actions";
-import { TIPOS, infoTipo, type Tipo } from "@/lib/tipos";
+import { TIPOS_MERCADO as TIPOS, infoTipo, type Tipo } from "@/lib/tipos";
 
 export type PosicaoLancamento = { ticker: string; tipo: Tipo | null; quantidade: number; preco_medio: number; preco: number | null };
 

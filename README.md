@@ -30,6 +30,7 @@ Todo dia útil às 7h o agendador:
    - **Painel**: patrimônio, rentabilidade, renda passiva e DY da carteira, ações do dia, cenário, simulador de aporte, alocação por setor e pontos de atenção.
    - **Ranking**: as ações analisadas com filtros, busca, ordenação por qualquer coluna e o comentário da IA.
    - **Carteira**: **registro de compras e vendas** (o preço médio é recalculado sozinho), histórico das operações, correção à mão ou **importação da B3** (arquivos de Posição e Negociação da Área do Investidor; o preço médio é calculado pelas negociações).
+   - **Renda fixa e outros bens** (CDB, Tesouro, caixa, imóvel, negócio próprio): cadastrados com valor aplicado, data e % do CDI; o valor cresce pelo CDI diário do Banco Central (0% = fica parado). Entram no patrimônio, na rentabilidade e na alocação, sem preço teto. `lib/rendafixa.ts`.
    - **Busca e índices no topo**: busca de ativos (atalho `/`), inclusive os que não estão na sua lista: a página do ativo faz a análise na hora (mesmo cálculo de preço teto e qualidade, sem IA, guardada 6 horas, sem entrar no ranking) e tem o botão "Acompanhar na análise diária" (tabela `universo`) e faixa com Ibovespa, dólar, euro, S&P 500, Nasdaq e Bitcoin (Yahoo, atualiza a cada 5 minutos).
    - **Gráfico de cotação** na página de cada ativo: períodos 1D, 5D, 1M, 6M, no ano, 1A, 5A e máximo, com linhas do preço teto e do seu preço médio, mínima e máxima do período e faixa de 52 semanas (Yahoo, guardado alguns minutos na memória). `lib/cotacao.ts`.
    - **Página de cada ação**: preço teto (Bazin e Graham), indicadores, análise da IA, lucro de cada ano, dividendos em 10 anos, fatos relevantes e proventos anunciados, sua posição e o histórico de cotação × preço teto.
@@ -45,6 +46,7 @@ cobre a lista, o garimpo e os ativos de todas as carteiras. A IA, os pesos da ca
 do relatório seguem a carteira do dono; para os outros, a melhor compra da carteira sai do ranking. O dono é o `ADMIN_EMAIL`
 (ou o primeiro login, se ficar vazio) e herda a carteira que já existia; só ele roda a análise na hora, troca o modo da IA,
 acompanha ativos novos na lista e recebe os alertas no celular. Sem as variáveis, nada muda: uma carteira só, sem login.
+As outras contas também podem clicar em "Rodar análise agora", mas sempre no modo grátis (Gemini) e no máximo uma vez a cada 30 minutos.
 Passo a passo das credenciais em [DEPLOY.md](DEPLOY.md#login-com-o-google-site-para-outras-pessoas). `lib/auth.ts`.
 
 ## Como colocar no ar

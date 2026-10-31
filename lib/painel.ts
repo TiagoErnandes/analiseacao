@@ -6,12 +6,14 @@ import { infoTipo } from "./tipos";
 import { proventosRecebidos } from "./proventos";
 import { compararDesde } from "./indices";
 import type { Usuario } from "./auth";
+import { precosRendaFixa } from "./rendafixa";
 
 /** Limite de concentração por setor de referência para previdência (a estratégia Balanceamento usa este). */
 export const LIMITE_SETOR = 0.3;
 
 export type Posicao = Carteira & {
   a: Analise | null;
+  preco_atual: number | null; // preço de hoje na moeda do ativo (na renda fixa, o fator do CDI)
   valor: number; // quantidade x preço atual, em reais
   investido: number; // quantidade x preço médio, em reais (ativos em dólar pelo câmbio de hoje)
   moeda: "BRL" | "USD";
@@ -25,7 +27,8 @@ export type Posicao = Carteira & {
 /** Carteira de um usuário (null = carteira original, ainda sem dono). */
 export async function carteiraDe(usuarioId: number | null) {
   return query<Carteira & { desde: string }>(
-    "select ticker, quantidade, preco_medio, tipo, criado_em::date::text as desde from carteira where usuario_id is not distinct from $1 order by ticker",
+    `select ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao::text, coalesce(data_aplicacao, criado_em::date)::text as desde
+       from carteira where usuario_id is not distinct from $1 order by ticker`,
     [usuarioId],
   );
 }
@@ -68,9 +71,11 @@ export async function carregarPainel(usuario: Usuario) {
     rel = { ...rel, acao_do_dia_carteira: m?.ticker ?? null, justificativa_carteira: m?.justificativa ?? "Sua carteira ainda está vazia. Lance a primeira compra na página Carteira." };
   }
 
+  const precoRf = await precosRendaFixa(carteira);
   const base = carteira.map((c) => {
-    const a = porTicker.get(c.ticker) ?? null;
-    const preco = a?.preco ?? null;
+    const rf = c.tipo === "renda_fixa";
+    const a = rf ? null : (porTicker.get(c.ticker) ?? null); // renda fixa não tem análise; o preço é o CDI acumulado
+    const preco = rf ? (precoRf.get(c.ticker) ?? 1) : (a?.preco ?? null);
     const moeda = a?.moeda ?? infoTipo(c.tipo)?.moeda ?? "BRL";
     const cambio = a?.cambio ?? 1;
     return {
@@ -78,6 +83,7 @@ export async function carregarPainel(usuario: Usuario) {
       a,
       moeda,
       cambio,
+      preco_atual: preco,
       valor: (preco != null ? c.quantidade * preco : c.quantidade * c.preco_medio) * cambio,
       investido: c.quantidade * c.preco_medio * cambio,
       rentabilidade: preco != null && c.preco_medio > 0 ? preco / c.preco_medio - 1 : null,
@@ -110,7 +116,7 @@ export async function carregarPainel(usuario: Usuario) {
 
   const setores = new Map<string, number>();
   for (const p of posicoes) {
-    const s = p.a?.setor ?? "Sem setor";
+    const s = p.tipo === "renda_fixa" ? "Renda fixa e outros" : (p.a?.setor ?? "Sem setor");
     setores.set(s, (setores.get(s) ?? 0) + p.valor);
   }
 

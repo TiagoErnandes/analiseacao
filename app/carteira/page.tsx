@@ -8,10 +8,11 @@ import { Cartao, Variacao } from "../ui";
 import { removerAtivo, salvarAtivo } from "./actions";
 import { ImportadorB3 } from "./ImportadorB3";
 import { FormLancamento } from "../Lancamento";
-import { TIPOS } from "@/lib/tipos";
+import { TIPOS_MERCADO as TIPOS } from "@/lib/tipos";
 import { TipoAtivo } from "../TipoAtivo";
 import { PrecoMedio } from "./PrecoMedio";
 import { ExportarCarteira } from "./ExportarCarteira";
+import { FormRendaFixa } from "./RendaFixa";
 import { exigirUsuario } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,10 @@ export default async function CarteiraPage() {
         </div>
       </Cartao>
 
+      <Cartao titulo="Renda fixa e outros bens">
+        <FormRendaFixa />
+      </Cartao>
+
       <Cartao titulo={<>Ativos <span className="ml-1 font-normal text-fraco">{posicoes.length}</span></>}>
         <div className="overflow-x-auto">
           <table className="tabela">
@@ -69,20 +74,36 @@ export default async function CarteiraPage() {
               {posicoes.map((p) => (
                 <tr key={p.ticker}>
                   <td>
-                    <Link href={`/acao/${p.ticker}`} className="flex items-center gap-2.5 font-medium hover:text-marca">
-                      <Logo ticker={p.ticker} src={p.a?.logo} />
-                      {p.ticker}
-                      <TipoAtivo tipo={p.a?.tipo} />
-                    </Link>
+                    {p.tipo === "renda_fixa" ? (
+                      <span className="flex items-center gap-2.5 font-medium">
+                        <Logo ticker={p.ticker} src={null} />
+                        {p.ticker}
+                        <TipoAtivo tipo="renda_fixa" />
+                      </span>
+                    ) : (
+                      <Link href={`/acao/${p.ticker}`} className="flex items-center gap-2.5 font-medium hover:text-marca">
+                        <Logo ticker={p.ticker} src={p.a?.logo} />
+                        {p.ticker}
+                        <TipoAtivo tipo={p.a?.tipo} />
+                      </Link>
+                    )}
                   </td>
-                  <td className="text-right">{p.quantidade}</td>
-                  <td className="text-right">
-                    <PrecoMedio ticker={p.ticker} preco={p.preco_medio} moeda={p.moeda} />
-                  </td>
-                  <td className="text-right">
-                    {p.a?.preco != null ? dinheiro(p.a.preco, p.moeda) : "—"}
-                    <p className="text-[11px]"><Variacao v={p.a?.variacao_dia} casas={2} /></p>
-                  </td>
+                  {p.tipo === "renda_fixa" ? (
+                    <td colSpan={3} className="text-right text-xs text-suave">
+                      {p.taxa_cdi ? `${Math.round(p.taxa_cdi * 1000) / 10}% do CDI` : "sem rendimento"}{p.data_aplicacao ? ` desde ${dataBr(p.data_aplicacao)}` : ""}
+                    </td>
+                  ) : (
+                    <>
+                      <td className="text-right">{p.quantidade}</td>
+                      <td className="text-right">
+                        <PrecoMedio ticker={p.ticker} preco={p.preco_medio} moeda={p.moeda} />
+                      </td>
+                      <td className="text-right">
+                        {p.a?.preco != null ? dinheiro(p.a.preco, p.moeda) : "—"}
+                        <p className="text-[11px]"><Variacao v={p.a?.variacao_dia} casas={2} /></p>
+                      </td>
+                    </>
+                  )}
                   <td className="text-right">{brl(p.investido)}</td>
                   <td className="text-right">{brl(p.valor)}</td>
                   <td className="text-right"><Variacao v={p.rentabilidade} /></td>
@@ -99,7 +120,6 @@ export default async function CarteiraPage() {
             <tfoot>
               <tr className="border-t border-borda bg-painel2 text-sm font-semibold tabular-nums">
                 <td className="px-3 py-2.5">Total</td>
-                <td />
                 <td />
                 <td />
                 <td />

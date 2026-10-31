@@ -20,17 +20,6 @@ import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } 
 
 export const dynamic = "force-dynamic";
 
-/** Para quem não é o dono: só mostra quando foi a última análise (rodar e escolher o modo da IA é do dono). */
-function StatusAnalise({ status, inicio }: { status: string | null; inicio: string | null }) {
-  if (!inicio) return null;
-  const quando = new Date(inicio).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
-  return (
-    <p className="text-xs text-fraco">
-      {status === "rodando" ? `Análise em andamento desde ${quando}` : `Última análise em ${quando}`} · roda sozinha às 7h em dias úteis
-    </p>
-  );
-}
-
 function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; justificativa: string | null }) {
   return (
     <div className="cartao relative overflow-hidden p-5">
@@ -82,10 +71,9 @@ export default async function Painel() {
   // Os alertas no celular vigiam a carteira do dono (Telegram/ntfy configurados no servidor)
   const alertas = usuario.admin ? await alertasRecentes() : [];
   const urgentes = alertas.filter((a) => a.nivel === "VENDER");
-  const botao = !usuario.admin ? (
-    <StatusAnalise status={exec?.status ?? null} inicio={exec?.inicio ?? null} />
-  ) : (
+  const botao = (
     <BotaoAnalise
+      somenteGratis={!usuario.admin}
       status={exec?.status ?? null}
       inicio={exec?.inicio ?? null}
       erro={exec?.erro ?? null}
@@ -100,15 +88,16 @@ export default async function Painel() {
   if (!rel) {
     return (
       <Vazio>
-        <p className="mb-4">Ainda não há análise. Ela roda sozinha às 7h em dias úteis{usuario.admin ? ", ou clique para rodar agora" : ""}.</p>
+        <p className="mb-4">Ainda não há análise. Ela roda sozinha às 7h em dias úteis, ou clique para rodar agora.</p>
         <div className="flex justify-center">{botao}</div>
       </Vazio>
     );
   }
 
-  const pesoIdeal = posicoes.length ? 1 / posicoes.length : 0;
+  const deMercado = posicoes.filter((p) => p.tipo !== "renda_fixa").length; // renda fixa fica fora do peso ideal
+  const pesoIdeal = deMercado ? 1 / deMercado : 0;
   const pesoSetor = Object.fromEntries(setores.map((s) => [s.nome, s.peso]));
-  const itensAporte: ItemAporte[] = posicoes.map((p) => ({
+  const itensAporte: ItemAporte[] = posicoes.filter((p) => p.tipo !== "renda_fixa").map((p) => ({
     ticker: p.ticker,
     logo: p.a?.logo ?? null,
     preco: p.a?.preco != null ? p.a.preco * p.cambio : null, // em reais
