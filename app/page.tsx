@@ -283,7 +283,7 @@ export default async function Painel() {
 
       {oportunidades.length > 0 && (
         <Cartao
-          titulo="Oportunidades fora da carteira (setores BESST)"
+          titulo="Oportunidades fora da carteira (BESST e FIIs)"
           acao={<Link href="/ranking" className="text-xs text-marca hover:underline">Ver ranking completo</Link>}
         >
           <ul className="divide-y divide-borda">

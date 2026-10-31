@@ -134,7 +134,7 @@ export function SimuladorAporte(props: Props) {
       {novas.length > 0 && (
         <label className="flex cursor-pointer items-center gap-2 text-sm text-suave">
           <input type="checkbox" checked={comNovas} onChange={(e) => setComNovas(e.target.checked)} className="accent-[#199e70]" />
-          Incluir oportunidades BESST fora da carteira
+          Incluir oportunidades fora da carteira (BESST e FIIs)
           <span className="text-xs text-fraco">({novas.map((n) => n.ticker).join(", ")})</span>
         </label>
       )}

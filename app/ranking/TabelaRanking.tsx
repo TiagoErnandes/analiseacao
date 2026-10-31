@@ -15,7 +15,7 @@ const FILTROS: { id: Filtro; rotulo: string }[] = [
   { id: "carteira", rotulo: "Na carteira" },
   { id: "comprar", rotulo: "Sinal Comprar" },
   { id: "abaixo", rotulo: "Abaixo do teto" },
-  { id: "besst", rotulo: "BESST" },
+  { id: "besst", rotulo: "BESST e FIIs" },
 ];
 
 type Coluna = { id: string; rotulo: string; valor: (a: Analise) => number | string | null; alinhar?: "right" | "center"; dica?: string };
