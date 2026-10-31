@@ -74,11 +74,13 @@ function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor, estrateg
       resto -= qtd * i.preco!;
     }
   }
-  // 2) A sobra vai uma ação por vez, revezando (as melhores primeiro), enquanto der para comprar
+  // 2) A sobra vai uma ação por vez, revezando (as melhores primeiro), enquanto der para comprar.
+  // Na Oportunidade a sobra fica só entre as escolhidas (senão uma ação de fora entra com 1 unidade de troco).
+  const recebemSobra = estrategia === "oportunidade" ? elegiveis.slice(0, TOP_OPORTUNIDADE) : elegiveis;
   let comprou = true;
   while (comprou) {
     comprou = false;
-    for (const i of elegiveis) {
+    for (const i of recebemSobra) {
       if (resto >= i.preco!) {
         compras.get(i.ticker)!.qtd += 1;
         resto -= i.preco!;
