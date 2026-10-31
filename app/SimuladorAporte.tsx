@@ -74,11 +74,13 @@ function calcular(valorAporte: number, { itens, pesoSetor, limiteSetor, estrateg
       resto -= qtd * i.preco!;
     }
   }
-  // 2) A sobra vai uma ação por vez, revezando (as melhores primeiro), enquanto der para comprar
+  // 2) A sobra vai uma ação por vez, revezando (as melhores primeiro), enquanto der para comprar.
+  // Na Oportunidade a sobra fica só entre as escolhidas (senão uma ação de fora entra com 1 unidade de troco).
+  const recebemSobra = estrategia === "oportunidade" ? elegiveis.slice(0, TOP_OPORTUNIDADE) : elegiveis;
   let comprou = true;
   while (comprou) {
     comprou = false;
-    for (const i of elegiveis) {
+    for (const i of recebemSobra) {
       if (resto >= i.preco!) {
         compras.get(i.ticker)!.qtd += 1;
         resto -= i.preco!;
@@ -132,7 +134,7 @@ export function SimuladorAporte(props: Props) {
       {novas.length > 0 && (
         <label className="flex cursor-pointer items-center gap-2 text-sm text-suave">
           <input type="checkbox" checked={comNovas} onChange={(e) => setComNovas(e.target.checked)} className="accent-[#199e70]" />
-          Incluir oportunidades fora da carteira
+          Incluir oportunidades fora da carteira (BESST e FIIs)
           <span className="text-xs text-fraco">({novas.map((n) => n.ticker).join(", ")})</span>
         </label>
       )}

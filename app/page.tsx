@@ -16,6 +16,7 @@ import { SeletorEstrategia } from "./SeletorEstrategia";
 import { AlertasVenda } from "./AlertasVenda";
 import { alertasRecentes } from "@/lib/alertas";
 import { exigirUsuario } from "@/lib/auth";
+import { ehBesst } from "@/lib/besst";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
 
 export const dynamic = "force-dynamic";
@@ -108,7 +109,7 @@ export default async function Painel() {
     setor: p.a?.setor ?? null,
   }));
   const novasAporte: ItemAporte[] = analises
-    .filter((a) => !a.na_carteira && a.recomendacao === "COMPRAR" && (a.margem ?? -1) > 0 && (a.qualidade ?? 0) >= 6 && a.preco)
+    .filter((a) => !a.na_carteira && ehBesst(a) && a.recomendacao === "COMPRAR" && (a.margem ?? -1) > 0 && (a.qualidade ?? 0) >= 6 && a.preco)
     .sort((x, y) => (y.score ?? 0) - (x.score ?? 0))
     .slice(0, estrategia.atual === "oportunidade" ? 5 : 3)
     .map((a) => ({
@@ -123,7 +124,7 @@ export default async function Painel() {
       nova: true,
     }));
   const oportunidades = analises
-    .filter((a) => !a.na_carteira && a.recomendacao === "COMPRAR" && (a.margem ?? -1) > 0)
+    .filter((a) => !a.na_carteira && ehBesst(a) && a.recomendacao === "COMPRAR" && (a.margem ?? -1) > 0)
     .sort((x, y) => (y.score ?? 0) - (x.score ?? 0))
     .slice(0, 5);
 
@@ -282,7 +283,7 @@ export default async function Painel() {
 
       {oportunidades.length > 0 && (
         <Cartao
-          titulo="Oportunidades fora da carteira"
+          titulo="Oportunidades fora da carteira (BESST e FIIs)"
           acao={<Link href="/ranking" className="text-xs text-marca hover:underline">Ver ranking completo</Link>}
         >
           <ul className="divide-y divide-borda">
