@@ -49,6 +49,9 @@ export function MeusAtivos({
         const comVar = itens.filter((p) => p.a?.variacao_dia != null);
         const pesoVar = comVar.reduce((s, p) => s + p.valor, 0);
         const variacao = pesoVar > 0 ? comVar.reduce((s, p) => s + p.a!.variacao_dia! * p.valor, 0) / pesoVar : null;
+        // DY do grupo ponderado pelo valor de cada posição (renda de 12 meses ÷ valor de hoje)
+        const renda = itens.reduce((s, p) => s + (p.renda12m ?? 0), 0);
+        const dyGrupo = valor > 0 && renda > 0 ? renda / valor : null;
         return (
           <details key={t.id} open className="cartao group">
             <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-8 gap-y-3 px-4 py-3">
@@ -56,11 +59,15 @@ export function MeusAtivos({
                 <span className="text-fraco transition group-open:rotate-90">›</span>
                 {t.nome}
               </span>
-              <span className="ml-auto grid grid-cols-2 gap-x-8 gap-y-2 text-right text-xs sm:grid-cols-5">
+              <span className="ml-auto grid grid-cols-3 gap-x-8 gap-y-2 text-right text-xs sm:grid-cols-6">
                 <span><span className="block text-fraco">Ativos</span><b className="text-sm">{itens.length}</b></span>
                 <span><span className="block text-fraco">Valor total</span><b className="text-sm tabular-nums">{brl(valor)}</b></span>
                 <span><span className="block text-fraco">Variação</span><b className="text-sm"><Variacao v={variacao} casas={2} seta /></b></span>
                 <span><span className="block text-fraco">Rentabilidade</span><b className="text-sm"><Variacao v={investido > 0 ? valor / investido - 1 : null} casas={2} /></b></span>
+                <span title="Dividendos dos últimos 12 meses ÷ valor de hoje, ponderado pelo tamanho de cada posição">
+                  <span className="block text-fraco">DY médio</span>
+                  <b className="text-sm tabular-nums text-alta">{pct(dyGrupo)}</b>
+                </span>
                 <span><span className="block text-fraco">% na carteira</span><b className="text-sm tabular-nums">{pct(patrimonio > 0 ? valor / patrimonio : null)}</b></span>
               </span>
             </summary>
@@ -68,7 +75,7 @@ export function MeusAtivos({
               <table className="tabela">
                 <thead>
                   <tr>
-                    <th>Ativo</th>
+                    <th className="sticky left-0 z-[1]">Ativo</th>
                     <th className="!text-right">Quant.</th>
                     <th className="!text-right">Preço médio</th>
                     <th className="!text-right">Preço atual</th>
@@ -77,6 +84,8 @@ export function MeusAtivos({
                     <th className="!text-right">Saldo</th>
                     <th className="!text-right">% Carteira</th>
                     <th className="!text-right">% Ideal</th>
+                    <th className="!text-right" title="Dividendos dos últimos 12 meses ÷ preço de hoje">DY 12m</th>
+                    <th className="!text-right" title="Yield on cost: dividendos dos últimos 12 meses ÷ seu preço médio">DY s/ PM</th>
                     <th className="!text-right">Preço teto</th>
                     <th className="!text-center">Nota</th>
                     <th className="!text-center">Comprar?</th>
@@ -85,7 +94,7 @@ export function MeusAtivos({
                 <tbody>
                   {itens.map((p) => (
                     <tr key={p.ticker}>
-                      <td>
+                      <td className="sticky left-0 z-[1] bg-painel">
                         <Link href={`/acao/${p.ticker}`} className="flex items-center gap-2.5 font-medium hover:text-marca">
                           <Logo ticker={p.ticker} src={p.a?.logo} />
                           {p.ticker}
@@ -99,6 +108,10 @@ export function MeusAtivos({
                       <td className="text-right font-medium">{brl(p.valor)}</td>
                       <td className="text-right">{pct(p.peso, 2)}</td>
                       <td className="text-right text-suave">{pct(pesoIdeal, 2)}</td>
+                      <td className="text-right">{p.a?.dy_12m ? pct(p.a.dy_12m) : <span className="text-fraco">—</span>}</td>
+                      <td className="text-right text-suave">
+                        {p.a?.dpa_12m && p.preco_medio > 0 ? pct(p.a.dpa_12m / p.preco_medio) : <span className="text-fraco">—</span>}
+                      </td>
                       <td className="text-right">{dinheiro(p.a?.preco_teto, p.moeda)}</td>
                       <td className="text-center"><Nota v={p.a?.qualidade} rotulo="Qualidade (0 a 10)" /></td>
                       <td className="text-center"><Comprar p={p} /></td>

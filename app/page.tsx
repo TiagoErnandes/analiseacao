@@ -67,6 +67,7 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 export default async function Painel() {
   const { exec, modo, estrategia, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel();
   const alertas = await alertasRecentes();
+  const urgentes = alertas.filter((a) => a.nivel === "VENDER");
   const botao = (
     <BotaoAnalise
       status={exec?.status ?? null}
@@ -133,9 +134,20 @@ export default async function Painel() {
 
       <SeletorEstrategia escolha={estrategia.escolha} atual={estrategia.atual} trocaEm={estrategia.trocaEm} />
 
-      <AlertasVenda alertas={alertas} />
+      {urgentes.length > 0 && (
+        <a
+          href="#alertas"
+          className="flex items-center justify-between gap-3 rounded-xl border border-baixa/50 bg-baixa/10 px-4 py-3 text-sm transition hover:bg-baixa/15"
+        >
+          <span>
+            <b className="text-baixa">🚨 Alerta de venda</b>{" "}
+            <span className="text-suave">em {[...new Set(urgentes.map((a) => a.ticker))].join(", ")} nos últimos 7 dias.</span>
+          </span>
+          <span className="whitespace-nowrap text-xs text-baixa">Ver alertas ↓</span>
+        </a>
+      )}
 
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5 [&>*:last-child]:col-span-2 lg:[&>*:last-child]:col-span-1">
         <Kpi
           rotulo="Patrimônio total"
           valor={brl(resumo.patrimonio)}
@@ -163,10 +175,21 @@ export default async function Painel() {
           detalhe={
             <div className="space-y-0.5">
               <p>Total <b className="text-texto">{brl(resumo.proventosTotal)}</b></p>
-              <p>Renda prevista ≈ {brl(resumo.renda12m / 12)}/mês · DY {pct(resumo.dy)}</p>
+              <p>Renda prevista ≈ <b className="text-texto">{brl(resumo.renda12m / 12)}</b>/mês</p>
             </div>
           }
           dica="Dividendos, JCP e rendimentos pagos enquanto você tinha o ativo (estimado pela data de compra e pelo histórico do Yahoo)"
+        />
+        <Kpi
+          rotulo="Dividend Yield da carteira"
+          valor={<span className="text-alta">{pct(resumo.dy, 2)}</span>}
+          detalhe={
+            <div className="space-y-0.5">
+              <p>Média das ações <b className="text-texto">{pct(resumo.dyMedioAtivos, 2)}</b> <span className="text-fraco">({resumo.pagadores} pagam)</span></p>
+              <p>Sobre o preço médio <b className="text-texto">{pct(resumo.yieldOnCost, 2)}</b></p>
+            </div>
+          }
+          dica="DY da carteira: dividendos dos últimos 12 meses ÷ patrimônio de hoje (ponderado pelo tamanho de cada posição). Média das ações: média simples do DY de cada ativo que paga. Sobre o preço médio (yield on cost): dividendos ÷ valor investido."
         />
         <Kpi
           rotulo="Rentabilidade (12M)"
@@ -192,14 +215,7 @@ export default async function Painel() {
         </Cartao>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-5">
-        <Cartao titulo="Proventos recebidos por mês" className="lg:col-span-3">
-          <ProventosMes meses={proventosPorMes} />
-        </Cartao>
-        <Cartao titulo="Carteira × CDI, inflação e Ibovespa" className="lg:col-span-2">
-          <Comparativo carteira={resumo.rentabilidade12m.valor} dados={comparativo} />
-        </Cartao>
-      </section>
+      <MeusAtivos posicoes={posicoes} patrimonio={resumo.patrimonio} pesoIdeal={pesoIdeal} />
 
       <section className="grid gap-4 lg:grid-cols-2">
         <AcaoDoDia titulo="Melhor compra na sua carteira" a={porTicker.get(rel.acao_do_dia_carteira ?? "")} justificativa={rel.justificativa_carteira} />
@@ -236,11 +252,18 @@ export default async function Painel() {
         </Cartao>
       </section>
 
+      <section className="grid gap-4 lg:grid-cols-5">
+        <Cartao titulo="Proventos recebidos por mês" className="lg:col-span-3">
+          <ProventosMes meses={proventosPorMes} />
+        </Cartao>
+        <Cartao titulo="Carteira × CDI, inflação e Ibovespa" className="lg:col-span-2">
+          <Comparativo carteira={resumo.rentabilidade12m.valor} dados={comparativo} />
+        </Cartao>
+      </section>
+
       <Cartao titulo="Projeção para a aposentadoria">
         <Projecao patrimonio={resumo.patrimonio} />
       </Cartao>
-
-      <MeusAtivos posicoes={posicoes} patrimonio={resumo.patrimonio} pesoIdeal={pesoIdeal} />
 
       {oportunidades.length > 0 && (
         <Cartao
@@ -266,8 +289,10 @@ export default async function Painel() {
         </Cartao>
       )}
 
+      <AlertasVenda alertas={alertas} />
+
       {posicoes.some((p) => p.a?.alertas) && (
-        <Cartao titulo="Pontos de atenção na carteira">
+        <Cartao titulo="Pontos de atenção nos dados (análise de hoje)">
           <ul className="divide-y divide-borda">
             {posicoes.filter((p) => p.a?.alertas).map((p) => (
               <li key={p.ticker} className="flex gap-3 px-4 py-3">
