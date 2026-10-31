@@ -30,6 +30,8 @@ Todo dia útil às 7h o agendador:
    - **Painel**: patrimônio, rentabilidade, renda passiva e DY da carteira, ações do dia, cenário, simulador de aporte, alocação por setor e pontos de atenção.
    - **Ranking**: as ações analisadas com filtros, busca, ordenação por qualquer coluna e o comentário da IA.
    - **Carteira**: **registro de compras e vendas** (o preço médio é recalculado sozinho), histórico das operações, correção à mão ou **importação da B3** (arquivos de Posição e Negociação da Área do Investidor; o preço médio é calculado pelas negociações).
+   - **Busca e índices no topo**: busca de ativos (atalho `/`) e faixa com Ibovespa, dólar, euro, S&P 500, Nasdaq e Bitcoin (Yahoo, atualiza a cada 5 minutos).
+   - **Gráfico de cotação** na página de cada ativo: períodos 1D, 5D, 1M, 6M, no ano, 1A, 5A e máximo, com linhas do preço teto e do seu preço médio, mínima e máxima do período e faixa de 52 semanas (Yahoo, guardado alguns minutos na memória). `lib/cotacao.ts`.
    - **Página de cada ação**: preço teto (Bazin e Graham), indicadores, análise da IA, lucro de cada ano, dividendos em 10 anos, fatos relevantes e proventos anunciados, sua posição e o histórico de cotação × preço teto.
    - **Placar**: as recomendações passadas deram certo? Para cada sinal (Ação do dia, COMPRAR e EVITAR, um por ativo e por mês), o retorno com proventos até hoje e depois de 3, 6 e 12 meses, comparado com o Ibovespa no mesmo período.
 
