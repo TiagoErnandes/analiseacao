@@ -107,6 +107,12 @@ export async function carregarPainel() {
       renda12m,
       dy: patrimonio > 0 ? renda12m / patrimonio : null,
       yieldOnCost: investido > 0 ? renda12m / investido : null,
+      // Média simples do DY 12m dos ativos que pagam proventos (cada ativo pesa igual, sem olhar o tamanho da posição)
+      dyMedioAtivos: (() => {
+        const dys = posicoes.map((p) => p.a?.dy_12m).filter((v): v is number => v != null && v > 0);
+        return dys.length ? dys.reduce((s, v) => s + v, 0) / dys.length : null;
+      })(),
+      pagadores: posicoes.filter((p) => (p.a?.dy_12m ?? 0) > 0).length,
       margemMedia: pesoMargem > 0 ? comMargem.reduce((s, p) => s + p.a!.margem! * p.valor, 0) / pesoMargem : null,
       variacaoDia:
         patrimonio > 0

@@ -41,8 +41,8 @@ export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMe
   }, [rodando, router]);
 
   return (
-    <div className="flex flex-col items-start gap-1 sm:items-end">
-      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+    <div className="flex w-full min-w-0 flex-col items-start gap-1 sm:w-auto sm:items-end">
+      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
       <select
         value={modoAtual}
         title={info ? `${info.descricao} Custo: ${info.custo}.` : undefined}
@@ -54,7 +54,7 @@ export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMe
             router.refresh();
           });
         }}
-        className="campo !w-auto h-[38px] !py-0 text-sm"
+        className="campo h-[38px] w-full min-w-0 max-w-full !py-0 text-sm sm:w-auto"
         aria-label="Modo da IA"
       >
         {MODOS.map((m) => (

@@ -17,7 +17,7 @@ export function SeletorEstrategia({ escolha, atual, trocaEm }: { escolha: Escolh
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-borda bg-painel px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex min-w-0 items-center gap-2 text-sm">
         <span className="rotulo !mb-0 shrink-0">Estratégia</span>
         <select
           value={valor}
@@ -30,7 +30,7 @@ export function SeletorEstrategia({ escolha, atual, trocaEm }: { escolha: Escolh
               router.refresh();
             });
           }}
-          className="campo !w-auto h-[34px] !py-0 text-sm"
+          className="campo h-[34px] min-w-0 flex-1 !py-0 text-sm sm:flex-none"
           aria-label="Estratégia da carteira"
         >
           <option value="auto">{autoTexto}</option>

@@ -32,7 +32,7 @@ export function Kpi({ rotulo, valor, detalhe, dica }: { rotulo: string; valor: R
   return (
     <div className="cartao p-4" title={dica}>
       <p className="rotulo">{rotulo}</p>
-      <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{valor}</p>
+      <p className="mt-2 break-words text-xl font-semibold tabular-nums tracking-tight sm:text-2xl">{valor}</p>
       {detalhe && <div className="mt-1 text-xs text-suave tabular-nums">{detalhe}</div>}
     </div>
   );
@@ -139,7 +139,7 @@ export function Dica({ texto }: { texto: string }) {
       </span>
       <span
         role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 w-52 -translate-x-1/2 rounded-lg border border-borda bg-fundo px-3 py-2 text-[11px] font-normal leading-snug text-texto opacity-0 shadow-xl transition group-hover/dica:opacity-100 group-focus-within/dica:opacity-100"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden w-52 -translate-x-1/2 rounded-lg border border-borda bg-fundo px-3 py-2 text-[11px] font-normal leading-snug text-texto shadow-xl group-hover/dica:block group-focus-within/dica:block"
       >
         {texto}
       </span>
