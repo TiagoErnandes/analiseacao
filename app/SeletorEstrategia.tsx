@@ -17,7 +17,7 @@ export function SeletorEstrategia({ escolha, atual, trocaEm }: { escolha: Escolh
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-borda bg-painel px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
-      <label className="flex min-w-0 items-center gap-2 text-sm">
+      <label className="flex min-w-0 items-center gap-2 text-sm sm:shrink-0">
         <span className="rotulo !mb-0 shrink-0">Estratégia</span>
         <select
           value={valor}
@@ -39,7 +39,7 @@ export function SeletorEstrategia({ escolha, atual, trocaEm }: { escolha: Escolh
           ))}
         </select>
       </label>
-      <p className="text-xs text-suave">
+      <p className="min-w-0 text-xs text-suave sm:flex-1">
         {info?.descricao}
         {valor === "auto" && atual === "oportunidade" && ` Nos primeiros ${MESES_OPORTUNIDADE} meses o foco é oportunidade; depois o balanceamento entra sozinho.`}
         {" "}A nota e a IA mudam a partir da próxima análise.
