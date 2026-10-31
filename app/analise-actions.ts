@@ -6,9 +6,22 @@ import type { EscolhaEstrategia, ModoIa } from "@/lib/modos";
 import { query } from "@/lib/db";
 import { adminOuErro, usuarioAtual, usuarioOuErro } from "@/lib/auth";
 
+/** Intervalo mínimo entre análises para quem não é o dono (elas são grátis, mas levam alguns minutos de servidor). */
+const INTERVALO_OUTRAS_CONTAS_MIN = 30;
+
 export async function iniciarAnalise(): Promise<{ ok: boolean; mensagem: string }> {
-  if (!(await usuarioAtual())?.admin) return { ok: false, mensagem: "Só o dono do site pode rodar a análise." };
-  const r = await rodarAnalise("botao");
+  const usuario = await usuarioAtual();
+  if (!usuario) return { ok: false, mensagem: "Entre com sua conta Google para continuar." };
+  if (!usuario.admin) {
+    // As outras contas rodam sempre no modo grátis (Gemini), sem custo para o dono
+    const [recente] = await query<{ libera: string }>(
+      `select to_char((max(inicio) + make_interval(mins => $1::int)) at time zone 'America/Sao_Paulo', 'HH24:MI') as libera
+         from execucoes where status <> 'erro' having max(inicio) > now() - make_interval(mins => $1::int)`,
+      [INTERVALO_OUTRAS_CONTAS_MIN],
+    );
+    if (recente) return { ok: false, mensagem: `Uma análise rodou há pouco. A próxima libera às ${recente.libera}.` };
+  }
+  const r = await rodarAnalise("botao", usuario.admin ? undefined : "gratis");
   if ("motivo" in r) return { ok: false, mensagem: r.motivo };
   // Não espera terminar: a análise leva alguns minutos e continua rodando no servidor.
   void r.termino;

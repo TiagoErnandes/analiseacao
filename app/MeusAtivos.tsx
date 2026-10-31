@@ -92,7 +92,26 @@ export function MeusAtivos({
                   </tr>
                 </thead>
                 <tbody>
-                  {itens.map((p) => (
+                  {itens.map((p) =>
+                    p.tipo === "renda_fixa" ? (
+                      <tr key={p.ticker}>
+                        <td className="sticky left-0 z-[1] bg-painel">
+                          <span className="flex items-center gap-2.5 font-medium">
+                            <Logo ticker={p.ticker} src={null} />
+                            {p.ticker}
+                          </span>
+                        </td>
+                        <td colSpan={3} className="text-right text-xs text-suave">
+                          {p.taxa_cdi ? `${Math.round(p.taxa_cdi * 1000) / 10}% do CDI` : "sem rendimento"}
+                          {p.data_aplicacao ? ` desde ${p.data_aplicacao.split("-").reverse().join("/")}` : ""} · aplicado {brl(p.investido)}
+                        </td>
+                        <td className="text-right text-fraco">—</td>
+                        <td className="text-right"><Variacao v={p.rentabilidade} casas={2} /></td>
+                        <td className="text-right font-medium">{brl(p.valor)}</td>
+                        <td className="text-right">{pct(p.peso, 2)}</td>
+                        <td colSpan={6} className="text-center text-xs text-fraco">sem preço teto (renda fixa ou bem sem cotação)</td>
+                      </tr>
+                    ) : (
                     <tr key={p.ticker}>
                       <td className="sticky left-0 z-[1] bg-painel">
                         <Link href={`/acao/${p.ticker}`} className="flex items-center gap-2.5 font-medium hover:text-marca">
@@ -116,7 +135,8 @@ export function MeusAtivos({
                       <td className="text-center"><Nota v={p.a?.qualidade} rotulo="Qualidade (0 a 10)" /></td>
                       <td className="text-center"><Comprar p={p} /></td>
                     </tr>
-                  ))}
+                    ),
+                  )}
                 </tbody>
               </table>
             </div>

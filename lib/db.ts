@@ -21,7 +21,14 @@ export async function query<T = Record<string, unknown>>(sql: string, params: un
   return res.rows as T[];
 }
 
-export type Carteira = { ticker: string; quantidade: number; preco_medio: number; tipo: Tipo | null };
+export type Carteira = {
+  ticker: string;
+  quantidade: number; // na renda fixa: o valor aplicado em reais (cada "cota" vale R$ 1 na aplicação)
+  preco_medio: number;
+  tipo: Tipo | null;
+  taxa_cdi?: number | null; // renda fixa: fração do CDI (1 = 100% do CDI; 0 = valor parado)
+  data_aplicacao?: string | null; // renda fixa: desde quando rende
+};
 
 export type Analise = {
   data: string;
@@ -260,6 +267,9 @@ export async function migrar() {
       valor       text not null
     );
     create unique index if not exists config_usuario_chave on config_usuario (usuario_id, chave) nulls not distinct;
+    -- Renda fixa e outros bens: rendem uma fração do CDI desde a data da aplicação
+    alter table carteira add column if not exists taxa_cdi numeric;
+    alter table carteira add column if not exists data_aplicacao date;
     -- A estratégia e o início da carteira passam a ser de cada usuário (uma vez: os atuais ficam com a carteira original)
     with marca as (insert into config (chave, valor) values ('config_usuario_migrada', '1') on conflict (chave) do nothing returning 1)
     insert into config_usuario (usuario_id, chave, valor)

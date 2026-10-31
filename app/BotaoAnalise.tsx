@@ -14,6 +14,8 @@ type Props = {
   custo: number | null;
   custoMes: number;
   economiaMes?: number;
+  /** Outras contas: sem escolha de modo, sempre a análise grátis (Gemini), e sem mostrar custos. */
+  somenteGratis?: boolean;
 };
 
 const reais = (v: number) => `R$ ${v.toFixed(2).replace(".", ",")}`;
@@ -21,7 +23,7 @@ const reais = (v: number) => `R$ ${v.toFixed(2).replace(".", ",")}`;
 const hora = (iso: string) =>
   new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
 
-export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMes, economiaMes = 0 }: Props) {
+export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMes, economiaMes = 0, somenteGratis = false }: Props) {
   const [modoAtual, setModo] = useState<ModoIa>(modo);
   const [, startSalvar] = useTransition();
   const info = MODOS.find((m) => m.id === modoAtual);
@@ -43,6 +45,9 @@ export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMe
   return (
     <div className="flex w-full min-w-0 flex-col items-start gap-1 sm:w-auto sm:items-end">
       <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+      {somenteGratis ? (
+        <span className="text-xs text-suave" title="A análise das outras contas é sempre a grátis, com o Gemini">Análise grátis (Gemini)</span>
+      ) : (
       <select
         value={modoAtual}
         title={info ? `${info.descricao} Custo: ${info.custo}.` : undefined}
@@ -61,6 +66,7 @@ export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMe
           <option key={m.id} value={m.id}>{m.nome} ({m.custo})</option>
         ))}
       </select>
+      )}
       <button
         disabled={rodando || pendente}
         onClick={() =>
@@ -83,8 +89,10 @@ export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMe
           : status === "erro"
             ? `A última análise falhou${inicio ? ` (${hora(inicio)})` : ""}${erro ? `: ${erro}` : "."}`
             : inicio
-              ? `Última análise: ${hora(inicio)}${custo != null ? ` · custou ${reais(custo)}` : ""} · no mês ${reais(custoMes)}` +
-                (economiaMes >= 0.005 ? ` · economizou ${reais(economiaMes)}` : "")
+              ? somenteGratis
+                ? `Última análise: ${hora(inicio)} · roda sozinha às 7h em dias úteis`
+                : `Última análise: ${hora(inicio)}${custo != null ? ` · custou ${reais(custo)}` : ""} · no mês ${reais(custoMes)}` +
+                  (economiaMes >= 0.005 ? ` · economizou ${reais(economiaMes)}` : "")
               : "Nenhuma análise ainda."}
       </p>
     </div>

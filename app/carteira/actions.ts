@@ -38,6 +38,38 @@ export async function removerAtivo(form: FormData) {
   revalidatePath("/");
 }
 
+// ---------- Renda fixa e outros bens ----------
+
+/** CDB, Tesouro, caixa, imóvel, negócio próprio: valor aplicado que rende uma fração do CDI (0% = fica parado). */
+export async function salvarRendaFixa(form: FormData): Promise<{ ok: boolean; mensagem: string }> {
+  try {
+    const { id: dono } = await usuarioOuErro();
+    const info = infoTipo("renda_fixa")!;
+    const nome = String(form.get("nome") ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+    if (!info.formato.test(nome)) return { ok: false, mensagem: "Dê um nome com 2 a 30 letras ou números (ex.: CDB INTER)." };
+    if (infoTipo("acao")!.formato.test(nome) || /^[A-Z]{1,5}$/.test(nome))
+      return { ok: false, mensagem: "Esse nome parece código de ação. Use algo como “CDB INTER”." };
+    const valor = numero(form.get("valor"));
+    if (!(valor > 0)) return { ok: false, mensagem: "Informe o valor aplicado." };
+    const pctCdi = form.get("taxa") === "" || form.get("taxa") == null ? 100 : numero(form.get("taxa"));
+    if (!(pctCdi >= 0 && pctCdi <= 300)) return { ok: false, mensagem: "O rendimento vai de 0% a 300% do CDI." };
+    const data = String(form.get("data") ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return { ok: false, mensagem: "Data inválida." };
+    await query(
+      `insert into carteira (usuario_id, ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao)
+       values ($1, $2, $3, 1, 'renda_fixa', $4, $5)
+       on conflict (usuario_id, ticker) do update set quantidade = excluded.quantidade, preco_medio = 1, tipo = 'renda_fixa',
+         taxa_cdi = excluded.taxa_cdi, data_aplicacao = excluded.data_aplicacao`,
+      [dono, nome, valor, pctCdi / 100, data],
+    );
+    revalidatePath("/carteira");
+    revalidatePath("/");
+    return { ok: true, mensagem: `${nome} salvo: R$ ${valor.toFixed(2).replace(".", ",")} rendendo ${pctCdi}% do CDI desde ${data.split("-").reverse().join("/")}.` };
+  } catch (err) {
+    return { ok: false, mensagem: `Erro ao salvar: ${(err as Error).message}` };
+  }
+}
+
 // ---------- Importação da B3 ----------
 
 const TAMANHO_MAXIMO = 8 * 1024 * 1024;
@@ -83,7 +115,7 @@ export async function aplicarImportacaoB3(
     await client.query("begin");
     let removidas = 0;
     if (modo === "substituir") {
-      const r = await client.query("delete from carteira where usuario_id is not distinct from $2 and not (ticker = any($1::text[]))", [
+      const r = await client.query("delete from carteira where usuario_id is not distinct from $2 and coalesce(tipo, '') <> 'renda_fixa' and not (ticker = any($1::text[]))", [
         validos.map((i) => i.ticker),
         dono,
       ]);

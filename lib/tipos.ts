@@ -1,5 +1,5 @@
 // Catálogo dos tipos de ativo aceitos na carteira.
-export type Tipo = "acao" | "fii" | "etf" | "bdr" | "stock" | "etf_int" | "reit" | "cripto";
+export type Tipo = "acao" | "fii" | "etf" | "bdr" | "stock" | "etf_int" | "reit" | "cripto" | "renda_fixa";
 
 export type InfoTipo = {
   id: Tipo;
@@ -47,7 +47,16 @@ export const TIPOS: InfoTipo[] = [
     id: "cripto", nome: "Criptomoedas", curto: "Cripto", moeda: "BRL", formato: /^[A-Z0-9]{2,10}$/, exemplo: "BTC", fundamentos: false,
     sugestoes: ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "USDT", "USDC", "LINK", "DOT"],
   },
+  {
+    // Sem cotação: o valor cresce pelo CDI (ex.: CDB a 100% do CDI). Com 0% fica parado (imóvel, negócio próprio, caixa).
+    id: "renda_fixa", nome: "Renda fixa e outros", curto: "RF", moeda: "BRL", formato: /^[A-Z0-9][A-Z0-9 .\-%]{1,29}$/, exemplo: "CDB INTER",
+    fundamentos: false,
+    sugestoes: ["CDB INTER", "TESOURO SELIC", "LCI", "CAIXA", "NEGOCIO PROPRIO"],
+  },
 ];
+
+/** Tipos com cotação de mercado (os que dá para lançar compra e venda por preço). */
+export const TIPOS_MERCADO = TIPOS.filter((t) => t.id !== "renda_fixa");
 
 export const infoTipo = (t: string | null | undefined): InfoTipo | null => TIPOS.find((x) => x.id === t) ?? null;
 

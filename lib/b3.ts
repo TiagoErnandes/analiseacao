@@ -48,7 +48,7 @@ const CATEGORIAS: [RegExp, Tipo | null, string | null][] = [
   [/fundo|fii/, "fii", null],
   [/etf/, "etf", null],
   [/bdr/, "bdr", null],
-  [/rendafixa|tesouro|cdb|lci|lca|debenture/, null, "renda fixa ou Tesouro (fora do escopo do app)"],
+  [/rendafixa|tesouro|cdb|lci|lca|debenture/, null, "renda fixa ou Tesouro: cadastre em “Renda fixa e outros”, na página Carteira"],
 ];
 
 type Posicao = { ticker: string; tipo: Tipo | null; produto: string | null; quantidade: number; fechamento: number | null };

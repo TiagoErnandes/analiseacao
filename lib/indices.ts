@@ -32,8 +32,12 @@ export async function atualizarIndices(): Promise<string[]> {
   const desde = new Date();
   desde.setMonth(desde.getMonth() - 26);
   const erros: string[] = [];
+  // CDI: até 10 anos na primeira vez (renda fixa antiga rende pelo CDI desde a aplicação); depois só os últimos meses
+  const [{ n }] = await query<{ n: number }>("select count(*)::int as n from indices where serie = 'cdi' and data < current_date - 800");
+  const desdeCdi = new Date(desde);
+  if (n < 100) desdeCdi.setTime(Date.now() - (10 * 365 - 10) * 86_400_000); // a API do BC aceita no máximo 10 anos por consulta
   const fontes: [string, () => Promise<Ponto[]>][] = [
-    ["cdi", () => sgs(12, desde)],
+    ["cdi", () => sgs(12, desdeCdi)],
     ["ipca", () => sgs(433, desde)],
     ["ibov", ibovespa],
   ];

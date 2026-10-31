@@ -9,6 +9,7 @@ const COR: Record<string, string> = {
   etf_int: "bg-[#d95926]/15 text-[#ef8a5c]",
   reit: "bg-[#d55181]/15 text-[#e98aad]",
   cripto: "bg-[#e66767]/15 text-[#f09a9a]",
+  renda_fixa: "bg-[#8a9bb0]/15 text-[#b4c0ce]",
 };
 
 export function TipoAtivo({ tipo }: { tipo: string | null | undefined }) {
