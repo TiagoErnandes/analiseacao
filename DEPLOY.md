@@ -57,7 +57,9 @@ uma carteira só (a do dono). Se o Google recusar o endereço sslip.io, use um d
 ## Alerta de preço-alvo no WhatsApp (CallMeBot, grátis)
 
 O botão **🎯 Definir meu Preço-Alvo** (página de cada ativo) avisa quando a cotação chega no seu preço. O aviso aparece no
-painel e, para o dono do site, chega no WhatsApp pelo CallMeBot (grátis, uso pessoal: só manda para o seu próprio número).
+painel e, para o dono do site, chega no celular pelos mesmos canais dos alertas de venda: **Telegram** e/ou ntfy (veja o
+`.env.production.example`) e o **WhatsApp** pelo CallMeBot (grátis, uso pessoal: só manda para o seu próprio número).
+Se o robô do CallMeBot estiver lotado (o site diz "capacidade máxima" e não mostra o número), use o Telegram até abrir vaga.
 
 1. Salve o número **+34 694 25 79 20** nos contatos do celular (é o bot do CallMeBot; confira o número atual em
    https://www.callmebot.com/blog/free-api-whatsapp-messages/).

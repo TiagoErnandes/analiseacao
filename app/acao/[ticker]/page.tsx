@@ -17,7 +17,7 @@ import { GraficoHistorico } from "./GraficoHistorico";
 import { GraficoCotacao } from "./GraficoCotacao";
 import { BotaoAcompanhar } from "./BotaoAcompanhar";
 import { PrecoAlvo } from "./PrecoAlvo";
-import { precoAlvoDe, whatsappConfigurado } from "@/lib/precoAlvo";
+import { celularConfigurado, precoAlvoDe } from "@/lib/precoAlvo";
 import { analisarAvulso } from "@/lib/analise";
 import { Dica } from "../../ui";
 
@@ -145,7 +145,7 @@ export default async function AcaoPage({ params }: Params) {
                 precoAtual={a.preco}
                 alvo={alvo}
                 podeWhatsapp={usuario.admin}
-                whatsappPronto={whatsappConfigurado()}
+                whatsappPronto={celularConfigurado()}
               />
             </div>
           </div>

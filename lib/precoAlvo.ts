@@ -1,10 +1,10 @@
 // Preço-alvo: cada pessoa define o preço em que quer comprar (ou vender) um ativo.
 // O vigia do agendador confere a cotação ao longo do dia; quando o preço chega no alvo, o aviso aparece no site
-// e, para o dono, vai para o WhatsApp (CallMeBot, número e chave no .env.production).
+// e, para o dono, vai para o celular: WhatsApp (CallMeBot), Telegram e/ou ntfy, configurados no .env.production.
 import { migrar, query } from "./db";
 import { precoYahoo } from "./mercado";
 import { simboloYahoo, type Tipo } from "./tipos";
-import { enviarWhatsapp, whatsappConfigurado } from "./whatsapp";
+import { celularConfigurado, enviarCelular } from "./alertas";
 
 /** compra: avisa quando o preço CAI até o alvo. venda: avisa quando SOBE até o alvo. */
 export type Direcao = "compra" | "venda";
@@ -118,14 +118,15 @@ export const atingiu = (direcao: Direcao, preco: number, alvo: number) => (direc
 const valor = (v: number, moeda: string) =>
   v.toLocaleString("pt-BR", { style: "currency", currency: moeda === "USD" ? "USD" : "BRL" });
 
-export function textoAviso(a: Pick<PrecoAlvo, "ticker" | "direcao" | "preco_alvo" | "moeda">, preco: number, site?: string) {
-  const ponto = a.direcao === "compra" ? "está no ponto de COMPRA" : "chegou no seu preço de VENDA";
-  return [
-    `🎯 ${a.ticker} ${ponto}`,
-    `Cotação: ${valor(preco, a.moeda)} | Seu preço-alvo: ${valor(a.preco_alvo, a.moeda)}`,
-    ...(site ? [`${site.replace(/\/$/, "")}/acao/${a.ticker}`] : []),
-    "Confira a análise antes de decidir.",
-  ].join("\n");
+/** A mensagem do celular quando o preço chega no alvo. */
+export function aviso(a: Pick<PrecoAlvo, "ticker" | "direcao" | "preco_alvo" | "moeda">, preco: number, site?: string) {
+  return {
+    cabecalho: `🎯 ${a.ticker} ${a.direcao === "compra" ? "está no ponto de COMPRA" : "chegou no seu preço de VENDA"}`,
+    titulo: `Cotação: ${valor(preco, a.moeda)} | Seu preço-alvo: ${valor(a.preco_alvo, a.moeda)}`,
+    motivo: "Confira a análise antes de decidir.",
+    link: site ? `${site.replace(/\/$/, "")}/acao/${a.ticker}` : null,
+    tag: "dart",
+  };
 }
 
 /**
@@ -159,11 +160,11 @@ export async function vigiarPrecosAlvo(): Promise<number> {
     if (!marcado) continue;
     avisos++;
     console.log(`  PREÇO-ALVO ${p.ticker} (${p.direcao}): cotação ${preco}, alvo ${p.preco_alvo}`);
-    // WhatsApp e celular: só o dono do site (o número e a chave ficam no .env.production)
-    if (p.via_whatsapp && bruto.dono) await enviarWhatsapp(textoAviso(p, preco, process.env.SITE_URL));
+    // Celular (WhatsApp, Telegram, ntfy): só o dono do site (as chaves ficam no .env.production)
+    if (p.via_whatsapp && bruto.dono) await enviarCelular(aviso(p, preco, process.env.SITE_URL));
   }
   console.log(`Preço-alvo: ${pendentes.length} alvos conferidos, ${avisos} atingidos`);
   return avisos;
 }
 
-export { whatsappConfigurado };
+export { celularConfigurado };

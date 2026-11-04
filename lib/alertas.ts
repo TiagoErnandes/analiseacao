@@ -5,7 +5,7 @@ import { chaveGemini, gemini } from "./ai";
 import { atualizarDocumentosCvm, infoB3 } from "./cvm";
 import { migrar, query } from "./db";
 import { precoYahoo } from "./mercado";
-import { enviarWhatsapp } from "./whatsapp";
+import { enviarWhatsapp, whatsappConfigurado } from "./whatsapp";
 
 export type Nivel = "VENDER" | "ATENCAO";
 export type Alerta = { chave: string; ticker: string; nivel: Nivel | "NADA"; titulo: string; motivo: string; link: string | null; criado_em?: string };
@@ -43,15 +43,17 @@ export async function alertasRecentes(dias = 7): Promise<Alerta[]> {
   }
 }
 
-/** Envia para o celular. Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID), ntfy (NTFY_TOPICO) e/ou WhatsApp (CallMeBot). */
-export async function enviar(a: Omit<Alerta, "chave"> & { nivel: Nivel }): Promise<boolean> {
-  const icone = a.nivel === "VENDER" ? "🚨" : "⚠️";
-  const cabecalho = `${icone} ${a.nivel === "VENDER" ? "VENDA URGENTE?" : "Atenção"} ${a.ticker}`;
+/** Algum canal do celular configurado no servidor (Telegram, ntfy ou WhatsApp)? */
+export const celularConfigurado = () =>
+  !!((process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) || process.env.NTFY_TOPICO || whatsappConfigurado());
+
+/** Envia para o celular do dono: Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID), ntfy (NTFY_TOPICO) e/ou WhatsApp (CallMeBot). */
+export async function enviarCelular(m: { cabecalho: string; titulo: string; motivo: string; link: string | null; urgente?: boolean; tag?: string }): Promise<boolean> {
   let enviado = false;
   const { TELEGRAM_BOT_TOKEN: token, TELEGRAM_CHAT_ID: chat, NTFY_TOPICO: topico } = process.env;
   if (token && chat) {
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const texto = `<b>${esc(cabecalho)}</b>\n${esc(a.titulo)}\n\n${esc(a.motivo)}${a.link ? `\n${esc(a.link)}` : ""}`;
+    const texto = `<b>${esc(m.cabecalho)}</b>\n${esc(m.titulo)}\n\n${esc(m.motivo)}${m.link ? `\n${esc(m.link)}` : ""}`;
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -66,20 +68,26 @@ export async function enviar(a: Omit<Alerta, "chave"> & { nivel: Nivel }): Promi
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         topic: topico,
-        title: cabecalho,
-        message: `${a.titulo}\n\n${a.motivo}`,
-        priority: a.nivel === "VENDER" ? 5 : 4,
-        tags: [a.nivel === "VENDER" ? "rotating_light" : "warning"],
-        ...(a.link ? { click: a.link } : {}),
+        title: m.cabecalho,
+        message: `${m.titulo}\n\n${m.motivo}`,
+        priority: m.urgente ? 5 : 4,
+        tags: [m.tag ?? (m.urgente ? "rotating_light" : "warning")],
+        ...(m.link ? { click: m.link } : {}),
       }),
     }).catch((e: Error) => (console.warn(`  ntfy: ${e.message}`), null));
     if (res?.ok) enviado = true;
     else if (res) console.warn(`  ntfy: HTTP ${res.status}`);
   }
-  const zap = process.env.CALLMEBOT_WHATSAPP_NUMERO && process.env.CALLMEBOT_WHATSAPP_APIKEY;
-  if (zap && (await enviarWhatsapp(`${cabecalho}\n${a.titulo}\n\n${a.motivo}${a.link ? `\n${a.link}` : ""}`))) enviado = true;
-  if (!token && !topico && !zap) console.warn("  Alertas: configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (CALLMEBOT_WHATSAPP_*) para receber no celular.");
+  if (whatsappConfigurado() && (await enviarWhatsapp(`${m.cabecalho}\n${m.titulo}\n\n${m.motivo}${m.link ? `\n${m.link}` : ""}`))) enviado = true;
+  if (!celularConfigurado()) console.warn("  Alertas: configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (CALLMEBOT_WHATSAPP_*) para receber no celular.");
   return enviado;
+}
+
+/** Alerta de venda no celular. */
+export async function enviar(a: Omit<Alerta, "chave"> & { nivel: Nivel }): Promise<boolean> {
+  const icone = a.nivel === "VENDER" ? "🚨" : "⚠️";
+  const cabecalho = `${icone} ${a.nivel === "VENDER" ? "VENDA URGENTE?" : "Atenção"} ${a.ticker}`;
+  return enviarCelular({ cabecalho, titulo: a.titulo, motivo: a.motivo, link: a.link, urgente: a.nivel === "VENDER" });
 }
 
 /** Registra e envia, uma vez só por chave. Devolve true se era novo. */

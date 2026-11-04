@@ -13,7 +13,7 @@ function lerNumero(txt: string): number {
 
 function Chave({ ligado, onChange, rotulo, icone, desligada }: { ligado: boolean; onChange: (v: boolean) => void; rotulo: string; icone: string; desligada?: boolean }) {
   return (
-    <label className={`flex w-60 items-center justify-between gap-3 text-sm ${desligada ? "opacity-50" : "cursor-pointer"}`}>
+    <label className={`flex w-72 items-center justify-between gap-3 text-sm ${desligada ? "opacity-50" : "cursor-pointer"}`}>
       <span className="flex items-center gap-2 text-suave">
         <span aria-hidden>{icone}</span>
         {rotulo}
@@ -50,7 +50,7 @@ export function PrecoAlvo({
   alvo: Alvo | null;
   /** Só o dono do site recebe no WhatsApp (o número fica no servidor). */
   podeWhatsapp: boolean;
-  /** CALLMEBOT_WHATSAPP_NUMERO e CALLMEBOT_WHATSAPP_APIKEY preenchidos. */
+  /** WhatsApp (CallMeBot), Telegram ou ntfy configurado no servidor. */
   whatsappPronto: boolean;
 }) {
   const [alvo, setAlvo] = useState(inicial);
@@ -167,11 +167,11 @@ export function PrecoAlvo({
               <div className="space-y-3 border-t border-borda pt-5">
                 <p className="text-sm font-semibold">Defina como você gostaria de receber o alerta do seu Preço-Alvo.</p>
                 <Chave icone="🖥️" rotulo="Via website" ligado={viaSite} onChange={setViaSite} />
-                {podeWhatsapp && <Chave icone="💬" rotulo="Via WhatsApp" ligado={viaZap} onChange={setViaZap} />}
+                {podeWhatsapp && <Chave icone="💬" rotulo="Via celular (WhatsApp / Telegram)" ligado={viaZap} onChange={setViaZap} />}
                 {podeWhatsapp && !whatsappPronto && viaZap && (
                   <p className="text-xs leading-snug text-amber-300">
-                    O WhatsApp ainda não está configurado no servidor: preencha CALLMEBOT_WHATSAPP_NUMERO e CALLMEBOT_WHATSAPP_APIKEY no .env.production.
-                    Até lá, o aviso aparece só no site.
+                    Nenhum canal do celular está configurado no servidor: preencha o Telegram (TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID) ou o
+                    WhatsApp (CALLMEBOT_WHATSAPP_NUMERO e CALLMEBOT_WHATSAPP_APIKEY) no .env.production. Até lá, o aviso aparece só no site.
                   </p>
                 )}
               </div>
