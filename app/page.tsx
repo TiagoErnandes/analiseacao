@@ -15,6 +15,8 @@ import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
 import { SeletorEstrategia } from "./SeletorEstrategia";
 import { AlertasVenda } from "./AlertasVenda";
 import { alertasRecentes } from "@/lib/alertas";
+import { precosAlvoDoUsuario } from "@/lib/precoAlvo";
+import { AvisosPrecoAlvo } from "./AvisosPrecoAlvo";
 import { exigirUsuario } from "@/lib/auth";
 import { ehBesst } from "@/lib/besst";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
@@ -72,6 +74,7 @@ export default async function Painel() {
   // Os alertas no celular vigiam a carteira do dono (Telegram/ntfy configurados no servidor)
   const alertas = usuario.admin ? await alertasRecentes() : [];
   const urgentes = alertas.filter((a) => a.nivel === "VENDER");
+  const alvos = await precosAlvoDoUsuario(usuario.id);
   const botao = (
     <BotaoAnalise
       somenteGratis={!usuario.admin}
@@ -149,6 +152,8 @@ export default async function Painel() {
           <Link href="/carteira" className="whitespace-nowrap rounded-lg bg-marca px-3 py-2 text-xs font-semibold text-fundo">Montar carteira</Link>
         </div>
       )}
+
+      <AvisosPrecoAlvo alvos={alvos} />
 
       {urgentes.length > 0 && (
         <a

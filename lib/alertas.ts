@@ -1,10 +1,11 @@
-// Alertas de venda: vigia os ativos da carteira ao longo do dia e avisa no celular (Telegram e/ou ntfy).
+// Alertas de venda: vigia os ativos da carteira ao longo do dia e avisa no celular (Telegram, ntfy e/ou WhatsApp).
 // Fontes: notícias do Google Notícias, fatos relevantes da CVM, queda forte no preço e a análise do dia.
 // O Gemini (chave grátis) separa o que é grave do que é ruído; sem Gemini, palavras-chave fazem a triagem.
 import { chaveGemini, gemini } from "./ai";
 import { atualizarDocumentosCvm, infoB3 } from "./cvm";
 import { migrar, query } from "./db";
 import { precoYahoo } from "./mercado";
+import { enviarWhatsapp } from "./whatsapp";
 
 export type Nivel = "VENDER" | "ATENCAO";
 export type Alerta = { chave: string; ticker: string; nivel: Nivel | "NADA"; titulo: string; motivo: string; link: string | null; criado_em?: string };
@@ -42,7 +43,7 @@ export async function alertasRecentes(dias = 7): Promise<Alerta[]> {
   }
 }
 
-/** Envia para o celular. Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID) e/ou ntfy (NTFY_TOPICO). */
+/** Envia para o celular. Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID), ntfy (NTFY_TOPICO) e/ou WhatsApp (CallMeBot). */
 export async function enviar(a: Omit<Alerta, "chave"> & { nivel: Nivel }): Promise<boolean> {
   const icone = a.nivel === "VENDER" ? "🚨" : "⚠️";
   const cabecalho = `${icone} ${a.nivel === "VENDER" ? "VENDA URGENTE?" : "Atenção"} ${a.ticker}`;
@@ -75,7 +76,9 @@ export async function enviar(a: Omit<Alerta, "chave"> & { nivel: Nivel }): Promi
     if (res?.ok) enviado = true;
     else if (res) console.warn(`  ntfy: HTTP ${res.status}`);
   }
-  if (!token && !topico) console.warn("  Alertas: configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID ou NTFY_TOPICO para receber no celular.");
+  const zap = process.env.CALLMEBOT_WHATSAPP_NUMERO && process.env.CALLMEBOT_WHATSAPP_APIKEY;
+  if (zap && (await enviarWhatsapp(`${cabecalho}\n${a.titulo}\n\n${a.motivo}${a.link ? `\n${a.link}` : ""}`))) enviado = true;
+  if (!token && !topico && !zap) console.warn("  Alertas: configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (CALLMEBOT_WHATSAPP_*) para receber no celular.");
   return enviado;
 }
 

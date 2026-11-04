@@ -45,7 +45,7 @@ export async function salvarEstrategia(escolha: EscolhaEstrategia) {
   revalidatePath("/");
 }
 
-/** Manda um alerta de teste para o celular (confere se o Telegram ou o ntfy estão configurados). */
+/** Manda um alerta de teste para o celular (confere se o Telegram, o ntfy ou o WhatsApp estão configurados). */
 export async function testarAlerta(): Promise<{ ok: boolean; mensagem: string }> {
   if (!(await usuarioAtual())?.admin) return { ok: false, mensagem: "Os alertas no celular são só do dono do site." };
   const { enviar } = await import("@/lib/alertas");
@@ -58,5 +58,5 @@ export async function testarAlerta(): Promise<{ ok: boolean; mensagem: string }>
   });
   return ok
     ? { ok, mensagem: "Alerta de teste enviado. Confira o celular." }
-    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID (ou NTFY_TOPICO) no .env.production." };
+    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou CALLMEBOT_WHATSAPP_NUMERO e CALLMEBOT_WHATSAPP_APIKEY no .env.production." };
 }

@@ -54,6 +54,25 @@ para todos. Só o dono roda a análise na hora, escolhe o modo da IA, mexe na li
 Para desligar o login, apague `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` do `.env.production` e reinicie: o site volta a ter
 uma carteira só (a do dono). Se o Google recusar o endereço sslip.io, use um domínio próprio (troque nos passos 4 e 5 e no Nginx).
 
+## Alerta de preço-alvo no WhatsApp (CallMeBot, grátis)
+
+O botão **🎯 Definir meu Preço-Alvo** (página de cada ativo) avisa quando a cotação chega no seu preço. O aviso aparece no
+painel e, para o dono do site, chega no WhatsApp pelo CallMeBot (grátis, uso pessoal: só manda para o seu próprio número).
+
+1. Salve o número **+34 694 25 79 20** nos contatos do celular (é o bot do CallMeBot; confira o número atual em
+   https://www.callmebot.com/blog/free-api-whatsapp-messages/).
+2. Mande para ele, pelo WhatsApp, a mensagem: `I allow callmebot to send me messages`
+3. O bot responde com a sua **apikey** (alguns números, às vezes leva uns minutos).
+4. No `.env.production` da VPS:
+   ```
+   CALLMEBOT_WHATSAPP_NUMERO=+5531999999999
+   CALLMEBOT_WHATSAPP_APIKEY=123456
+   ```
+5. Reinicie: `docker compose -f docker-compose.prod.yml up -d` e use **Testar no celular** no painel ("Alertas da carteira").
+
+O vigia confere os alvos a cada 10 minutos no pregão (`PRECO_ALVO_CRON`, padrão `*/10 10-18 * * 1-5`). Cada alvo avisa uma vez;
+para avisar de novo, defina o alvo outra vez. Com o WhatsApp configurado, os alertas de venda da carteira também chegam por lá.
+
 ## Dia a dia
 
 - Mudou o código: `bash deploy/deploy.sh`

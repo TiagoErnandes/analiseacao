@@ -16,6 +16,8 @@ import { Alertas, Cartao, Nota, ReguaTeto, Score, Sinal, Variacao } from "../../
 import { GraficoHistorico } from "./GraficoHistorico";
 import { GraficoCotacao } from "./GraficoCotacao";
 import { BotaoAcompanhar } from "./BotaoAcompanhar";
+import { PrecoAlvo } from "./PrecoAlvo";
+import { precoAlvoDe, whatsappConfigurado } from "@/lib/precoAlvo";
 import { analisarAvulso } from "@/lib/analise";
 import { Dica } from "../../ui";
 
@@ -56,7 +58,7 @@ export default async function AcaoPage({ params }: Params) {
     ? (await query<{ ativo: boolean }>("select ativo from universo where ticker = $1", [ticker]).catch(() => []))[0]?.ativo === true
     : true;
 
-  const [historico, exigido] = await Promise.all([historicoDe(ticker), yieldAtual()]);
+  const [historico, exigido, alvo] = await Promise.all([historicoDe(ticker), yieldAtual(), precoAlvoDe(usuario.id, ticker).catch(() => null)]);
   const yAcao = pct(exigido.acao, 1);
   const yFii = pct(exigido.fii, 1);
   const textoJuro = exigido.juroReal
@@ -135,6 +137,17 @@ export default async function AcaoPage({ params }: Params) {
             <p className="rotulo">Cotação</p>
             <p className="text-3xl font-semibold tabular-nums tracking-tight">{dinheiro(a.preco, moeda)}</p>
             <p className="text-sm"><Variacao v={a.variacao_dia} casas={2} seta /> <span className="text-xs text-fraco">no dia</span></p>
+            <div className="mt-2">
+              <PrecoAlvo
+                ticker={a.ticker}
+                tipo={tipo}
+                moeda={moeda}
+                precoAtual={a.preco}
+                alvo={alvo}
+                podeWhatsapp={usuario.admin}
+                whatsappPronto={whatsappConfigurado()}
+              />
+            </div>
           </div>
           <div>
             <p className="rotulo mb-2">Score</p>
