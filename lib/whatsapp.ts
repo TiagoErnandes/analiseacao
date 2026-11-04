@@ -20,7 +20,7 @@ const limpar = (corpo: string) => corpo.replace(/<[^>]+>/g, " ").replace(/\s+/g,
  * Sem modelo, manda texto livre (só chega dentro da janela de 24 horas).
  */
 async function enviarMeta(texto: string): Promise<boolean> {
-  const versao = process.env.WHATSAPP_META_VERSAO || "v23.0";
+  const versao = process.env.WHATSAPP_META_VERSAO || "v25.0";
   const modelo = process.env.WHATSAPP_META_MODELO;
   // O parâmetro do modelo não aceita quebra de linha nem mais de 4 espaços seguidos
   const umaLinha = texto.split("\n").map((l) => l.trim()).filter(Boolean).join(" · ").replace(/\s{4,}/g, " ").slice(0, 1000);
