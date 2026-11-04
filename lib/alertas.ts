@@ -47,7 +47,7 @@ export async function alertasRecentes(dias = 7): Promise<Alerta[]> {
 export const celularConfigurado = () =>
   !!((process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) || process.env.NTFY_TOPICO || whatsappConfigurado());
 
-/** Envia para o celular do dono: Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID), ntfy (NTFY_TOPICO) e/ou WhatsApp (CallMeBot). */
+/** Envia para o celular do dono: Telegram (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID), ntfy (NTFY_TOPICO) e/ou WhatsApp (Meta ou CallMeBot). */
 export async function enviarCelular(m: { cabecalho: string; titulo: string; motivo: string; link: string | null; urgente?: boolean; tag?: string }): Promise<boolean> {
   let enviado = false;
   const { TELEGRAM_BOT_TOKEN: token, TELEGRAM_CHAT_ID: chat, NTFY_TOPICO: topico } = process.env;
@@ -79,7 +79,7 @@ export async function enviarCelular(m: { cabecalho: string; titulo: string; moti
     else if (res) console.warn(`  ntfy: HTTP ${res.status}`);
   }
   if (whatsappConfigurado() && (await enviarWhatsapp(`${m.cabecalho}\n${m.titulo}\n\n${m.motivo}${m.link ? `\n${m.link}` : ""}`))) enviado = true;
-  if (!celularConfigurado()) console.warn("  Alertas: configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (CALLMEBOT_WHATSAPP_*) para receber no celular.");
+  if (!celularConfigurado()) console.warn("  Alertas: configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (WHATSAPP_NUMERO + WHATSAPP_META_* ou CALLMEBOT_WHATSAPP_APIKEY) para receber no celular.");
   return enviado;
 }
 

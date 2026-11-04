@@ -81,13 +81,13 @@ O agendador vigia os ativos da carteira (ações e FIIs) a cada 30 minutos, das 
 - **Queda de 7% ou mais** no dia (pede uma olhada, não é venda).
 - **Análise do dia**: ativo da carteira que passa para EVITAR.
 
-Cada alerta é enviado uma vez só, no Telegram (`TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID`), no app ntfy (`NTFY_TOPICO`) e/ou no WhatsApp (CallMeBot), e aparece no painel ("Alertas da carteira", com botão para testar o envio).
+Cada alerta é enviado uma vez só, no Telegram (`TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID`), no app ntfy (`NTFY_TOPICO`) e/ou no WhatsApp (API da Meta ou CallMeBot), e aparece no painel ("Alertas da carteira", com botão para testar o envio).
 
 ## Preço-alvo
 
 Na página de cada ativo, **🎯 Definir meu Preço-Alvo**: abaixo da cotação é um ponto de compra (avisa quando o preço cair até ele),
 acima é um ponto de venda. O agendador confere a cotação a cada 10 minutos no pregão (`PRECO_ALVO_CRON`); quando chega no alvo,
-aparece o aviso no painel (via website) e, para o dono, a mensagem no celular: Telegram, ntfy e/ou WhatsApp pelo CallMeBot, grátis
-(`CALLMEBOT_WHATSAPP_NUMERO` e `CALLMEBOT_WHATSAPP_APIKEY`, passo a passo no [DEPLOY.md](DEPLOY.md#alerta-de-preço-alvo-no-whatsapp-callmebot-grátis)).
+aparece o aviso no painel (via website) e, para o dono, a mensagem no celular: WhatsApp (API oficial da Meta ou CallMeBot, os dois grátis), Telegram e/ou ntfy
+(passo a passo no [DEPLOY.md](DEPLOY.md#alerta-de-preço-alvo-no-whatsapp)).
 Cada pessoa tem os seus alvos (tabela `precos_alvo`); cada alvo avisa uma vez. `lib/precoAlvo.ts` e `lib/whatsapp.ts`.
 

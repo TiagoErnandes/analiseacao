@@ -58,5 +58,5 @@ export async function testarAlerta(): Promise<{ ok: boolean; mensagem: string }>
   });
   return ok
     ? { ok, mensagem: "Alerta de teste enviado. Confira o celular." }
-    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou CALLMEBOT_WHATSAPP_NUMERO e CALLMEBOT_WHATSAPP_APIKEY no .env.production." };
+    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (WHATSAPP_NUMERO e WHATSAPP_META_* ou CALLMEBOT_WHATSAPP_APIKEY) no .env.production. Se já configurou, veja o motivo no log do agendador." };
 }

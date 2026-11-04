@@ -54,26 +54,51 @@ para todos. Só o dono roda a análise na hora, escolhe o modo da IA, mexe na li
 Para desligar o login, apague `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` do `.env.production` e reinicie: o site volta a ter
 uma carteira só (a do dono). Se o Google recusar o endereço sslip.io, use um domínio próprio (troque nos passos 4 e 5 e no Nginx).
 
-## Alerta de preço-alvo no WhatsApp (CallMeBot, grátis)
+## Alerta de preço-alvo no WhatsApp
 
 O botão **🎯 Definir meu Preço-Alvo** (página de cada ativo) avisa quando a cotação chega no seu preço. O aviso aparece no
-painel e, para o dono do site, chega no celular pelos mesmos canais dos alertas de venda: **Telegram** e/ou ntfy (veja o
-`.env.production.example`) e o **WhatsApp** pelo CallMeBot (grátis, uso pessoal: só manda para o seu próprio número).
-Se o robô do CallMeBot estiver lotado (o site diz "capacidade máxima" e não mostra o número), use o Telegram até abrir vaga.
+painel e, para o dono do site, chega no celular pelos mesmos canais dos alertas de venda: **WhatsApp**, Telegram e/ou ntfy.
+Para o WhatsApp há dois caminhos grátis; basta um.
 
-1. Salve o número **+34 694 25 79 20** nos contatos do celular (é o bot do CallMeBot; confira o número atual em
-   https://www.callmebot.com/blog/free-api-whatsapp-messages/).
-2. Mande para ele, pelo WhatsApp, a mensagem: `I allow callmebot to send me messages`
-3. O bot responde com a sua **apikey** (alguns números, às vezes leva uns minutos).
-4. No `.env.production` da VPS:
-   ```
-   CALLMEBOT_WHATSAPP_NUMERO=+5531999999999
-   CALLMEBOT_WHATSAPP_APIKEY=123456
-   ```
-5. Reinicie: `docker compose -f docker-compose.prod.yml up -d` e use **Testar no celular** no painel ("Alertas da carteira").
+### Caminho 1: API oficial do WhatsApp (Meta), recomendado
 
+Usa o número de teste que a Meta dá de graça (manda para até 5 números cadastrados). A mensagem chega de outro número,
+então o celular toca a notificação.
+
+1. Entre em https://developers.facebook.com com a sua conta do Facebook, clique em **Meus apps → Criar app** e escolha o
+   caso de uso do **WhatsApp** (conectar com clientes pelo WhatsApp). A Meta cria um número de teste e uma conta do WhatsApp Business.
+2. No app, abra **WhatsApp → Configuração da API**:
+   - copie o **Identificador do número de telefone** (Phone number ID) → `WHATSAPP_META_PHONE_ID`;
+   - em **Para**, adicione o seu número (+55 31 9...) e digite o código que chega no seu WhatsApp.
+3. **Token permanente** (o da tela de configuração vale só 24 horas): em https://business.facebook.com/settings, **Usuários →
+   Usuários do sistema → Adicionar** (função Administrador), depois **Atribuir ativos** (o app, controle total) e **Gerar token**
+   com as permissões `whatsapp_business_messaging` e `whatsapp_business_management`, validade "Nunca" → `WHATSAPP_META_TOKEN`.
+4. **Modelo de mensagem** (a Meta só entrega mensagem que você não pediu se for um modelo aprovado): no WhatsApp Manager,
+   **Modelos de mensagem → Criar modelo**, categoria **Utilidade**, nome `alerta_carteira`, idioma **Português (BR)**, corpo:
+   ```
+   Alerta da sua carteira: {{1}}. Confira no site antes de decidir.
+   ```
+   Exemplo do {{1}}: `PETR4 está no ponto de COMPRA · Cotação: R$ 30,00 · Seu preço-alvo: R$ 30,50`. A aprovação costuma levar minutos.
+5. No `.env.production`:
+   ```
+   WHATSAPP_NUMERO=+5531999999999
+   WHATSAPP_META_PHONE_ID=123456789012345
+   WHATSAPP_META_TOKEN=EAAG...
+   WHATSAPP_META_MODELO=alerta_carteira
+   ```
+
+### Caminho 2: CallMeBot
+
+Salve o número do robô que aparece em https://www.callmebot.com/blog/free-api-whatsapp-messages/ e mande para ele
+`I allow callmebot to send me messages`. Ele responde com a apikey → `CALLMEBOT_WHATSAPP_APIKEY` (com `WHATSAPP_NUMERO`).
+Às vezes o robô fica lotado e o site não mostra o número: tente de novo em alguns dias.
+
+### Depois
+
+Reinicie (`docker compose -f docker-compose.prod.yml up -d`) e clique em **Testar no celular** no painel ("Alertas da carteira").
+Se der erro, o motivo aparece no log do agendador (`docker compose -f docker-compose.prod.yml logs agendador`).
 O vigia confere os alvos a cada 10 minutos no pregão (`PRECO_ALVO_CRON`, padrão `*/10 10-18 * * 1-5`). Cada alvo avisa uma vez;
-para avisar de novo, defina o alvo outra vez. Com o WhatsApp configurado, os alertas de venda da carteira também chegam por lá.
+para avisar de novo, defina o alvo outra vez. Os alertas de venda da carteira também chegam pelo WhatsApp.
 
 ## Dia a dia
 

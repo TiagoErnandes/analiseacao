@@ -167,11 +167,11 @@ export function PrecoAlvo({
               <div className="space-y-3 border-t border-borda pt-5">
                 <p className="text-sm font-semibold">Defina como você gostaria de receber o alerta do seu Preço-Alvo.</p>
                 <Chave icone="🖥️" rotulo="Via website" ligado={viaSite} onChange={setViaSite} />
-                {podeWhatsapp && <Chave icone="💬" rotulo="Via celular (WhatsApp / Telegram)" ligado={viaZap} onChange={setViaZap} />}
+                {podeWhatsapp && <Chave icone="💬" rotulo="Via WhatsApp" ligado={viaZap} onChange={setViaZap} />}
                 {podeWhatsapp && !whatsappPronto && viaZap && (
                   <p className="text-xs leading-snug text-amber-300">
                     Nenhum canal do celular está configurado no servidor: preencha o Telegram (TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID) ou o
-                    WhatsApp (CALLMEBOT_WHATSAPP_NUMERO e CALLMEBOT_WHATSAPP_APIKEY) no .env.production. Até lá, o aviso aparece só no site.
+                    WhatsApp (WHATSAPP_NUMERO e WHATSAPP_META_* ou CALLMEBOT_WHATSAPP_APIKEY) no .env.production; passo a passo no DEPLOY.md. Até lá, o aviso aparece só no site.
                   </p>
                 )}
               </div>
