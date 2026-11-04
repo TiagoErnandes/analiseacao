@@ -46,6 +46,8 @@ async function garantirTabela() {
       preco_atingido  numeric,
       visto           boolean not null default false
     );
+    -- Quando o aviso chegou no celular (vazio: ainda não chegou; o vigia tenta de novo por até 24 horas)
+    alter table precos_alvo add column if not exists celular_enviado_em timestamptz;
     create unique index if not exists precos_alvo_usuario_ticker on precos_alvo (usuario_id, ticker) nulls not distinct;
   `);
   pronto = true;
@@ -94,7 +96,7 @@ export async function salvarPrecoAlvo(
      on conflict (usuario_id, ticker) do update set
        tipo = excluded.tipo, moeda = excluded.moeda, preco_alvo = excluded.preco_alvo, preco_criacao = excluded.preco_criacao,
        direcao = excluded.direcao, via_site = excluded.via_site, via_whatsapp = excluded.via_whatsapp,
-       criado_em = now(), atingido_em = null, preco_atingido = null, visto = false
+       criado_em = now(), atingido_em = null, preco_atingido = null, visto = false, celular_enviado_em = null
      returning ${CAMPOS}`,
     [usuarioId, d.ticker, d.tipo, d.moeda, d.precoAlvo, d.precoAtual, direcao, d.viaSite, d.viaWhatsapp],
   );
@@ -138,18 +140,18 @@ export function aviso(a: Pick<PrecoAlvo, "ticker" | "direcao" | "preco_alvo" | "
   };
 }
 
+/** Quanto tempo o vigia continua tentando mandar para o celular um alvo atingido (ex.: WhatsApp ainda não conectado). */
+const TENTAR_CELULAR_HORAS = 24;
+
 /**
  * Confere todos os alvos ainda não atingidos (de todas as pessoas). Roda no vigia do agendador.
  * Cada alvo avisa uma vez só; para avisar de novo, a pessoa define o alvo outra vez.
+ * Se o celular falhar (WhatsApp desconectado ou ainda não configurado), o aviso fica no site e o vigia
+ * tenta mandar de novo a cada rodada, por até 24 horas.
  */
 export async function vigiarPrecosAlvo(): Promise<number> {
   await garantirTabela();
-  const pendentes = await query<PrecoAlvo & { dono: boolean }>(
-    `select ${CAMPOS.split(", ").map((c) => `p.${c}`).join(", ")}, coalesce(u.admin, p.usuario_id is null) as dono
-       from precos_alvo p left join usuarios u on u.id = p.usuario_id
-      where p.atingido_em is null`,
-  );
-  if (!pendentes.length) return 0;
+  const pendentes = await query<PrecoAlvo>(`select ${CAMPOS} from precos_alvo where atingido_em is null`);
   // Uma cotação por ativo, mesmo que várias pessoas tenham alvo nele
   const cotacoes = new Map<string, number | null>();
   for (const p of pendentes) {
@@ -161,7 +163,6 @@ export async function vigiarPrecosAlvo(): Promise<number> {
     const p = normalizar(bruto);
     const preco = cotacoes.get(simboloYahoo(p.ticker, (p.tipo as Tipo | null) ?? null));
     if (preco == null || !atingiu(p.direcao, preco, p.preco_alvo)) continue;
-    // Marca antes de enviar: se o envio falhar, não fica mandando de novo a cada 30 minutos
     const [marcado] = await query<{ id: number }>(
       "update precos_alvo set atingido_em = now(), preco_atingido = $2 where id = $1 and atingido_em is null returning id",
       [p.id, preco],
@@ -169,8 +170,26 @@ export async function vigiarPrecosAlvo(): Promise<number> {
     if (!marcado) continue;
     avisos++;
     console.log(`  PREÇO-ALVO ${p.ticker} (${p.direcao}): cotação ${preco}, alvo ${p.preco_alvo}`);
-    // Celular (WhatsApp, Telegram, ntfy): só o dono do site (as chaves ficam no .env.production)
-    if (p.via_whatsapp && bruto.dono) await enviarCelular(aviso(p, preco, process.env.SITE_URL));
+  }
+
+  // Celular (WhatsApp, Telegram, ntfy): só o dono do site (as chaves ficam no .env.production)
+  const paraCelular = await query<PrecoAlvo>(
+    `select ${CAMPOS.split(", ").map((c) => `p.${c}`).join(", ")}
+       from precos_alvo p left join usuarios u on u.id = p.usuario_id
+      where p.via_whatsapp and p.atingido_em is not null and p.celular_enviado_em is null
+        and p.atingido_em > now() - make_interval(hours => $1::int)
+        and coalesce(u.admin, p.usuario_id is null)`,
+    [TENTAR_CELULAR_HORAS],
+  );
+  if (paraCelular.length && !celularConfigurado()) {
+    console.log(`  Preço-alvo: ${paraCelular.length} aviso(s) esperando o WhatsApp ser configurado`);
+  } else {
+    for (const bruto of paraCelular) {
+      const p = normalizar(bruto);
+      if (await enviarCelular(aviso(p, p.preco_atingido ?? p.preco_alvo, process.env.SITE_URL))) {
+        await query("update precos_alvo set celular_enviado_em = now() where id = $1", [p.id]);
+      }
+    }
   }
   console.log(`Preço-alvo: ${pendentes.length} alvos conferidos, ${avisos} atingidos`);
   return avisos;

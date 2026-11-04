@@ -170,8 +170,8 @@ export function PrecoAlvo({
                 {podeWhatsapp && <Chave icone="💬" rotulo="Via WhatsApp" ligado={viaZap} onChange={setViaZap} />}
                 {podeWhatsapp && !whatsappPronto && viaZap && (
                   <p className="text-xs leading-snug text-amber-300">
-                    Nenhum canal do celular está configurado no servidor: preencha o Telegram (TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID) ou o
-                    WhatsApp (WHATSAPP_NUMERO e EVOLUTION_API_KEY) no .env.production; passo a passo no DEPLOY.md. Até lá, o aviso aparece só no site.
+                    O WhatsApp ainda não está conectado. Pode deixar ligado: o aviso aparece no site na hora e, assim que o WhatsApp
+                    for conectado (card "WhatsApp dos alertas" no painel), os próximos avisos chegam lá também.
                   </p>
                 )}
               </div>
