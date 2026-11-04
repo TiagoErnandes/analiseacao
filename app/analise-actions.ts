@@ -59,5 +59,24 @@ export async function testarAlerta(): Promise<{ ok: boolean; mensagem: string }>
   });
   return ok
     ? { ok, mensagem: "Alerta de teste enviado. Confira o celular." }
-    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (WHATSAPP_NUMERO e WHATSAPP_META_* ou CALLMEBOT_WHATSAPP_APIKEY) no .env.production. Se já configurou, veja o motivo no log do agendador." };
+    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (WHATSAPP_NUMERO com EVOLUTION_API_KEY, WHATSAPP_META_* ou CALLMEBOT_WHATSAPP_APIKEY) no .env.production; na Evolution, conecte o chip no card “WhatsApp dos alertas”. Se já configurou, veja o motivo no log do agendador." };
+}
+
+/** WhatsApp próprio (Evolution API): situação, QR code para conectar o chip e desconectar. Só o dono. */
+export async function whatsappEstado() {
+  if (!(await usuarioAtual())?.admin) return { estado: "erro" as const, mensagem: "Só o dono do site." };
+  const { estadoEvolution } = await import("@/lib/whatsapp");
+  return estadoEvolution();
+}
+
+export async function whatsappConectar() {
+  if (!(await usuarioAtual())?.admin) return { estado: "erro" as const, mensagem: "Só o dono do site." };
+  const { conectarEvolution } = await import("@/lib/whatsapp");
+  return conectarEvolution();
+}
+
+export async function whatsappDesconectar() {
+  if (!(await usuarioAtual())?.admin) return;
+  const { desconectarEvolution } = await import("@/lib/whatsapp");
+  await desconectarEvolution();
 }

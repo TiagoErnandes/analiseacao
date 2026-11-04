@@ -171,7 +171,7 @@ export function PrecoAlvo({
                 {podeWhatsapp && !whatsappPronto && viaZap && (
                   <p className="text-xs leading-snug text-amber-300">
                     Nenhum canal do celular está configurado no servidor: preencha o Telegram (TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID) ou o
-                    WhatsApp (WHATSAPP_NUMERO e WHATSAPP_META_* ou CALLMEBOT_WHATSAPP_APIKEY) no .env.production; passo a passo no DEPLOY.md. Até lá, o aviso aparece só no site.
+                    WhatsApp (WHATSAPP_NUMERO e EVOLUTION_API_KEY) no .env.production; passo a passo no DEPLOY.md. Até lá, o aviso aparece só no site.
                   </p>
                 )}
               </div>

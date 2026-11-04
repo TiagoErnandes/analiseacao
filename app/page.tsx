@@ -17,6 +17,8 @@ import { AlertasVenda } from "./AlertasVenda";
 import { alertasRecentes } from "@/lib/alertas";
 import { precosAlvoDoUsuario } from "@/lib/precoAlvo";
 import { AvisosPrecoAlvo } from "./AvisosPrecoAlvo";
+import { ConectarWhatsapp } from "./ConectarWhatsapp";
+import { evolutionAtiva } from "@/lib/whatsapp";
 import { exigirUsuario } from "@/lib/auth";
 import { ehBesst } from "@/lib/besst";
 import { Alertas, Cartao, Kpi, Nota, ReguaTeto, Score, Sinal, Variacao, Vazio } from "./ui";
@@ -311,6 +313,7 @@ export default async function Painel() {
       )}
 
       {usuario.admin && <AlertasVenda alertas={alertas} />}
+      {usuario.admin && evolutionAtiva() && <ConectarWhatsapp destino={process.env.WHATSAPP_NUMERO || null} />}
 
       {posicoes.some((p) => p.a?.alertas) && (
         <Cartao titulo="Pontos de atenção nos dados (análise de hoje)">
