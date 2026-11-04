@@ -74,17 +74,20 @@ então o celular toca a notificação.
    Usuários do sistema → Adicionar** (função Administrador), depois **Atribuir ativos** (o app, controle total) e **Gerar token**
    com as permissões `whatsapp_business_messaging` e `whatsapp_business_management`, validade "Nunca" → `WHATSAPP_META_TOKEN`.
 4. **Modelo de mensagem** (a Meta só entrega mensagem que você não pediu se for um modelo aprovado): no WhatsApp Manager,
-   **Modelos de mensagem → Criar modelo**, categoria **Utilidade**, nome `alerta_carteira`, idioma **Português (BR)**, corpo:
+   **Modelos de mensagem → Criar modelo**, categoria **Utilidade**, nome `alerta_preco_alvo`, idioma **Português (BR)**, corpo:
    ```
-   Alerta da sua carteira: {{1}}. Confira no site antes de decidir.
+   Seu alerta de preço-alvo foi acionado: {{1}}. Cotação atual: {{2}}. Seu preço-alvo: {{3}}. Você recebe este aviso porque cadastrou este alerta na sua conta.
    ```
-   Exemplo do {{1}}: `PETR4 está no ponto de COMPRA · Cotação: R$ 30,00 · Seu preço-alvo: R$ 30,50`. A aprovação costuma levar minutos.
+   Exemplos: {{1}} `PETR4 chegou no ponto de compra`, {{2}} `R$ 30,00`, {{3}} `R$ 30,50`. Texto vago (só um {{1}}) a Meta
+   classifica como Marketing e rejeita em Utilidade. A aprovação costuma levar minutos.
+   Opcional, para os alertas de venda também chegarem no WhatsApp: outro modelo de Utilidade, `alerta_carteira`, com um campo
+   (`Alerta sobre um ativo da sua carteira: {{1}}. Você recebe este aviso porque ativou os alertas da carteira.`) → `WHATSAPP_META_MODELO_ALERTA`.
 5. No `.env.production`:
    ```
    WHATSAPP_NUMERO=+5531999999999
    WHATSAPP_META_PHONE_ID=123456789012345
    WHATSAPP_META_TOKEN=EAAG...
-   WHATSAPP_META_MODELO=alerta_carteira
+   WHATSAPP_META_MODELO=alerta_preco_alvo
    ```
 
 ### Caminho 2: CallMeBot

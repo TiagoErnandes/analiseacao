@@ -1,6 +1,7 @@
 // WhatsApp do dono do site, por um destes dois caminhos (os dois são grátis; use um só):
 // - API oficial da Meta (WhatsApp Cloud API) com o número de teste: WHATSAPP_META_TOKEN, WHATSAPP_META_PHONE_ID
-//   e WHATSAPP_META_MODELO (o modelo de mensagem aprovado). Chega de outro número, então toca a notificação.
+//   e os modelos de mensagem aprovados: WHATSAPP_META_MODELO (preço-alvo, 3 campos) e WHATSAPP_META_MODELO_ALERTA
+//   (alertas de venda, 1 campo; opcional). Chega de outro número, então toca a notificação.
 // - CallMeBot (uso pessoal): CALLMEBOT_WHATSAPP_APIKEY, a chave que o robô manda.
 // Nos dois, WHATSAPP_NUMERO é o seu número, com o código do país. Passo a passo no DEPLOY.md.
 
@@ -14,23 +15,27 @@ const soDigitos = (n: string) => n.replace(/\D/g, "");
 
 const limpar = (corpo: string) => corpo.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300);
 
+/** Modelo aprovado na Meta e os valores de cada {{n}}, na ordem. */
+export type ModeloMeta = { nome: string | undefined; parametros?: string[] };
+
 /**
  * API oficial da Meta. Fora da janela de 24 horas (você não mandou mensagem para o número nas últimas 24 h),
- * a Meta só entrega um modelo aprovado: o texto vai inteiro no {{1}} do modelo WHATSAPP_META_MODELO.
+ * a Meta só entrega um modelo aprovado. Sem os parâmetros, o texto vai inteiro no {{1}}.
  * Sem modelo, manda texto livre (só chega dentro da janela de 24 horas).
  */
-async function enviarMeta(texto: string): Promise<boolean> {
+async function enviarMeta(texto: string, m?: ModeloMeta): Promise<boolean> {
   const versao = process.env.WHATSAPP_META_VERSAO || "v25.0";
-  const modelo = process.env.WHATSAPP_META_MODELO;
+  const modelo = m?.nome;
   // O parâmetro do modelo não aceita quebra de linha nem mais de 4 espaços seguidos
-  const umaLinha = texto.split("\n").map((l) => l.trim()).filter(Boolean).join(" · ").replace(/\s{4,}/g, " ").slice(0, 1000);
+  const umaLinha = (t: string) => t.split("\n").map((l) => l.trim()).filter(Boolean).join(" · ").replace(/\s{4,}/g, " ").slice(0, 1000);
+  const parametros = (m?.parametros ?? [texto]).map((t) => ({ type: "text", text: umaLinha(t) }));
   const mensagem = modelo
     ? {
         type: "template",
         template: {
           name: modelo,
           language: { code: process.env.WHATSAPP_META_IDIOMA || "pt_BR" },
-          components: [{ type: "body", parameters: [{ type: "text", text: umaLinha }] }],
+          components: [{ type: "body", parameters: parametros }],
         },
       }
     : { type: "text", text: { body: texto.slice(0, 4000), preview_url: false } };
@@ -62,8 +67,8 @@ async function enviarCallmebot(texto: string): Promise<boolean> {
 }
 
 /** Envia o texto para o WhatsApp do dono. Tenta a Meta e, se falhar ou não estiver configurada, o CallMeBot. */
-export async function enviarWhatsapp(texto: string): Promise<boolean> {
-  if (meta() && (await enviarMeta(texto))) return true;
+export async function enviarWhatsapp(texto: string, modelo?: ModeloMeta): Promise<boolean> {
+  if (meta() && (await enviarMeta(texto, modelo))) return true;
   if (callmebot()) return enviarCallmebot(texto);
   return false;
 }

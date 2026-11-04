@@ -126,6 +126,15 @@ export function aviso(a: Pick<PrecoAlvo, "ticker" | "direcao" | "preco_alvo" | "
     motivo: "Confira a análise antes de decidir.",
     link: site ? `${site.replace(/\/$/, "")}/acao/${a.ticker}` : null,
     tag: "dart",
+    // Modelo da Meta: "Seu alerta de preço-alvo foi acionado: {{1}}. Cotação atual: {{2}}. Seu preço-alvo: {{3}}. ..."
+    modelo: {
+      nome: process.env.WHATSAPP_META_MODELO,
+      parametros: [
+        `${a.ticker} ${a.direcao === "compra" ? "chegou no ponto de compra" : "chegou no preço de venda"}`,
+        valor(preco, a.moeda),
+        valor(a.preco_alvo, a.moeda),
+      ],
+    },
   };
 }
 

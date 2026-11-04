@@ -48,13 +48,14 @@ export async function salvarEstrategia(escolha: EscolhaEstrategia) {
 /** Manda um alerta de teste para o celular (confere se o Telegram, o ntfy ou o WhatsApp estão configurados). */
 export async function testarAlerta(): Promise<{ ok: boolean; mensagem: string }> {
   if (!(await usuarioAtual())?.admin) return { ok: false, mensagem: "Os alertas no celular são só do dono do site." };
-  const { enviar } = await import("@/lib/alertas");
-  const ok = await enviar({
-    ticker: "TESTE",
-    nivel: "ATENCAO",
-    titulo: "Teste do alerta de venda",
-    motivo: "Se você recebeu isto, os alertas da sua carteira vão chegar aqui.",
+  const { enviarCelular } = await import("@/lib/alertas");
+  // No WhatsApp da Meta, o teste usa o modelo do preço-alvo (o único obrigatório)
+  const ok = await enviarCelular({
+    cabecalho: "⚠️ Teste do alerta",
+    titulo: "Teste do alerta da carteira",
+    motivo: "Se você recebeu isto, os alertas da sua carteira e do preço-alvo vão chegar aqui.",
     link: null,
+    modelo: { nome: process.env.WHATSAPP_META_MODELO, parametros: ["TESTE chegou no ponto de compra", "R$ 10,00", "R$ 10,00"] },
   });
   return ok
     ? { ok, mensagem: "Alerta de teste enviado. Confira o celular." }
