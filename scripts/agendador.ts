@@ -3,6 +3,7 @@ import cron from "node-cron";
 import { rodarAnalise } from "../lib/analise";
 import { vigiarCarteira } from "../lib/alertas";
 import { atualizarPrecosDoDia } from "../lib/precosAoVivo";
+import { vigiarPrecosAlvo } from "../lib/precoAlvo";
 
 const HORARIO = process.env.ANALISE_CRON ?? "0 7 * * 1-5";
 // Vigia de alertas de venda: a cada 30 minutos, das 7h às 22h, todos os dias (notícia sai também no fim de semana)
@@ -45,4 +46,19 @@ cron.schedule(
   { timezone: "America/Sao_Paulo" },
 );
 console.log(`Atualização de preços ativa: "${PRECOS}"`);
+
+// Preço-alvo: a cada 10 minutos no horário do pregão (cada alvo avisa uma vez só, no site e no WhatsApp)
+const PRECO_ALVO = process.env.PRECO_ALVO_CRON ?? "*/10 10-18 * * 1-5";
+let conferindoAlvos = false;
+cron.schedule(
+  PRECO_ALVO,
+  async () => {
+    if (conferindoAlvos) return;
+    conferindoAlvos = true;
+    await vigiarPrecosAlvo().catch((err) => console.warn(`Preço-alvo falhou: ${(err as Error).message}`));
+    conferindoAlvos = false;
+  },
+  { timezone: "America/Sao_Paulo" },
+);
+console.log(`Vigia de preço-alvo ativo: "${PRECO_ALVO}"`);
 console.log(`Agendador ativo: "${HORARIO}" (America/Sao_Paulo)`);

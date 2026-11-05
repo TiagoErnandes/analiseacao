@@ -169,6 +169,43 @@ export async function modoIa(): Promise<ModoIa> {
   return v === "sem_ia" || v === "completo" || v === "economico" || v === "gemini_busca" ? v : "gratis";
 }
 
+type NotaDaIa = SaidaIa["acoes"][number];
+
+/** Maior validade de uma nota da IA (a do modo econômico): é o quanto a atualização sem IA aproveita das notas guardadas. */
+const VALIDADE_MAXIMA_NOTA_DIAS = 7;
+
+/** Última nota da IA de cada ativo, sem olhar se os dados mudaram desde então (para atualizar preços sem perder as notas). */
+async function notasGuardadasDaIa(): Promise<Map<string, NotaDaIa>> {
+  const linhas = await query<{ ticker: string; nota: number | string | null; recomendacao: string | null; resumo: string | null; riscos: string | null }>(
+    `select ticker, nota, recomendacao, resumo, riscos from cache_ia
+      where analisado_em > now() - make_interval(days => $1::int)`,
+    [VALIDADE_MAXIMA_NOTA_DIAS],
+  );
+  return new Map(
+    linhas
+      .filter((c) => c.nota != null)
+      .map((c) => [
+        c.ticker.toUpperCase(),
+        { ticker: c.ticker.toUpperCase(), nota: Number(c.nota), recomendacao: (c.recomendacao ?? "AGUARDAR") as "COMPRAR", resumo: c.resumo ?? "", riscos: c.riscos ?? "" },
+      ]),
+  );
+}
+
+/** Recalcula a nota final de cada linha já com a nota da IA guardada (usada para escolher a ação do dia sem chamar a IA). */
+function comNotaReaproveitada<L extends { ticker: string; margem: number | null; qualidade: number | null; falta_para_ideal: number | null; tipo: string; alertas: string[] }>(
+  linhas: L[],
+  notas: Map<string, NotaDaIa>,
+  balancear: boolean,
+): L[] {
+  return linhas.map((l) => ({
+    ...l,
+    score_sem_ia: Math.round(
+      scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: notas.get(l.ticker)?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }) *
+        fatorScore(l),
+    ),
+  }));
+}
+
 /** Alertas que impedem o COMPRAR do cálculo, mesmo abaixo do teto: são os sinais clássicos de armadilha de dividendo. */
 const ALERTA_GRAVE =
   /prejuízo nos últimos 12 meses|prejuízo em algum dos últimos 5 anos|menos de 5 anos de balanço|empresa pequena|fundo pequeno|insustentável|dívida líquida acima|anos de EBIT|EBIT negativo|acima do que gera|dividendo caindo/;
@@ -411,7 +448,16 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   let ia: SaidaIa;
   let custo: CustoIa | null = null;
   if (modo === "sem_ia") {
-    ia = decisaoPorCalculo(linhas, "Análise feita só pelo cálculo (modo sem IA).");
+    // Sem IA só atualiza preços e cálculo: as notas da última análise com IA continuam valendo
+    for (const [t, n] of await notasGuardadasDaIa()) reaproveitadas.set(t, n);
+    const comNota = comNotaReaproveitada(linhas, reaproveitadas, balancear);
+    ia = decisaoPorCalculo(
+      comNota,
+      reaproveitadas.size
+        ? "Análise sem IA: preços e cálculo atualizados, mantendo as notas da última análise com IA."
+        : "Análise feita só pelo cálculo (modo sem IA).",
+    );
+    ia.acoes = [...reaproveitadas.values()];
   } else {
     try {
       // Só vai para a IA o que mudou desde a última nota; o resto reaproveita a nota guardada
@@ -439,13 +485,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
 
       if (mudaram.length === 0) {
         // Nada mudou: nenhuma chamada. A ação do dia sai da nota final, que já inclui as notas guardadas da IA.
-        const comNota = linhas.map((l) => ({
-          ...l,
-          score_sem_ia: Math.round(
-            scoreFinal({ margem: l.margem, qualidade: l.qualidade, notaIa: reaproveitadas.get(l.ticker)?.nota ?? null, faltaParaIdeal: l.falta_para_ideal, balancear }) *
-              fatorScore(l),
-          ),
-        }));
+        const comNota = comNotaReaproveitada(linhas, reaproveitadas, balancear);
         ia = decisaoPorCalculo(comNota, "Nenhum ativo mudou desde a última análise com IA: as notas foram reaproveitadas, sem custo.");
         ia.acoes = [...reaproveitadas.values()];
         economiaDaExecucao = custoPorAtivo * iguais.length;
@@ -494,8 +534,13 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       const bruto = (err as Error).message ?? String(err);
       const motivo = /credit balance/i.test(bruto) ? "sem créditos na conta da Anthropic" : bruto;
       console.warn(`  IA indisponível, usando só o cálculo: ${motivo}`);
-      ia = decisaoPorCalculo(linhas, `A IA não respondeu (${motivo.slice(0, 160)}). Análise feita só pelo cálculo.`);
-      ia.acoes = [...reaproveitadas.values()]; // as notas guardadas continuam valendo
+      // As notas guardadas continuam valendo, mesmo as de ativos cujos dados mudaram um pouco desde então
+      for (const [t, n] of await notasGuardadasDaIa().catch(() => new Map<string, NotaDaIa>())) if (!reaproveitadas.has(t)) reaproveitadas.set(t, n);
+      ia = decisaoPorCalculo(
+        comNotaReaproveitada(linhas, reaproveitadas, balancear),
+        `A IA não respondeu (${motivo.slice(0, 160)}). Análise feita só pelo cálculo${reaproveitadas.size ? ", mantendo as últimas notas da IA" : ""}.`,
+      );
+      ia.acoes = [...reaproveitadas.values()];
     }
   }
   custoDaExecucao = custo;
@@ -586,7 +631,16 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   etapa("salvando o resultado");
   const errosIndices = await atualizarIndices();
   if (errosIndices.length) console.warn(`  Índices de referência: ${errosIndices.join("; ")}`);
-  await salvarRelatorio({
+  // Rodou sem chamar a IA no mesmo dia de uma análise com IA: mantém o relatório (ação do dia, cenário) que a IA escreveu
+  const [iaHoje] = custo
+    ? []
+    : await query<{ ok: number }>(
+        `select 1 as ok from relatorio_diario r
+          where r.data = $1 and exists (select 1 from cache_ia c where (c.analisado_em at time zone 'America/Sao_Paulo')::date = $1::date)`,
+        [hoje],
+      );
+  if (iaHoje) console.log("  Relatório do dia mantido: veio da análise com IA de hoje.");
+  else await salvarRelatorio({
     data: hoje,
     contexto_mercado: ia.contexto_mercado,
     acao_do_dia_carteira: ia.acao_do_dia_carteira.toUpperCase(),

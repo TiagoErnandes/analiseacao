@@ -35,6 +35,8 @@ echo "==> Extraindo e reconstruindo na VPS..."
 ssh "${VPS_USER}@${VPS_HOST}" \
   "mkdir -p ${REMOTE_DIR} && find ${REMOTE_DIR} -mindepth 1 -maxdepth 1 ! -name .env.production -exec rm -rf {} + && tar xzf ~/analiseacao.tar.gz -C ${REMOTE_DIR} && rm ~/analiseacao.tar.gz && cd ${REMOTE_DIR} && \
    if [ ! -f .env.production ]; then echo '❌ Falta ${REMOTE_DIR}/.env.production na VPS (veja DEPLOY.md, passo 2)'; exit 1; fi && \
+   ln -sf .env.production .env && \
+   if grep -q '^EVOLUTION_API_KEY=..*' .env.production; then export COMPOSE_PROFILES=whatsapp; echo '==> WhatsApp (Evolution API) ligado'; fi && \
    docker compose -f docker-compose.prod.yml build && \
    { docker compose -f docker-compose.prod.yml up -d || { \
        echo '==> Removendo containers velhos que travaram a troca e tentando de novo...'; \

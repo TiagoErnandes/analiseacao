@@ -45,18 +45,38 @@ export async function salvarEstrategia(escolha: EscolhaEstrategia) {
   revalidatePath("/");
 }
 
-/** Manda um alerta de teste para o celular (confere se o Telegram ou o ntfy estão configurados). */
+/** Manda um alerta de teste para o celular (confere se o Telegram, o ntfy ou o WhatsApp estão configurados). */
 export async function testarAlerta(): Promise<{ ok: boolean; mensagem: string }> {
   if (!(await usuarioAtual())?.admin) return { ok: false, mensagem: "Os alertas no celular são só do dono do site." };
-  const { enviar } = await import("@/lib/alertas");
-  const ok = await enviar({
-    ticker: "TESTE",
-    nivel: "ATENCAO",
-    titulo: "Teste do alerta de venda",
-    motivo: "Se você recebeu isto, os alertas da sua carteira vão chegar aqui.",
+  const { enviarCelular } = await import("@/lib/alertas");
+  // No WhatsApp da Meta, o teste usa o modelo do preço-alvo (o único obrigatório)
+  const ok = await enviarCelular({
+    cabecalho: "⚠️ Teste do alerta",
+    titulo: "Teste do alerta da carteira",
+    motivo: "Se você recebeu isto, os alertas da sua carteira e do preço-alvo vão chegar aqui.",
     link: null,
+    modelo: { nome: process.env.WHATSAPP_META_MODELO, parametros: ["TESTE chegou no ponto de compra", "R$ 10,00", "R$ 10,00"] },
   });
   return ok
     ? { ok, mensagem: "Alerta de teste enviado. Confira o celular." }
-    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID (ou NTFY_TOPICO) no .env.production." };
+    : { ok, mensagem: "Não foi enviado. Configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID, NTFY_TOPICO ou o WhatsApp (WHATSAPP_NUMERO com EVOLUTION_API_KEY, WHATSAPP_META_* ou CALLMEBOT_WHATSAPP_APIKEY) no .env.production; na Evolution, conecte o chip no card “WhatsApp dos alertas”. Se já configurou, veja o motivo no log do agendador." };
+}
+
+/** WhatsApp próprio (Evolution API): situação, QR code para conectar o chip e desconectar. Só o dono. */
+export async function whatsappEstado() {
+  if (!(await usuarioAtual())?.admin) return { estado: "erro" as const, mensagem: "Só o dono do site." };
+  const { estadoEvolution } = await import("@/lib/whatsapp");
+  return estadoEvolution();
+}
+
+export async function whatsappConectar() {
+  if (!(await usuarioAtual())?.admin) return { estado: "erro" as const, mensagem: "Só o dono do site." };
+  const { conectarEvolution } = await import("@/lib/whatsapp");
+  return conectarEvolution();
+}
+
+export async function whatsappDesconectar() {
+  if (!(await usuarioAtual())?.admin) return;
+  const { desconectarEvolution } = await import("@/lib/whatsapp");
+  await desconectarEvolution();
 }

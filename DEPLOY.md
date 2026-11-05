@@ -54,6 +54,78 @@ para todos. Só o dono roda a análise na hora, escolhe o modo da IA, mexe na li
 Para desligar o login, apague `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` do `.env.production` e reinicie: o site volta a ter
 uma carteira só (a do dono). Se o Google recusar o endereço sslip.io, use um domínio próprio (troque nos passos 4 e 5 e no Nginx).
 
+## Alerta de preço-alvo no WhatsApp
+
+O botão **🎯 Definir meu Preço-Alvo** (página de cada ativo) avisa quando a cotação chega no seu preço. O aviso aparece no
+painel e, para o dono do site, chega no celular pelos mesmos canais dos alertas de venda: **WhatsApp**, Telegram e/ou ntfy.
+Para o WhatsApp há três caminhos; basta um.
+
+### Caminho 1: WhatsApp próprio na VPS (Evolution API), recomendado
+
+Um segundo chip manda os avisos para o seu número. Grátis e sem limite, roda num container ao lado do site
+(imagem `evoapicloud/evolution-api`, usa uns 300 MB de memória). Não é oficial: use um chip só para isso.
+
+1. Coloque o chip novo em um celular (pode ser um aparelho velho, ou o WhatsApp Business no seu, se ele tiver dois chips)
+   e crie a conta do WhatsApp nele.
+2. No `.env.production` da VPS:
+   ```
+   WHATSAPP_NUMERO=+5531999999999        # o SEU número, que recebe os avisos
+   EVOLUTION_API_KEY=                    # uma senha qualquer; gere com: openssl rand -hex 24
+   ```
+3. Rode `bash deploy/deploy.sh`. Com `EVOLUTION_API_KEY` preenchida, o deploy sobe também o container `analiseacao_evolution`.
+4. No painel do site, card **WhatsApp dos alertas**, clique em **Conectar WhatsApp**. No celular do chip novo:
+   **⋮ → Dispositivos conectados → Conectar um dispositivo** e leia o QR code. O card muda para "conectado".
+5. Clique em **Testar no celular** (card "Alertas da carteira"). A mensagem chega no seu número, vinda do chip novo.
+
+Deixe o celular do chip ligado na internet de vez em quando: o WhatsApp desconecta os aparelhos conectados se o celular
+ficar uns 14 dias sem abrir. Se desconectar, é só ler o QR de novo. Log: `docker compose -f docker-compose.prod.yml logs evolution`.
+
+### Caminho 2: API oficial do WhatsApp (Meta)
+
+A Meta pode bloquear o número de teste para o Brasil (erro 130497); aí ela pede a verificação da empresa e um número próprio.
+
+
+Usa o número de teste que a Meta dá de graça (manda para até 5 números cadastrados). A mensagem chega de outro número,
+então o celular toca a notificação.
+
+1. Entre em https://developers.facebook.com com a sua conta do Facebook, clique em **Meus apps → Criar app** e escolha o
+   caso de uso do **WhatsApp** (conectar com clientes pelo WhatsApp). A Meta cria um número de teste e uma conta do WhatsApp Business.
+2. No app, abra **WhatsApp → Configuração da API**:
+   - copie o **Identificador do número de telefone** (Phone number ID) → `WHATSAPP_META_PHONE_ID`;
+   - em **Para**, adicione o seu número (+55 31 9...) e digite o código que chega no seu WhatsApp.
+3. **Token permanente** (o da tela de configuração vale só 24 horas): em https://business.facebook.com/settings, **Usuários →
+   Usuários do sistema → Adicionar** (função Administrador), depois **Atribuir ativos** (o app, controle total) e **Gerar token**
+   com as permissões `whatsapp_business_messaging` e `whatsapp_business_management`, validade "Nunca" → `WHATSAPP_META_TOKEN`.
+4. **Modelo de mensagem** (a Meta só entrega mensagem que você não pediu se for um modelo aprovado): no WhatsApp Manager,
+   **Modelos de mensagem → Criar modelo**, categoria **Utilidade**, nome `alerta_preco_alvo`, idioma **Português (BR)**, corpo:
+   ```
+   Seu alerta de preço-alvo foi acionado: {{1}}. Cotação atual: {{2}}. Seu preço-alvo: {{3}}. Você recebe este aviso porque cadastrou este alerta na sua conta.
+   ```
+   Exemplos: {{1}} `PETR4 chegou no ponto de compra`, {{2}} `R$ 30,00`, {{3}} `R$ 30,50`. Texto vago (só um {{1}}) a Meta
+   classifica como Marketing e rejeita em Utilidade. A aprovação costuma levar minutos.
+   Opcional, para os alertas de venda também chegarem no WhatsApp: outro modelo de Utilidade, `alerta_carteira`, com um campo
+   (`Alerta sobre um ativo da sua carteira: {{1}}. Você recebe este aviso porque ativou os alertas da carteira.`) → `WHATSAPP_META_MODELO_ALERTA`.
+5. No `.env.production`:
+   ```
+   WHATSAPP_NUMERO=+5531999999999
+   WHATSAPP_META_PHONE_ID=123456789012345
+   WHATSAPP_META_TOKEN=EAAG...
+   WHATSAPP_META_MODELO=alerta_preco_alvo
+   ```
+
+### Caminho 3: CallMeBot
+
+Salve o número do robô que aparece em https://www.callmebot.com/blog/free-api-whatsapp-messages/ e mande para ele
+`I allow callmebot to send me messages`. Ele responde com a apikey → `CALLMEBOT_WHATSAPP_APIKEY` (com `WHATSAPP_NUMERO`).
+Às vezes o robô fica lotado e o site não mostra o número: tente de novo em alguns dias.
+
+### Depois
+
+Reinicie (`docker compose -f docker-compose.prod.yml up -d`) e clique em **Testar no celular** no painel ("Alertas da carteira").
+Se der erro, o motivo aparece no log do agendador (`docker compose -f docker-compose.prod.yml logs agendador`).
+O vigia confere os alvos a cada 10 minutos no pregão (`PRECO_ALVO_CRON`, padrão `*/10 10-18 * * 1-5`). Cada alvo avisa uma vez;
+para avisar de novo, defina o alvo outra vez. Os alertas de venda da carteira também chegam pelo WhatsApp.
+
 ## Dia a dia
 
 - Mudou o código: `bash deploy/deploy.sh`

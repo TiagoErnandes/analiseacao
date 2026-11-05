@@ -32,5 +32,43 @@ services:
       - postgres
     command: ["npm", "run", "agendador"]
 
+  # WhatsApp próprio (Evolution API): conecta um chip pelo QR code do painel e manda os alertas.
+  # Só sobe com: docker compose -f docker-compose.prod.yml --profile whatsapp up -d (o deploy faz isso se EVOLUTION_API_KEY estiver no .env.production)
+  # Sem porta aberta para fora: o site e o agendador falam com ele por http://evolution:8080, dentro do Docker.
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: analiseacao_evolution
+    restart: unless-stopped
+    profiles: ["whatsapp"]
+    depends_on:
+      - postgres
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: "8080"
+      SERVER_URL: http://evolution:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-}
+      # Mesmo Postgres do app, num schema separado (evolution_api); as variáveis vêm do .env.production
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-analiseacao}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-analiseacao}?schema=evolution_api
+      DATABASE_CONNECTION_CLIENT_NAME: analiseacao
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      DEL_INSTANCE: "false"
+      TELEMETRY_ENABLED: "false"
+      CONFIG_SESSION_PHONE_CLIENT: PrecoTeto
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      QRCODE_LIMIT: "30"
+      LOG_LEVEL: ERROR,WARN
+    volumes:
+      - analiseacao_evolution_instances:/evolution/instances
+
 volumes:
   analiseacao_postgres_data:
+  analiseacao_evolution_instances:
