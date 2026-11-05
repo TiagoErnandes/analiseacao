@@ -224,19 +224,32 @@ export async function gemini(
           }
           throw err;
         });
-      if (!res.ok) {
-        const corpo = (await res.text()).slice(0, 300);
-        ultimoErro = new Error(`Gemini ${modelo} HTTP ${res.status}${res.status === 429 ? " (limite grátis do dia)" : ""}: ${corpo}`);
-        if (res.status === 404) break; // modelo desativado: próximo modelo
-        if (res.status === 429) {
+      let resp = res;
+      // Limite por minuto (comum na chave paga com várias partes em paralelo): espera o tempo que o Google pede e tenta de novo.
+      // Só a cota do dia acabada passa para o próximo modelo.
+      for (let tentativa = 0; resp.status === 429 && tentativa < 3; tentativa++) {
+        const corpo429 = await resp.clone().text();
+        if (/PerDay|per day/i.test(corpo429)) break;
+        const pedido = Number(corpo429.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/)?.[1]);
+        const espera = Math.min(Number.isFinite(pedido) && pedido > 0 ? pedido * 1000 + 1000 : 20_000 * (tentativa + 1), 90_000);
+        console.warn(`  Gemini ${modelo}: limite por minuto (chave ${opcoes.paga ? "paga" : "grátis"}); tentando de novo em ${Math.round(espera / 1000)}s.`);
+        await new Promise((r) => setTimeout(r, espera));
+        resp = await pedir();
+      }
+      if (!resp.ok) {
+        const corpo = (await resp.text()).slice(0, 300);
+        const motivo429 = opcoes.paga ? " (limite da chave paga)" : " (limite grátis)";
+        ultimoErro = new Error(`Gemini ${modelo} HTTP ${resp.status}${resp.status === 429 ? motivo429 : ""}: ${corpo}`);
+        if (resp.status === 404) break; // modelo desativado: próximo modelo
+        if (resp.status === 429) {
           semCota = true;
           console.warn(`  Gemini ${modelo}: cota do dia acabou; tentando o próximo modelo.`);
           break;
         }
-        if (res.status === 400 && (comEsquema || pensarPouco)) continue; // opção recusada: tenta sem ela
+        if (resp.status === 400 && (comEsquema || pensarPouco)) continue; // opção recusada: tenta sem ela
         throw ultimoErro;
       }
-      const j = (await res.json()) as any;
+      const j = (await resp.json()) as any;
       const c = j?.candidates?.[0];
       const texto = ((c?.content?.parts ?? []) as { text?: string; thought?: boolean }[])
         .filter((p) => !p.thought)
@@ -484,10 +497,11 @@ ${pesquisa ? `\nPesquisa:\n${tickers ? trechosDaPesquisa(pesquisa, tickers) : pe
     for (let i = 0; i < selecao.length; i += GEMINI_POR_CHAMADA) partes.push(selecao.slice(i, i + GEMINI_POR_CHAMADA));
     let prontas = 0;
     opcoes.progresso?.(`IA dando as notas (0 de ${partes.length} partes prontas)`);
-    const respostas = await Promise.all(
-      partes.map(async (parte) => {
-        const r = await gemini(SYSTEM, montarPedido(JSON.stringify(parte), parte.map((l) => l.ticker)), { json: true, paga });
-        opcoes.progresso?.(`IA dando as notas (${++prontas} de ${partes.length} partes prontas)`);
+    // Uma parte: com a chave paga; se ela falhar (limite, faturamento), tenta a mesma parte com a chave grátis
+    const notasDaParte = async (parte: LinhaParaIa[]) => {
+      const pedidoParte = montarPedido(JSON.stringify(parte), parte.map((l) => l.ticker));
+      const uma = async (comPaga: boolean) => {
+        const r = await gemini(SYSTEM, pedidoParte, { json: true, paga: comPaga });
         custo.entrada += r.entrada;
         custo.saida += r.saida;
         try {
@@ -495,8 +509,23 @@ ${pesquisa ? `\nPesquisa:\n${tickers ? trechosDaPesquisa(pesquisa, tickers) : pe
         } catch (err) {
           throw new Error(`JSON inválido do Gemini: ${(err as Error).message}`.slice(0, 500));
         }
-      }),
-    );
+      };
+      try {
+        return await uma(paga);
+      } catch (err) {
+        if (!paga || !chaveGemini(false)) throw err;
+        console.warn(`  Gemini com a chave paga falhou numa parte (${(err as Error).message.slice(0, 200)}); tentando com a chave grátis.`);
+        return await uma(false);
+      } finally {
+        opcoes.progresso?.(`IA dando as notas (${++prontas} de ${partes.length} partes prontas)`);
+      }
+    };
+    // Uma parte que falha não apaga as notas das outras: só desiste se todas falharem
+    const resultados = await Promise.allSettled(partes.map(notasDaParte));
+    const respostas = resultados.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    const erros = resultados.flatMap((r) => (r.status === "rejected" ? [(r.reason as Error)?.message ?? String(r.reason)] : []));
+    for (const e of erros) console.warn(`  Gemini falhou em uma parte das notas: ${e}`);
+    if (!respostas.length) throw new Error(erros[0] ?? "Gemini sem resposta");
     const saida = juntarDecisoes(respostas, selecao, reaproveitadas);
     console.log(
       `  IA: Gemini (${modeloGemini}), ${paga ? "chave paga (o custo aparece no AI Studio)" : "grátis"}: ${custo.entrada} tokens de entrada, ${custo.saida} de saída`,
