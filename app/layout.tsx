@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Navegacao } from "./Navegacao";
 import { BuscaAtivo } from "./BuscaAtivo";
 import { FaixaIndices } from "./FaixaIndices";
+import { AtualizaPrecos } from "./AtualizaPrecos";
 import { loginAtivo, usuarioAtual, type Usuario } from "@/lib/auth";
 import "./globals.css";
 
@@ -68,7 +69,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="pt-BR">
       <body className="min-h-screen">
-        <FaixaIndices />
+        <FaixaIndices>
+          <AtualizaPrecos />
+        </FaixaIndices>
         <header className="sticky top-0 z-20 border-b border-borda bg-fundo/85 backdrop-blur">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
             <Marca />
