@@ -66,6 +66,7 @@ npx tsx --env-file=.env.local scripts/analise.ts   # roda a análise na hora
 ## Ajustes
 - **Lista das 30**: tabela `universo` no banco (coluna `ativo`).
 - **Horário da análise**: `ANALISE_CRON` no `.env.production`.
+- **Preços ao longo do dia**: o agendador atualiza só os preços (e margem e DY, que dependem deles) a cada 5 minutos no pregão, com um pedido em lote ao Yahoo para todos os ativos; as páginas abertas se atualizam sozinhas. Frequência: `PRECOS_CRON`.
 - **Yield exigido do Bazin** (juro real, entre 6% e 9%; FIIs entre 8% e 11%): `yieldExigido` em `lib/juros.ts`.
 - **Pesos da nota final**: `scoreFinal` em `lib/valuation.ts`.
 - **Instruções da IA**: `lib/ai.ts`.

@@ -1,6 +1,8 @@
 // Cotação histórica para o gráfico da página de cada ativo e a faixa de índices do topo.
 // Vem do Yahoo Finance (grátis) e fica alguns minutos na memória para não pedir de novo a cada clique.
 
+import { precosYahoo, type PrecoDia } from "./mercado";
+
 const UA = { "User-Agent": "Mozilla/5.0 (compatible; analiseacao/1.0)" };
 
 export const PERIODOS = {
@@ -82,16 +84,12 @@ let indicesMemoria: { ate: number; dados: Indice[] } | null = null;
 
 export async function indicesMercado(): Promise<Indice[]> {
   if (indicesMemoria && indicesMemoria.ate > Date.now()) return indicesMemoria.dados;
-  const res = await Promise.allSettled(
-    INDICES.map(async (i) => {
-      const r = await chart(i.simbolo, "1d", "1d");
-      const preco = r.meta?.regularMarketPrice;
-      const ant = r.meta?.chartPreviousClose ?? r.meta?.previousClose;
-      if (typeof preco !== "number") throw new Error("sem preço");
-      return { nome: i.nome, tipo: i.tipo, valor: preco, variacao: typeof ant === "number" && ant > 0 ? preco / ant - 1 : null } as Indice;
-    }),
-  );
-  const dados = res.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  // Todos os índices num pedido só (e reaproveitando o que já foi buscado há pouco)
+  const precos = await precosYahoo(INDICES.map((i) => i.simbolo), 5).catch(() => new Map<string, PrecoDia>());
+  const dados = INDICES.flatMap((i) => {
+    const p = precos.get(i.simbolo);
+    return p?.preco != null ? [{ nome: i.nome, tipo: i.tipo, valor: p.preco, variacao: p.variacaoDia } as Indice] : [];
+  });
   // Se tudo falhou, tenta de novo em 1 minuto; senão guarda por 5
   indicesMemoria = { ate: Date.now() + (dados.length ? 5 : 1) * 60_000, dados };
   return dados;

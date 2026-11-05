@@ -128,14 +128,92 @@ async function historicoYahoo(simbolo: string): Promise<HistoricoBruto & { fresc
   }
 }
 
-/** Preço de agora e variação do dia (pedido leve, todo dia). */
-export async function precoYahoo(simbolo: string): Promise<{ preco: number | null; variacaoDia: number | null }> {
-  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=1d&interval=1d`, { headers: UA });
-  if (!res.ok) throw new Error(`Yahoo ${simbolo}: HTTP ${res.status}`);
-  const m = ((await res.json()) as any)?.chart?.result?.[0]?.meta;
+export type PrecoDia = { preco: number | null; variacaoDia: number | null };
+
+// Cotação de agora guardada no banco (cache_fontes, chave "preco:SIMBOLO"), compartilhada entre o site, a análise e os vigias:
+// quem pedir o mesmo ativo dentro desse prazo reaproveita, sem novo pedido ao Yahoo.
+const PRECO_FRESCO_MIN = 10;
+const chavePreco = (simbolo: string) => `preco:${simbolo}`;
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function lerMeta(m: any): PrecoDia {
   const preco = typeof m?.regularMarketPrice === "number" ? m.regularMarketPrice : null;
   const anterior = m?.chartPreviousClose ?? m?.previousClose;
   return { preco, variacaoDia: preco != null && typeof anterior === "number" && anterior > 0 ? preco / anterior - 1 : null };
+}
+
+async function precoYahooDireto(simbolo: string): Promise<PrecoDia> {
+  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=1d&interval=1d`, { headers: UA, cache: "no-store" });
+  if (!res.ok) throw new Error(`Yahoo ${simbolo}: HTTP ${res.status}`);
+  return lerMeta(((await res.json()) as any)?.chart?.result?.[0]?.meta);
+}
+
+/** Preço de agora e variação do dia (pedido leve). Reaproveita o que alguém buscou nos últimos minutos. */
+export async function precoYahoo(simbolo: string, maxMinutos = PRECO_FRESCO_MIN): Promise<PrecoDia> {
+  const c = await lerCache<PrecoDia>(chavePreco(simbolo));
+  if (c && c.dados.preco != null && c.idadeDias * 1440 < maxMinutos) return c.dados;
+  const p = await precoYahooDireto(simbolo);
+  if (p.preco != null) await salvarCache(chavePreco(simbolo), p);
+  return p;
+}
+
+/** Vários ativos num pedido só ao Yahoo (até 20 por pedido). Devolve null se o Yahoo recusar o pedido em lote. */
+async function sparkYahoo(simbolos: string[]): Promise<Map<string, PrecoDia> | null> {
+  const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${simbolos.map(encodeURIComponent).join(",")}&range=1d&interval=1d`;
+  const res = await fetch(url, { headers: UA, cache: "no-store" }).catch(() => null);
+  if (!res?.ok) return null;
+  const j = (await res.json().catch(() => null)) as any;
+  const r = new Map<string, PrecoDia>();
+  for (const x of j?.spark?.result ?? []) {
+    const p = lerMeta(x?.response?.[0]?.meta);
+    if (typeof x?.symbol === "string" && p.preco != null) r.set(x.symbol, p);
+  }
+  return j?.spark ? r : null;
+}
+
+let loteRecusadoAte = 0; // se o Yahoo recusar o pedido em lote, usa um por um por um tempo
+
+/**
+ * Preço de agora de vários ativos, com o mínimo de pedidos ao Yahoo: primeiro o que já está no banco (fresco),
+ * depois o resto em lotes de 20 com pausa entre eles; o que faltar vai um por um, devagar.
+ */
+export async function precosYahoo(simbolos: string[], maxMinutos = PRECO_FRESCO_MIN): Promise<Map<string, PrecoDia>> {
+  const unicos = [...new Set(simbolos)];
+  const r = new Map<string, PrecoDia>();
+  try {
+    const linhas = await query<{ chave: string; dados: PrecoDia }>(
+      "select chave, dados from cache_fontes where chave = any($1::text[]) and buscado_em > now() - make_interval(secs => $2)",
+      [unicos.map(chavePreco), maxMinutos * 60],
+    );
+    for (const l of linhas) if (l.dados?.preco != null) r.set(l.chave.slice("preco:".length), l.dados);
+  } catch {
+    /* sem banco: busca tudo */
+  }
+  const faltam = unicos.filter((s) => !r.has(s));
+  const novos = new Map<string, PrecoDia>();
+  if (faltam.length > 1 && Date.now() > loteRecusadoAte) {
+    for (let i = 0; i < faltam.length; i += 20) {
+      if (i) await esperar(1500);
+      const lote = await sparkYahoo(faltam.slice(i, i + 20));
+      if (!lote) {
+        loteRecusadoAte = Date.now() + 60 * 60_000;
+        console.warn("  Yahoo recusou o pedido em lote; usando um por um na próxima hora");
+        break;
+      }
+      for (const [s, p] of lote) novos.set(s, p);
+    }
+  }
+  for (const s of faltam) {
+    if (novos.has(s)) continue;
+    const p = await precoYahooDireto(s).catch(() => null);
+    if (p?.preco != null) novos.set(s, p);
+    await esperar(400);
+  }
+  for (const [s, p] of novos) {
+    r.set(s, p);
+    await salvarCache(chavePreco(s), p);
+  }
+  return r;
 }
 
 async function yahoo(ticker: string, simbolo = `${ticker}.SA`) {

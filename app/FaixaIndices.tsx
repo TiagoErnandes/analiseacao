@@ -5,8 +5,8 @@ import { pctSinal } from "@/lib/format";
 
 type Indice = { nome: string; tipo: "pontos" | "brl"; valor: number; variacao: number | null };
 
-/** Faixa fina com Ibovespa, dólar, S&P 500 e outros, como nas plataformas de mercado. Atualiza a cada 5 minutos. */
-export function FaixaIndices() {
+/** Faixa fina com Ibovespa, dólar, S&P 500 e outros, como nas plataformas de mercado. Atualiza a cada 5 minutos. No fim, a hora dos preços. */
+export function FaixaIndices({ children }: { children?: React.ReactNode }) {
   const [indices, setIndices] = useState<Indice[]>([]);
   useEffect(() => {
     let vivo = true;
@@ -22,7 +22,7 @@ export function FaixaIndices() {
       clearInterval(t);
     };
   }, []);
-  if (!indices.length) return null;
+  if (!indices.length && !children) return null;
   return (
     <div className="border-b border-borda bg-painel/60">
       <div className="mx-auto flex max-w-7xl gap-6 overflow-x-auto px-4 py-1.5 text-xs [scrollbar-width:none]">
@@ -41,6 +41,7 @@ export function FaixaIndices() {
             )}
           </span>
         ))}
+        {children}
       </div>
     </div>
   );
