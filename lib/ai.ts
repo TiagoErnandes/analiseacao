@@ -225,14 +225,16 @@ export async function gemini(
           throw err;
         });
       let resp = res;
-      // Limite por minuto (comum na chave paga com várias partes em paralelo): espera o tempo que o Google pede e tenta de novo.
-      // Só a cota do dia acabada passa para o próximo modelo.
-      for (let tentativa = 0; resp.status === 429 && tentativa < 3; tentativa++) {
-        const corpo429 = await resp.clone().text();
-        if (/PerDay|per day/i.test(corpo429)) break;
-        const pedido = Number(corpo429.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/)?.[1]);
-        const espera = Math.min(Number.isFinite(pedido) && pedido > 0 ? pedido * 1000 + 1000 : 20_000 * (tentativa + 1), 90_000);
-        console.warn(`  Gemini ${modelo}: limite por minuto (chave ${opcoes.paga ? "paga" : "grátis"}); tentando de novo em ${Math.round(espera / 1000)}s.`);
+      // Limite por minuto (comum na chave paga com várias partes em paralelo) e modelo sobrecarregado no Google (HTTP 500/502/503/504,
+      // "high demand"): espera e tenta de novo. Só a cota do dia acabada passa direto para o próximo modelo.
+      const sobrecarga = (s: number) => s === 500 || s === 502 || s === 503 || s === 504;
+      for (let tentativa = 0; (resp.status === 429 || sobrecarga(resp.status)) && tentativa < 3; tentativa++) {
+        const corpoErro = await resp.clone().text();
+        if (resp.status === 429 && /PerDay|per day/i.test(corpoErro)) break;
+        const pedido = Number(corpoErro.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/)?.[1]);
+        const espera = Math.min(Number.isFinite(pedido) && pedido > 0 ? pedido * 1000 + 1000 : [15_000, 30_000, 60_000][tentativa], 90_000);
+        const motivo = resp.status === 429 ? `limite por minuto (chave ${opcoes.paga ? "paga" : "grátis"})` : `Google sobrecarregado (HTTP ${resp.status})`;
+        console.warn(`  Gemini ${modelo}: ${motivo}; tentando de novo em ${Math.round(espera / 1000)}s.`);
         await new Promise((r) => setTimeout(r, espera));
         resp = await pedir();
       }
@@ -244,6 +246,11 @@ export async function gemini(
         if (resp.status === 429) {
           semCota = true;
           console.warn(`  Gemini ${modelo}: cota do dia acabou; tentando o próximo modelo.`);
+          break;
+        }
+        if (sobrecarga(resp.status)) {
+          semCota = true; // sobrecarga passa: na próxima análise volta a tentar o modelo principal
+          console.warn(`  Gemini ${modelo}: continua sobrecarregado; tentando o próximo modelo.`);
           break;
         }
         if (resp.status === 400 && (comEsquema || pensarPouco)) continue; // opção recusada: tenta sem ela
