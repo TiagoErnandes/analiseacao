@@ -1,7 +1,7 @@
 // Atualiza só os preços da análise do dia ao longo do pregão (sem refazer a análise nem chamar a IA).
 // Roda no agendador: um pedido em lote ao Yahoo para todos os ativos, guardado no banco e visto por todos os usuários.
 import { query } from "./db";
-import { precosYahoo } from "./mercado";
+import { precosCripto, precosYahoo } from "./mercado";
 import { simboloYahoo, type Tipo } from "./tipos";
 
 let colunaCriada = false;
@@ -22,13 +22,23 @@ export async function atualizarPrecosDoDia(): Promise<number> {
   );
   if (!linhas.length) return 0;
   const simbolo = (l: { ticker: string; tipo: string }) => simboloYahoo(l.ticker, l.tipo as Tipo);
-  const precos = await precosYahoo([...linhas.map(simbolo), "BRL=X"], 2);
+  // Cripto: preço em reais direto da Binance (onde a compra é feita); o Yahoo fica de reserva
+  const binance = await precosCripto(linhas.filter((l) => l.tipo === "cripto").map((l) => l.ticker), 2);
+  const doYahoo = linhas.filter((l) => !(l.tipo === "cripto" && binance.has(l.ticker)));
+  const precos = await precosYahoo([...doYahoo.map(simbolo), "BRL=X"], 2);
   const dolar = precos.get("BRL=X")?.preco ?? null;
 
   const tickers: string[] = [];
   const valores: number[] = [];
   const variacoes: (number | null)[] = [];
   for (const l of linhas) {
+    const b = l.tipo === "cripto" ? binance.get(l.ticker) : undefined;
+    if (b?.preco != null) {
+      tickers.push(l.ticker);
+      valores.push(b.preco);
+      variacoes.push(b.variacaoDia);
+      continue;
+    }
     const p = precos.get(simbolo(l));
     if (p?.preco == null) continue;
     if (l.tipo === "cripto" && !dolar) continue; // cripto vem em dólar e é guardada em reais

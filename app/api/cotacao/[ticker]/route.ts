@@ -16,6 +16,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ ticker: 
     return NextResponse.json({ erro: "Parâmetros inválidos" }, { status: 400 });
   }
   try {
+    // Cripto: o gráfico em reais (BTC-BRL), na mesma moeda da análise; se o Yahoo não tiver o par, em dólar
+    if (tipo === "cripto") {
+      const emReais = await cotacaoHistorica(`${ticker}-BRL`, periodo).catch(() => null);
+      if (emReais?.pontos.length) return NextResponse.json(emReais);
+    }
     return NextResponse.json(await cotacaoHistorica(simboloYahoo(ticker, tipo), periodo));
   } catch {
     return NextResponse.json({ erro: "Cotação indisponível agora" }, { status: 502 });

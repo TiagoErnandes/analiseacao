@@ -70,7 +70,8 @@ O investidor compra todo mês, reinveste dividendos e pensa em décadas. Ele val
 comprar abaixo do preço teto e diversificação ao longo do tempo.
 O preço teto já vem calculado de forma conservadora: ações por Bazin (dividendo ÷ yield exigido, ligado ao juro real do Tesouro IPCA+, mínimo 6%) ou Graham;
 FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ yield exigido (mínimo 8%);
-ETFs, BDRs, stocks e REITs por Bazin se pagam dividendos, senão pela média de 12 meses; cripto não tem teto (trate como parcela pequena e de alto risco).
+ETFs, BDRs, stocks e REITs por Bazin se pagam dividendos, senão pela média de 12 meses; cripto não tem lucro nem dividendo: o "teto" dela é a média de 200 dias (múltiplo de Mayer = preço ÷ média; abaixo de 1 é barato, acima de 2,4 é euforia)
+e a "qualidade" mede o risco (rede consolidada, liquidez, volatilidade); trate como parcela pequena e de alto risco, com aportes regulares.
 "margem" é quanto o preço pode subir até o teto (> 0 = abaixo do teto). "qualidade" (0 a 10) vem do balanço ou do histórico. "alertas" lista problemas já detectados; leve-os em conta.
 Ativos em dólar têm "moeda" USD e "cambio" em reais por dólar.
 "lucro_10a" e "dividendos_10a" mostram a constância em até 10 anos ("crescimento_anual" do dividendo por ação). "documentos_cvm" são fatos relevantes e comunicados oficiais recentes,

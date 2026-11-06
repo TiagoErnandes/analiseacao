@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { registrarOperacao } from "./carteira/actions";
+import { cotacaoUsdt, registrarOperacao } from "./carteira/actions";
 import { TIPOS_MERCADO as TIPOS, infoTipo, type Tipo } from "@/lib/tipos";
 
 export type PosicaoLancamento = { ticker: string; tipo: Tipo | null; quantidade: number; preco_medio: number; preco: number | null };
@@ -13,8 +13,12 @@ const paraNumero = (t: string) => {
   return Number(limpo.includes(",") ? limpo.replace(/\./g, "").replace(",", ".") : limpo);
 };
 const hojeSp = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
-const dinheiro = (v: number, moeda: "BRL" | "USD") =>
-  v.toLocaleString("pt-BR", { style: "currency", currency: moeda, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+type Moeda = "BRL" | "USD" | "USDT";
+const dinheiro = (v: number, moeda: Moeda) =>
+  moeda === "USDT"
+    ? `${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`
+    : v.toLocaleString("pt-BR", { style: "currency", currency: moeda, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const quantidade = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 8 });
 
 function Campo({ rotulo, extra, children }: { rotulo: string; extra?: string; children: React.ReactNode }) {
   return (
@@ -28,10 +32,10 @@ function Campo({ rotulo, extra, children }: { rotulo: string; extra?: string; ch
   );
 }
 
-function ComMoeda({ moeda, children }: { moeda: "BRL" | "USD"; children: React.ReactNode }) {
+function ComMoeda({ moeda, children }: { moeda: Moeda; children: React.ReactNode }) {
   return (
     <div className="flex overflow-hidden rounded-lg border border-borda bg-fundo focus-within:border-marca">
-      <span className="grid place-items-center border-r border-borda bg-painel2 px-3 text-xs font-semibold text-suave">{moeda === "USD" ? "US$" : "R$"}</span>
+      <span className="grid place-items-center border-r border-borda bg-painel2 px-3 text-xs font-semibold text-suave">{moeda === "USD" ? "US$" : moeda === "USDT" ? "USDT" : "R$"}</span>
       {children}
     </div>
   );
@@ -53,23 +57,43 @@ export function FormLancamento({
   const [tipo, setTipo] = useState<Tipo>(tipoInicial);
   const [ticker, setTicker] = useState("");
   const [data, setData] = useState(hojeSp);
-  const [qtd, setQtd] = useState("1");
+  const [qtd, setQtd] = useState(tipoInicial === "cripto" ? "" : "1");
   const [preco, setPreco] = useState("");
   const [custos, setCustos] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; txt: string } | null>(null);
+  // Cripto: pago em reais ou em USDT, e informado pelo valor total (como aparece no histórico da Binance)
+  const [pagoEm, setPagoEm] = useState<"BRL" | "USDT">("BRL");
+  const [porTotal, setPorTotal] = useState(tipoInicial === "cripto");
+  const [usdt, setUsdt] = useState("");
 
   const info = infoTipo(tipo)!;
+  const ehCripto = tipo === "cripto";
+  const emUsdt = ehCripto && pagoEm === "USDT";
+  const moedaDigitada: Moeda = emUsdt ? "USDT" : info.moeda;
   const codigo = ticker.trim().toUpperCase();
   const pos = posicoes.find((p) => p.ticker === codigo);
   const q = paraNumero(qtd);
-  const p = paraNumero(preco);
+  const valorDigitado = paraNumero(preco);
+  // Preço por unidade na moeda digitada (R$, US$ ou USDT)
+  const p = ehCripto && porTotal ? (q > 0 && valorDigitado > 0 ? valorDigitado / q : NaN) : valorDigitado;
   const c = custos.trim() ? paraNumero(custos) : 0;
+  const taxa = emUsdt ? paraNumero(usdt) : 1; // reais por USDT
   const total = (q > 0 ? q : 0) * (p > 0 ? p : 0) + (operacao === "C" ? 1 : -1) * (c > 0 ? c : 0);
   const codigoOk = info.formato.test(codigo);
-  const valido = codigoOk && q > 0 && p > 0 && c >= 0 && (operacao === "C" || q <= (pos?.quantidade ?? 0));
+  const valido = codigoOk && q > 0 && p > 0 && c >= 0 && taxa > 0 && (operacao === "C" || q <= (pos?.quantidade ?? 0));
   const qA = pos?.quantidade ?? 0;
   const pmA = pos?.preco_medio ?? 0;
-  const pmDepois = operacao === "C" && valido ? (qA * pmA + q * p + c) / (qA + q) : null;
+  // A carteira guarda cripto em reais: com USDT, converte pela cotação informada
+  const pR = p * taxa;
+  const cR = c * taxa;
+  const pmDepois = operacao === "C" && valido ? (qA * pmA + q * pR + cR) / (qA + q) : null;
+
+  // Pago em USDT: busca a cotação de agora na Binance (dá para corrigir com a do dia da compra)
+  useEffect(() => {
+    if (!emUsdt || usdt) return;
+    cotacaoUsdt().then((v) => v && setUsdt(v.toFixed(4).replace(".", ",")));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emUsdt]);
 
   // Sugestões: o que você já tem desse tipo + os mais negociados
   const meus = posicoes.filter((x) => (x.tipo ?? "acao") === tipo || (tipo === "acao" && !x.tipo)).map((x) => x.ticker);
@@ -77,18 +101,21 @@ export function FormLancamento({
 
   // Ao escolher um ativo que já tem cotação, sugere o preço atual
   useEffect(() => {
-    if (pos?.preco && !preco) setPreco(pos.preco.toFixed(2).replace(".", ","));
+    if (pos?.preco && !preco && !(ehCripto && (porTotal || emUsdt))) setPreco(pos.preco.toFixed(2).replace(".", ","));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [codigo]);
 
   function salvar(e: React.FormEvent) {
     e.preventDefault();
     start(async () => {
-      const r = await registrarOperacao({ ticker: codigo, tipoAtivo: tipo, tipo: operacao, quantidade: q, preco: p, custos: c, data });
+      const r = await registrarOperacao({
+        ticker: codigo, tipoAtivo: tipo, tipo: operacao, quantidade: q, preco: p, custos: c, data,
+        ...(emUsdt ? { moedaPaga: "USDT" as const, cotacaoUsdt: taxa } : {}),
+      });
       setMsg({ ok: r.ok, txt: r.mensagem });
       if (r.ok) {
         setTicker("");
-        setQtd("1");
+        setQtd(ehCripto ? "" : "1");
         setPreco("");
         setCustos("");
         router.refresh();
@@ -115,7 +142,19 @@ export function FormLancamento({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Campo rotulo="Tipo de ativo">
-          <select value={tipo} onChange={(e) => { setTipo(e.target.value as Tipo); setTicker(""); }} className="campo">
+          <select
+            value={tipo}
+            onChange={(e) => {
+              const novo = e.target.value as Tipo;
+              setTipo(novo);
+              setTicker("");
+              // Cripto se compra em frações (0,0005 BTC) e pelo valor total; o resto por unidade
+              setQtd(novo === "cripto" ? "" : "1");
+              setPorTotal(novo === "cripto");
+              setPagoEm("BRL");
+            }}
+            className="campo"
+          >
             {TIPOS.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
           </select>
         </Campo>
@@ -133,16 +172,58 @@ export function FormLancamento({
         <Campo rotulo="Data">
           <input type="date" value={data} onChange={(e) => setData(e.target.value)} max={hojeSp()} required className="campo" />
         </Campo>
-        <Campo rotulo="Quantidade">
-          <input value={qtd} onChange={(e) => setQtd(e.target.value)} inputMode="decimal" required className="campo" />
+        {ehCripto && (
+          <>
+            <Campo rotulo={operacao === "C" ? "Pago em" : "Recebido em"}>
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-painel2 p-1 text-xs font-semibold">
+                {(["BRL", "USDT"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setPagoEm(m)}
+                    className={`rounded-md py-1.5 transition ${pagoEm === m ? "bg-borda text-texto" : "text-suave hover:text-texto"}`}
+                  >
+                    {m === "BRL" ? "Reais (R$)" : "USDT"}
+                  </button>
+                ))}
+              </div>
+            </Campo>
+            <Campo rotulo="Informar">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-painel2 p-1 text-xs font-semibold">
+                {([true, false] as const).map((t) => (
+                  <button
+                    key={String(t)}
+                    type="button"
+                    onClick={() => { setPorTotal(t); setPreco(""); }}
+                    className={`rounded-md py-1.5 transition ${porTotal === t ? "bg-borda text-texto" : "text-suave hover:text-texto"}`}
+                  >
+                    {t ? "Valor total" : "Preço unitário"}
+                  </button>
+                ))}
+              </div>
+            </Campo>
+          </>
+        )}
+        <Campo rotulo="Quantidade" extra={ehCripto ? "ex.: 0,00052" : undefined}>
+          <input value={qtd} onChange={(e) => setQtd(e.target.value)} inputMode="decimal" placeholder={ehCripto ? "0,00000000" : undefined} required className="campo" />
         </Campo>
-        <Campo rotulo={operacao === "C" ? "Preço de compra" : "Preço de venda"} extra="por unidade">
-          <ComMoeda moeda={info.moeda}>
+        <Campo
+          rotulo={ehCripto && porTotal ? (operacao === "C" ? "Valor total pago" : "Valor total recebido") : operacao === "C" ? "Preço de compra" : "Preço de venda"}
+          extra={ehCripto && porTotal ? "sem as taxas" : "por unidade"}
+        >
+          <ComMoeda moeda={moedaDigitada}>
             <input value={preco} onChange={(e) => setPreco(e.target.value)} inputMode="decimal" placeholder="0,00" required className="w-full min-w-0 bg-transparent px-3 py-2 text-sm tabular-nums outline-none" />
           </ComMoeda>
         </Campo>
-        <Campo rotulo="Outros custos" extra="(Opcional)">
-          <ComMoeda moeda={info.moeda}>
+        {emUsdt && (
+          <Campo rotulo="Cotação do USDT" extra="R$ por 1 USDT">
+            <ComMoeda moeda="BRL">
+              <input value={usdt} onChange={(e) => setUsdt(e.target.value)} inputMode="decimal" placeholder="5,40" required className="w-full min-w-0 bg-transparent px-3 py-2 text-sm tabular-nums outline-none" />
+            </ComMoeda>
+          </Campo>
+        )}
+        <Campo rotulo="Outros custos" extra={ehCripto ? "taxa da corretora (opcional)" : "(Opcional)"}>
+          <ComMoeda moeda={moedaDigitada}>
             <input value={custos} onChange={(e) => setCustos(e.target.value)} inputMode="decimal" placeholder="0,00" className="w-full min-w-0 bg-transparent px-3 py-2 text-sm tabular-nums outline-none" />
           </ComMoeda>
         </Campo>
@@ -150,16 +231,20 @@ export function FormLancamento({
 
       <div className="flex items-center justify-between rounded-lg bg-painel2 px-4 py-3">
         <span className="text-sm text-suave">Valor total</span>
-        <span className="text-lg font-semibold tabular-nums">{dinheiro(total, info.moeda)}</span>
+        <span className="text-right">
+          <span className="block text-lg font-semibold tabular-nums">{dinheiro(total, moedaDigitada)}</span>
+          {emUsdt && taxa > 0 && <span className="block text-xs text-suave tabular-nums">≈ {dinheiro(total * taxa, "BRL")}</span>}
+          {ehCripto && porTotal && p > 0 && <span className="block text-xs text-suave tabular-nums">preço por moeda: {dinheiro(p, moedaDigitada)}</span>}
+        </span>
       </div>
 
       {codigoOk && (
         <p className="text-xs text-suave tabular-nums">
-          {pos ? <>Hoje: {pos.quantidade} × {dinheiro(pmA, info.moeda)}. </> : <>{codigo} ainda não está na carteira. </>}
-          {pmDepois != null && <>Depois: <b className="text-texto">{qA + q} × {dinheiro(pmDepois, info.moeda)}</b> (preço médio com custos).</>}
-          {operacao === "V" && q > qA && <span className="text-baixa">Você tem só {qA} para vender.</span>}
+          {pos ? <>Hoje: {quantidade(pos.quantidade)} × {dinheiro(pmA, info.moeda)}. </> : <>{codigo} ainda não está na carteira. </>}
+          {pmDepois != null && <>Depois: <b className="text-texto">{quantidade(qA + q)} × {dinheiro(pmDepois, info.moeda)}</b> (preço médio com custos{emUsdt ? ", em reais" : ""}).</>}
+          {operacao === "V" && q > qA && <span className="text-baixa">Você tem só {quantidade(qA)} para vender.</span>}
           {operacao === "V" && valido && (
-            <>Resultado: <b className={p * q - c >= pmA * q ? "text-alta" : "text-baixa"}>{dinheiro(p * q - c - pmA * q, info.moeda)}</b> sobre o preço médio.</>
+            <>Resultado: <b className={pR * q - cR >= pmA * q ? "text-alta" : "text-baixa"}>{dinheiro(pR * q - cR - pmA * q, info.moeda)}</b> sobre o preço médio.</>
           )}
         </p>
       )}

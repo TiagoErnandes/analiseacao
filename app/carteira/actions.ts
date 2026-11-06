@@ -5,6 +5,7 @@ import { importarB3, type ResultadoB3 } from "@/lib/b3";
 import { pool, query } from "@/lib/db";
 import { infoTipo, type Tipo } from "@/lib/tipos";
 import { usuarioOuErro } from "@/lib/auth";
+import { cotacaoUsdtBrl } from "@/lib/cripto";
 
 const numero = (v: FormDataEntryValue | null) => {
   const t = String(v ?? "").trim();
@@ -146,6 +147,12 @@ export async function aplicarImportacaoB3(
 
 // ---------- Compra e venda ----------
 
+/** Reais por 1 USDT agora na Binance (para lançar compra de cripto paga em USDT). */
+export async function cotacaoUsdt(): Promise<number | null> {
+  await usuarioOuErro();
+  return cotacaoUsdtBrl().catch(() => null);
+}
+
 export async function registrarOperacao(dados: {
   ticker: string;
   tipoAtivo: Tipo;
@@ -154,8 +161,19 @@ export async function registrarOperacao(dados: {
   preco: number;
   custos: number;
   data: string;
+  /** Só cripto: pago em USDT. Preço e custos chegam em USDT e são guardados em reais pela cotação informada. */
+  moedaPaga?: "BRL" | "USDT";
+  cotacaoUsdt?: number;
 }): Promise<{ ok: boolean; mensagem: string }> {
   const info = infoTipo(dados.tipoAtivo);
+  let conversao = "";
+  if (dados.moedaPaga === "USDT") {
+    if (info?.id !== "cripto") return { ok: false, mensagem: "Pagamento em USDT só vale para criptomoedas." };
+    const taxa = Number(dados.cotacaoUsdt);
+    if (!(taxa > 0)) return { ok: false, mensagem: "Informe a cotação do USDT em reais." };
+    conversao = ` (pago em USDT a R$ ${taxa.toFixed(4).replace(".", ",")})`;
+    dados = { ...dados, preco: dados.preco * taxa, custos: (Number.isFinite(dados.custos) ? dados.custos : 0) * taxa };
+  }
   if (!info) return { ok: false, mensagem: "Escolha o tipo de ativo." };
   const ticker = dados.ticker.trim().toUpperCase().replace(/^([A-Z]{4}\d{1,2})F$/, "$1");
   if (!info.formato.test(ticker)) return { ok: false, mensagem: `Código inválido para ${info.nome} (ex.: ${info.exemplo}).` };
@@ -164,7 +182,8 @@ export async function registrarOperacao(dados: {
   const custos = Number.isFinite(dados.custos) && dados.custos > 0 ? dados.custos : 0;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dados.data)) return { ok: false, mensagem: "Data inválida." };
   const simbolo = info.moeda === "USD" ? "US$" : "R$";
-  const fmt = (v: number) => `${simbolo} ${v.toFixed(2).replace(".", ",")}`;
+  const fmt = (v: number) => `${simbolo} ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtQtd = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 8 });
   const { id: dono } = await usuarioOuErro();
 
   const client = await pool().connect();
@@ -192,21 +211,23 @@ export async function registrarOperacao(dados: {
            tipo = coalesce(carteira.tipo, excluded.tipo)`,
         [ticker, qtd, pm, info.id, dono],
       );
-      mensagem = `Compra registrada. ${ticker}: ${qtd} a preço médio de ${fmt(pm)}.`;
+      mensagem = `Compra registrada${conversao}. ${ticker}: ${fmtQtd(qtd)} a preço médio de ${fmt(pm)}.`;
     } else {
       if (dados.quantidade > qtdAtual) {
         await client.query("rollback");
-        return { ok: false, mensagem: `Você tem ${qtdAtual} de ${ticker}; não dá para vender ${dados.quantidade}.` };
+        return { ok: false, mensagem: `Você tem ${fmtQtd(qtdAtual)} de ${ticker}; não dá para vender ${fmtQtd(dados.quantidade)}.` };
       }
       const qtd = qtdAtual - dados.quantidade;
       if (qtd === 0) await client.query("delete from carteira where ticker = $1 and usuario_id is not distinct from $2", [ticker, dono]);
       else await client.query("update carteira set quantidade = $2 where ticker = $1 and usuario_id is not distinct from $3", [ticker, qtd, dono]);
       const resultado = dados.preco * dados.quantidade - custos - pmAtual * dados.quantidade;
-      mensagem = `Venda registrada. ${resultado >= 0 ? "Lucro" : "Prejuízo"} de ${fmt(Math.abs(resultado))} sobre o preço médio.`;
+      mensagem = `Venda registrada${conversao}. ${resultado >= 0 ? "Lucro" : "Prejuízo"} de ${fmt(Math.abs(resultado))} sobre o preço médio.`;
     }
     await client.query(
-      "insert into operacoes (data, ticker, tipo, quantidade, preco, custos, tipo_ativo, usuario_id) values ($1, $2, $3, $4, $5, $6, $7, $8)",
-      [dados.data, ticker, dados.tipo, dados.quantidade, dados.preco, custos, info.id, dono],
+      `insert into operacoes (data, ticker, tipo, quantidade, preco, custos, tipo_ativo, usuario_id, moeda_paga, cambio_pago)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [dados.data, ticker, dados.tipo, dados.quantidade, dados.preco, custos, info.id, dono, dados.moedaPaga === "USDT" ? "USDT" : null,
+        dados.moedaPaga === "USDT" ? dados.cotacaoUsdt : null],
     );
     await client.query("commit");
     revalidatePath("/carteira");

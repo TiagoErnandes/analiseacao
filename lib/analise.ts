@@ -6,6 +6,7 @@ import { analisarComIa, selecionarParaIa, type CustoIa, type LinhaParaIa, type M
 import { buscarAcao, lerCache, salvarCache, buscarExterior, cotacaoDolar, usoFontes, zerarUsoFontes, type DadosAcao } from "./mercado";
 import { SO_YAHOO, infoTipo } from "./tipos";
 import { garimpar } from "./garimpo";
+import { avaliarCripto, CRIPTOS_CONHECIDAS, MAYER_BOLHA } from "./cripto";
 import { precosRendaFixa } from "./rendafixa";
 import { alertasDaAnalise } from "./alertas";
 import { idDoDono, migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
@@ -74,10 +75,11 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
     return { ind, qual };
   }
   if (d.tipo === "cripto") {
-    const ind = calcularIndicadoresEtf({ preco: d.preco, media12m: null, proventos: [] });
+    // Sem lucro nem dividendo: a referência é a média de 200 dias (múltiplo de Mayer) e a nota mede o risco
+    const c = avaliarCripto(d.ticker, d.cripto ?? null, d.preco);
     return {
-      ind: { ...ind, teto: null, margem: null, alertas: ["criptomoeda: sem preço teto (não gera lucro nem renda), alta volatilidade"] },
-      qual: { nota: null, pontos: [], alertas: [] },
+      ind: { dpa12m: null, dpaMedio: null, dy12m: null, bazin: null, graham: null, teto: c.teto, margem: c.margem, alertas: c.alertas },
+      qual: { nota: c.nota, pontos: c.pontos, alertas: [] },
     };
   }
   if (d.tipo !== "acao") {
@@ -214,11 +216,20 @@ const temAlertaGrave = (alertas: string[]) => alertas.some((a) => ALERTA_GRAVE.t
 const PENALIDADE_GRAVE = 0.75;
 /** Foco em ações: FII entra no ranking com 85% do score (só passa uma ação boa se for claramente melhor). */
 const PESO_FII = 0.85;
-const fatorScore = (l: { tipo: string; alertas: string[] }) => (temAlertaGrave(l.alertas) ? PENALIDADE_GRAVE : 1) * (l.tipo === "fii" ? PESO_FII : 1);
+/** Cripto é parcela pequena e de alto risco: entra no ranking com 75% do score. */
+const PESO_CRIPTO = 0.75;
+const fatorScore = (l: { tipo: string; alertas: string[] }) =>
+  (temAlertaGrave(l.alertas) ? PENALIDADE_GRAVE : 1) * (l.tipo === "fii" ? PESO_FII : l.tipo === "cripto" ? PESO_CRIPTO : 1);
 
 /** Sinal sem IA: comprar abaixo do teto com qualidade boa e sem alerta grave; evitar bem acima do teto ou com qualidade baixa. */
 function sinalPorCalculo(l: { margem: number | null; qualidade: number | null; tipo: string; alertas?: string[] }): string | null {
-  if (l.tipo === "cripto" || l.margem == null) return null;
+  if (l.margem == null) return null;
+  if (l.tipo === "cripto") {
+    // Abaixo da média de 200 dias (Mayer < 1) e com risco aceitável: bom momento; Mayer na zona de euforia: evitar
+    if (l.margem > 0 && (l.qualidade ?? 0) >= 6) return "COMPRAR";
+    if (l.margem <= 1 / MAYER_BOLHA - 1 || (l.qualidade != null && l.qualidade < 4)) return "EVITAR";
+    return "AGUARDAR";
+  }
   if (l.margem > 0 && (l.qualidade ?? 0) >= 6 && !temAlertaGrave(l.alertas ?? [])) return "COMPRAR";
   if (l.margem < -0.17 || (l.qualidade != null && l.qualidade < 4)) return "EVITAR"; // preço 20% acima do teto
   return "AGUARDAR";
@@ -409,7 +420,9 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
           ? { ...d.fii, dividendos10a: div10 }
           : d.tipo === "acao"
             ? { ...d.fundamentos, lucros10a: lucro, dividendos10a: div10, documentosCvm: documentos, proventosAnunciados: anunciados, yieldExigido: exigido.acao }
-            : d.historico,
+            : d.tipo === "cripto"
+              ? (d.cripto ?? null)
+              : d.historico,
       // Para a IA: constância em 10 anos e fontes oficiais recentes (só o essencial, para gastar poucos tokens)
       lucro_10a: lucro ? { anos: lucro.anos, anos_com_lucro: lucro.anosComLucro, crescimento_anual: lucro.crescimentoAnual } : null,
       dividendos_10a: div10 ? { anos: div10.anos, anos_pagos: div10.anosPagos, cortes_pela_metade: div10.cortes, crescimento_anual: div10.crescimento ?? null } : null,
@@ -789,7 +802,8 @@ const CODIGO_EUA = /^[A-Z]{1,5}(\.[A-Z])?$/;
 export async function analisarAvulso(tickerBruto: string): Promise<Analise | null> {
   const ticker = tickerBruto.toUpperCase();
   const b3 = CODIGO_B3.test(ticker);
-  if (!b3 && !CODIGO_EUA.test(ticker)) return null;
+  const cripto = CRIPTOS_CONHECIDAS.has(ticker); // BTC, ETH...: cripto, não a ação americana de mesmo código
+  if (!b3 && !cripto && !CODIGO_EUA.test(ticker)) return null;
   const chave = `avulso:${ticker}`;
   const c = await lerCache<Analise | null>(chave);
   if (c && c.idadeDias < 0.25) return c.dados;
@@ -797,7 +811,11 @@ export async function analisarAvulso(tickerBruto: string): Promise<Analise | nul
   const hoje = hojeSaoPaulo();
   let d: DadosAcao;
   try {
-    d = b3 ? await buscarAcao(ticker) : await buscarExterior(ticker, "stock", await cotacaoDolar());
+    d = b3
+      ? await buscarAcao(ticker)
+      : cripto
+        ? await buscarExterior(ticker, "cripto", await cotacaoDolar().catch(() => null))
+        : await buscarExterior(ticker, "stock", await cotacaoDolar());
   } catch {
     await salvarCache(chave, null); // código que não existe: não pergunta às fontes de novo a cada clique
     return null;
@@ -870,7 +888,9 @@ export async function analisarAvulso(tickerBruto: string): Promise<Analise | nul
               proventosAnunciados: proventosRecentes(info?.proventos ?? [], hoje),
               yieldExigido: exigido.acao,
             }
-          : (d.historico as Record<string, unknown> | null),
+          : d.tipo === "cripto"
+            ? ((d.cripto ?? null) as Record<string, unknown> | null)
+            : (d.historico as Record<string, unknown> | null),
   };
   await salvarCache(chave, a);
   return a;
