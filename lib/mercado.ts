@@ -5,6 +5,7 @@
 
 import { query } from "./db";
 import { simboloYahoo, type Tipo } from "./tipos";
+import { calcularCripto, cotacaoBinance, velasBinance, velasYahoo, type IndicadoresCripto, type Velas } from "./cripto";
 
 // Cache das fontes no banco: balanço e histórico mudam pouco, então só buscamos de novo quando pode ter novidade.
 const DIA = 24 * 60 * 60 * 1000;
@@ -52,6 +53,7 @@ export type DadosAcao = {
   fii: DadosFii | null;
   historico: HistoricoPreco | null; // calculado do Yahoo (usado nos ETFs)
   proventos: { valor: number; data: Date }[];
+  cripto?: IndicadoresCripto | null; // só criptomoedas: média de 200 dias, Mayer, volatilidade (Binance)
 };
 
 export type DadosFii = {
@@ -421,14 +423,14 @@ export async function cotacaoDolar(): Promise<number> {
 }
 
 /**
- * Ativos fora do Fundamentus (BDR, stocks, ETFs internacionais, REITs e cripto): só o Yahoo.
- * Stocks, REITs e ETFs internacionais ficam em dólar; cripto é convertida para reais.
+ * Ativos fora do Fundamentus (BDR, stocks, ETFs internacionais e REITs): só o Yahoo. Cripto vai para a Binance (buscarCripto).
+ * Stocks, REITs e ETFs internacionais ficam em dólar.
  */
 export async function buscarExterior(ticker: string, tipo: Tipo, dolar: number | null): Promise<DadosAcao> {
+  if (tipo === "cripto") return buscarCripto(ticker, dolar);
   const y = await yahoo(ticker, simboloYahoo(ticker, tipo));
   const emDolar = tipo === "stock" || tipo === "etf_int" || tipo === "reit";
-  if ((emDolar || tipo === "cripto") && !dolar) throw new Error(`${ticker}: sem cotação do dólar para converter`);
-  const fator = tipo === "cripto" ? dolar! : 1; // cripto vem em US$ e é guardada em R$
+  if (emDolar && !dolar) throw new Error(`${ticker}: sem cotação do dólar para converter`);
   return {
     ticker,
     tipo,
@@ -436,7 +438,7 @@ export async function buscarExterior(ticker: string, tipo: Tipo, dolar: number |
     cambio: emDolar ? dolar! : 1,
     nome: y.nome,
     logo: tipo === "bdr" ? `https://icons.brapi.dev/icons/${ticker}.svg` : null,
-    preco: y.preco != null ? y.preco * fator : null,
+    preco: y.preco,
     variacaoDia: y.variacaoDia,
     lpa: null,
     vpa: null,
@@ -479,4 +481,84 @@ export async function buscarAcao(ticker: string): Promise<DadosAcao> {
     historico: yv?.historico ?? null,
     proventos: yv?.proventos ?? [],
   };
+}
+
+const NOMES_CRIPTO: Record<string, string> = {
+  BTC: "Bitcoin", ETH: "Ethereum", SOL: "Solana", BNB: "BNB", XRP: "XRP", ADA: "Cardano", DOGE: "Dogecoin", LINK: "Chainlink",
+  DOT: "Polkadot", AVAX: "Avalanche", LTC: "Litecoin", TRX: "Tron", TON: "Toncoin", USDT: "Tether (dólar digital)", USDC: "USD Coin (dólar digital)",
+};
+
+/**
+ * Criptomoeda: preço de agora na Binance (em reais) e até 1000 dias de fechamentos para a média de 200 dias.
+ * O histórico fica guardado 12 horas; se a Binance falhar, tudo vem do Yahoo.
+ */
+export async function buscarCripto(ticker: string, dolar: number | null): Promise<DadosAcao> {
+  const t = ticker.toUpperCase();
+  let preco: number | null = null;
+  let variacaoDia: number | null = null;
+  let volumeDiario: number | null = null;
+  let usdtBrl: number | null = null;
+  let velas: Velas | null = null;
+  const chave = `cripto:velas:${t}`;
+  const c = await lerCache<Velas>(chave);
+  try {
+    const cot = await cotacaoBinance(t);
+    ({ preco, variacaoDia, volumeDiario, usdtBrl } = cot);
+    await salvarCache(chavePreco(`binance:${t}`), { preco, variacaoDia } satisfies PrecoDia);
+    velas = c && c.idadeDias < 0.5 ? c.dados : await velasBinance(t, usdtBrl).catch(() => null);
+  } catch (err) {
+    console.warn(`  ${t}: Binance falhou (${(err as Error).message}); usando o Yahoo`);
+  }
+  if (preco == null || !velas) {
+    try {
+      const y = await velasYahoo(t, dolar);
+      velas ??= { fonte: y.fonte, par: y.par, fechamentos: y.fechamentos };
+      preco ??= y.preco;
+      variacaoDia ??= y.variacaoDia;
+    } catch (err) {
+      if (preco == null) throw err;
+    }
+    velas ??= c?.dados ?? null; // fontes fora do ar: usa o histórico que já tinha
+  }
+  if (preco == null) throw new Error(`${t}: sem cotação`);
+  if (velas && velas !== c?.dados) await salvarCache(chave, velas);
+  return {
+    ticker: t,
+    tipo: "cripto",
+    moeda: "BRL",
+    cambio: 1,
+    nome: NOMES_CRIPTO[t] ?? t,
+    logo: `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/svg/color/${t.toLowerCase()}.svg`,
+    preco,
+    variacaoDia,
+    lpa: null,
+    vpa: null,
+    roe: null,
+    dyFundamentus: null,
+    fundamentos: null,
+    fii: null,
+    historico: null,
+    proventos: [],
+    cripto: velas ? calcularCripto(t, velas, preco, { volumeDiario, usdtBrl }) : null,
+  };
+}
+
+/** Preço de agora de várias criptos em reais (Binance; guardado alguns minutos). Usado na atualização ao longo do dia. */
+export async function precosCripto(tickers: string[], maxMinutos = PRECO_FRESCO_MIN): Promise<Map<string, PrecoDia>> {
+  const r = new Map<string, PrecoDia>();
+  for (const t of [...new Set(tickers.map((x) => x.toUpperCase()))]) {
+    const c = await lerCache<PrecoDia>(chavePreco(`binance:${t}`));
+    if (c && c.dados.preco != null && c.idadeDias * 1440 < maxMinutos) {
+      r.set(t, c.dados);
+      continue;
+    }
+    try {
+      const { preco, variacaoDia } = await cotacaoBinance(t);
+      r.set(t, { preco, variacaoDia });
+      await salvarCache(chavePreco(`binance:${t}`), { preco, variacaoDia });
+    } catch {
+      /* fica sem: quem chamou usa o Yahoo */
+    }
+  }
+  return r;
 }

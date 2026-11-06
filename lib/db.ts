@@ -163,6 +163,9 @@ export async function migrar() {
     alter table carteira add column if not exists tipo text; -- vazio: detecta sozinho (ação, FII ou ETF da B3)
     alter table operacoes add column if not exists custos numeric not null default 0;
     alter table operacoes add column if not exists tipo_ativo text;
+    -- Cripto paga em USDT: o preço fica em reais e guardamos a moeda e a cotação do USDT usadas na conversão
+    alter table operacoes add column if not exists moeda_paga text;
+    alter table operacoes add column if not exists cambio_pago numeric;
     -- Dividendos/JCP/rendimentos por ativo (Yahoo), para calcular os proventos recebidos
     create table if not exists proventos (
       ticker  text not null,

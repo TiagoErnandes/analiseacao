@@ -21,8 +21,8 @@ export const metadata: Metadata = { title: "Carteira" };
 export default async function CarteiraPage() {
   const usuario = await exigirUsuario();
   const { posicoes, resumo } = await carregarPainel(usuario); // também cria a tabela de operações
-  const operacoes = await query<{ id: number; data: string; ticker: string; tipo: "C" | "V"; quantidade: number; preco: number; custos: number; moeda: string }>(
-    `select id, data::text, ticker, tipo, quantidade, preco, custos,
+  const operacoes = await query<{ id: number; data: string; ticker: string; tipo: "C" | "V"; quantidade: number; preco: number; custos: number; moeda: string; moeda_paga: string | null; cambio_pago: number | null }>(
+    `select id, data::text, ticker, tipo, quantidade, preco, custos, moeda_paga, cambio_pago,
             case when tipo_ativo in ('stock', 'etf_int', 'reit') then 'USD' else 'BRL' end as moeda
        from operacoes where usuario_id is not distinct from $1 order by data desc, id desc limit 30`,
     [usuario.id],
@@ -94,7 +94,7 @@ export default async function CarteiraPage() {
                     </td>
                   ) : (
                     <>
-                      <td className="text-right">{p.quantidade}</td>
+                      <td className="text-right">{Number(p.quantidade).toLocaleString("pt-BR", { maximumFractionDigits: 8 })}</td>
                       <td className="text-right">
                         <PrecoMedio ticker={p.ticker} preco={p.preco_medio} moeda={p.moeda} />
                       </td>
@@ -155,8 +155,15 @@ export default async function CarteiraPage() {
                     <td>{dataBr(o.data)}</td>
                     <td className="font-medium">{o.ticker}</td>
                     <td className={o.tipo === "C" ? "text-alta" : "text-baixa"}>{o.tipo === "C" ? "Compra" : "Venda"}</td>
-                    <td className="text-right">{o.quantidade}</td>
-                    <td className="text-right">{dinheiro(o.preco, o.moeda)}</td>
+                    <td className="text-right">{Number(o.quantidade).toLocaleString("pt-BR", { maximumFractionDigits: 8 })}</td>
+                    <td className="text-right">
+                      {dinheiro(o.preco, o.moeda)}
+                      {o.moeda_paga === "USDT" && o.cambio_pago ? (
+                        <span className="block text-[11px] text-fraco">
+                          {(o.preco / o.cambio_pago).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} USDT a {dinheiro(Number(o.cambio_pago), "BRL")}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="text-right text-suave">{o.custos ? dinheiro(o.custos, o.moeda) : "—"}</td>
                     <td className="text-right">{dinheiro(o.quantidade * o.preco + (o.tipo === "C" ? 1 : -1) * o.custos, o.moeda)}</td>
                   </tr>

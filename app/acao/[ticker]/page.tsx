@@ -8,6 +8,7 @@ import { query, type Analise } from "@/lib/db";
 import { Logo } from "../../Logo";
 import { TipoAtivo } from "../../TipoAtivo";
 import type { DadosFii, Fundamentos, HistoricoPreco } from "@/lib/mercado";
+import type { IndicadoresCripto } from "@/lib/cripto";
 import type { Documento, HistoricoLucro, ProventoAnunciado } from "@/lib/cvm";
 import { yieldAtual } from "@/lib/juros";
 import type { ConsistenciaDividendos } from "@/lib/valuation";
@@ -72,12 +73,15 @@ export default async function AcaoPage({ params }: Params) {
   const metodo =
     a.preco_teto == null
       ? null
-      : a.teto_bazin != null && a.preco_teto === a.teto_bazin
+      : tipo === "cripto"
+        ? "Média dos últimos 200 dias (Mayer = 1)"
+        : a.teto_bazin != null && a.preco_teto === a.teto_bazin
         ? tipo === "fii" ? `Rendimento sustentável ÷ ${yFii}` : "Bazin"
         : tipo === "etf" ? "Média de preço de 12 meses" : "Graham";
   const fii = tipo === "fii" ? (a.indicadores as DadosFii | null) : null;
   const etf = tipo === "etf" ? (a.indicadores as HistoricoPreco | null) : null;
   const fund = tipo === "acao" ? (a.indicadores as Fundamentos | null) : null;
+  const cripto = tipo === "cripto" ? (a.indicadores as IndicadoresCripto | null) : null;
   const extras = (a.indicadores ?? {}) as {
     lucros10a?: HistoricoLucro | null;
     dividendos10a?: ConsistenciaDividendos | null;
@@ -172,7 +176,7 @@ export default async function AcaoPage({ params }: Params) {
       </Cartao>
 
       <section id="valuation" className="grid scroll-mt-32 gap-4 lg:grid-cols-3">
-        <Cartao titulo="Preço teto" className="lg:col-span-1">
+        <Cartao titulo={tipo === "cripto" ? "Preço de referência" : "Preço teto"} className="lg:col-span-1">
           <div className="space-y-4 p-4">
             <div className="flex items-end justify-between">
               <div>
@@ -200,7 +204,9 @@ export default async function AcaoPage({ params }: Params) {
               </div>
             ) : (
               <p className="rounded-lg border border-borda p-3 text-xs leading-relaxed text-suave">
-                {tipo === "fii"
+                {tipo === "cripto"
+                  ? "Cripto não tem lucro nem dividendo, então não há preço teto. A referência é a média dos últimos 200 dias: o múltiplo de Mayer (preço ÷ média) abaixo de 1 foi, historicamente, bom momento para comprar; entre 1 e 1,5 é aporte regular; acima de 2,4 ficaram os topos de euforia. A nota de qualidade mede o risco (rede, liquidez, volatilidade e quedas), não o momento."
+                  : tipo === "fii"
                   ? `Para FIIs: o menor entre o rendimento de 12 meses, o FFO por cota e a média de 5 anos, dividido por ${yFii} (o rendimento mínimo que compensa frente ao Tesouro IPCA+).`
                   : `Para ETFs: se paga dividendos relevantes, Bazin (÷ ${yAcao}); senão, a média de preço dos últimos 12 meses. Abaixo dela, você compra mais barato que a média do ano.`}
               </p>
@@ -243,6 +249,24 @@ export default async function AcaoPage({ params }: Params) {
               <Indicador rotulo="Imóveis" valor={fii?.qtdImoveis ?? "—"} />
               <Indicador rotulo="Cap rate" valor={pct(fii?.capRate)} />
               <Indicador rotulo="Liquidez/dia" valor={brl(fii?.volumeMedio)} />
+            </>
+          ) : tipo === "cripto" ? (
+            <>
+              <Indicador
+                rotulo="Múltiplo de Mayer"
+                valor={num(cripto?.mayer)}
+                dica="Preço ÷ média de 200 dias. Abaixo de 1: barato frente à tendência; acima de 2,4: euforia"
+              />
+              <Indicador rotulo="Momento" valor={<span className="text-sm">{cripto?.zona ?? "—"}</span>} />
+              <Indicador rotulo="Média 200 dias" valor={brl(cripto?.mm200)} />
+              <Indicador rotulo="Topo do período" valor={brl(cripto?.topo)} dica={`Maior fechamento em ${cripto?.dias ?? "?"} dias`} />
+              <Indicador rotulo="Abaixo do topo" valor={pct(cripto?.quedaDoTopo != null ? -cripto.quedaDoTopo : null)} />
+              <Indicador rotulo="Maior queda" valor={pct(cripto?.quedaMaxima != null ? -cripto.quedaMaxima : null)} dica="Maior queda do topo ao fundo no período" />
+              <Indicador rotulo="Retorno 12m" valor={<Variacao v={cripto?.retorno1a} />} />
+              <Indicador rotulo="Volatilidade" valor={pct(cripto?.volatilidade, 0)} dica="Oscilação anualizada dos últimos 12 meses (ações costumam ficar entre 20% e 40%)" />
+              <Indicador rotulo="Volume 24h" valor={brl(cripto?.volumeDiario)} dica="Negociado na Binance nas últimas 24 horas (pares em R$ e em USDT)" />
+              <Indicador rotulo="USDT" valor={brl(cripto?.usdtBrl)} dica="Reais por 1 USDT (dólar digital) na Binance" />
+              <Indicador rotulo="Fonte" valor={<span className="text-sm">{cripto ? `${cripto.fonte === "binance" ? "Binance" : "Yahoo"} ${cripto.par}` : "—"}</span>} />
             </>
           ) : tipo === "etf" ? (
             <>
@@ -290,7 +314,7 @@ export default async function AcaoPage({ params }: Params) {
       {pos && (
         <Cartao titulo="Minha posição" id="posicao" acao={<Link href="/carteira" className="text-xs text-marca hover:underline">Editar</Link>}>
           <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-6">
-            <Indicador rotulo="Quantidade" valor={pos.quantidade} />
+            <Indicador rotulo="Quantidade" valor={pos.quantidade.toLocaleString("pt-BR", { maximumFractionDigits: 8 })} />
             <Indicador rotulo="Preço médio" valor={dinheiro(pos.preco_medio, moeda)} />
             <Indicador rotulo="Posição" valor={brl(pos.valor)} />
             <Indicador rotulo="Rentabilidade" valor={<Variacao v={pos.rentabilidade} />} />
