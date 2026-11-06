@@ -33,7 +33,7 @@ function Chave({ ligado, onChange, rotulo, icone, desligada }: { ligado: boolean
   );
 }
 
-/** Botão "Definir meu Preço-Alvo" e o modal: avisa no site e no WhatsApp quando a cotação chega no alvo. */
+/** Botão "Definir meu Preço-Alvo" e o modal: avisa no site, no email e no WhatsApp quando a cotação chega no alvo. */
 export function PrecoAlvo({
   ticker,
   tipo,
@@ -42,6 +42,8 @@ export function PrecoAlvo({
   alvo: inicial,
   podeWhatsapp,
   whatsappPronto,
+  email,
+  emailPronto,
 }: {
   ticker: string;
   tipo: string | null;
@@ -52,12 +54,17 @@ export function PrecoAlvo({
   podeWhatsapp: boolean;
   /** WhatsApp (CallMeBot), Telegram ou ntfy configurado no servidor. */
   whatsappPronto: boolean;
+  /** Email da conta Google de quem está logado (para onde vai o aviso). */
+  email: string | null;
+  /** SMTP configurado no servidor. */
+  emailPronto: boolean;
 }) {
   const [alvo, setAlvo] = useState(inicial);
   const [aberto, setAberto] = useState(false);
   const [valor, setValor] = useState("");
   const [viaSite, setViaSite] = useState(true);
   const [viaZap, setViaZap] = useState(podeWhatsapp);
+  const [viaEmail, setViaEmail] = useState(!!email);
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [salvando, iniciar] = useTransition();
@@ -67,11 +74,12 @@ export function PrecoAlvo({
     setValor(alvo ? alvo.preco_alvo.toFixed(2).replace(".", ",") : "");
     setViaSite(alvo?.via_site ?? true);
     setViaZap(podeWhatsapp && (alvo?.via_whatsapp ?? true));
+    setViaEmail(!!email && (alvo?.via_email ?? true));
     setErro(null);
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setAberto(false);
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
-  }, [aberto, alvo, podeWhatsapp]);
+  }, [aberto, alvo, podeWhatsapp, email]);
 
   const numero = lerNumero(valor);
   const valido = valor.trim() !== "" && Number.isFinite(numero) && numero > 0;
@@ -80,7 +88,7 @@ export function PrecoAlvo({
   function salvar() {
     if (!valido) return setErro("Digite um preço-alvo maior que zero.");
     iniciar(async () => {
-      const r = await definirPrecoAlvo({ ticker, tipo, moeda, precoAlvo: numero, viaSite, viaWhatsapp: viaZap }).catch((e: Error) => ({ ok: false, mensagem: e.message, alvo: undefined }));
+      const r = await definirPrecoAlvo({ ticker, tipo, moeda, precoAlvo: numero, viaSite, viaWhatsapp: viaZap, viaEmail }).catch((e: Error) => ({ ok: false, mensagem: e.message, alvo: undefined }));
       if (!r.ok) return setErro(r.mensagem);
       setAlvo(r.alvo ?? null);
       setAviso(r.mensagem);
@@ -172,6 +180,14 @@ export function PrecoAlvo({
                   <p className="text-xs leading-snug text-amber-300">
                     O WhatsApp ainda não está conectado. Pode deixar ligado: o aviso aparece no site na hora e, assim que o WhatsApp
                     for conectado (card "WhatsApp dos alertas" no painel), os próximos avisos chegam lá também.
+                  </p>
+                )}
+                {email && <Chave icone="📧" rotulo="Via Email" ligado={viaEmail} onChange={setViaEmail} />}
+                {email && viaEmail && (
+                  <p className={`text-xs leading-snug ${emailPronto ? "text-suave" : "text-amber-300"}`}>
+                    {emailPronto
+                      ? <>O aviso vai para <b className="text-texto">{email}</b>.</>
+                      : <>O envio de email ainda não está configurado no servidor (SMTP_USUARIO e SMTP_SENHA no .env.production). Pode deixar ligado: depois de configurado, os avisos vão para <b className="text-texto">{email}</b>.</>}
                   </p>
                 )}
               </div>

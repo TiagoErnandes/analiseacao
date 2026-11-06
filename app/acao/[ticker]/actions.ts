@@ -27,12 +27,13 @@ export async function definirPrecoAlvo(d: {
   precoAlvo: number;
   viaSite: boolean;
   viaWhatsapp: boolean;
+  viaEmail: boolean;
 }): Promise<{ ok: boolean; mensagem: string; alvo?: PrecoAlvo }> {
   const u = await usuarioOuErro();
   const t = d.ticker.toUpperCase();
   if (!TICKER.test(t)) return { ok: false, mensagem: "Código inválido." };
   if (!Number.isFinite(d.precoAlvo) || d.precoAlvo <= 0) return { ok: false, mensagem: "Digite um preço-alvo maior que zero." };
-  if (!d.viaSite && !d.viaWhatsapp) return { ok: false, mensagem: "Escolha pelo menos um jeito de receber o alerta." };
+  if (!d.viaSite && !d.viaWhatsapp && !d.viaEmail) return { ok: false, mensagem: "Escolha pelo menos um jeito de receber o alerta." };
   const tipo = d.tipo && TIPOS.some((x) => x.id === d.tipo) ? (d.tipo as Tipo) : null;
   // Cotação de agora (não a da análise das 7h): define se o alvo é de compra (abaixo) ou de venda (acima)
   const agora = (await precoYahoo(simboloYahoo(t, tipo)).catch(() => null))?.preco ?? null;
@@ -44,6 +45,7 @@ export async function definirPrecoAlvo(d: {
     precoAtual: agora,
     viaSite: d.viaSite,
     viaWhatsapp: d.viaWhatsapp && u.admin,
+    viaEmail: d.viaEmail,
   });
   revalidatePath(`/acao/${t}`);
   revalidatePath("/");
