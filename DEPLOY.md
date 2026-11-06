@@ -126,6 +126,26 @@ Se der erro, o motivo aparece no log do agendador (`docker compose -f docker-com
 O vigia confere os alvos a cada 10 minutos no pregão (`PRECO_ALVO_CRON`, padrão `*/10 10-18 * * 1-5`). Cada alvo avisa uma vez;
 para avisar de novo, defina o alvo outra vez. Os alertas de venda da carteira também chegam pelo WhatsApp.
 
+## Alerta de preço-alvo por email (Gmail, grátis)
+
+Quando o preço chega no alvo, o aviso também vai para o **email da conta Google** de quem criou o alvo (chave "Via Email"
+na tela do preço-alvo). Sem login com o Google, vai para o `ADMIN_EMAIL`. O envio sai de uma conta do Gmail sua,
+com uma **senha de app** (grátis, até 500 emails por dia):
+
+1. Na conta Google que vai enviar, ligue a **verificação em duas etapas**: https://myaccount.google.com/security
+2. Abra https://myaccount.google.com/apppasswords, digite o nome `Preço Teto` e clique em **Criar**. O Google mostra
+   uma senha de 16 letras (só aparece uma vez).
+3. No `.env.production`:
+   ```
+   SMTP_USUARIO=seuemail@gmail.com
+   SMTP_SENHA=abcdefghijklmnop      # a senha de app, sem espaços (não é a senha normal do Gmail)
+   ```
+4. Rode `bash deploy/deploy.sh`.
+
+Se o primeiro email cair no spam, marque como "Não é spam". Outro provedor de SMTP: `SMTP_HOST` e `SMTP_PORTA`
+(padrão `smtp.gmail.com` e 465). O remetente pode ser trocado em `EMAIL_REMETENTE`. Se o envio falhar, o vigia tenta
+de novo por até 24 horas e o motivo aparece no log do agendador.
+
 ## Dia a dia
 
 - Mudou o código: `bash deploy/deploy.sh`
