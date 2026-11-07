@@ -3,7 +3,7 @@ export type ModoIa = "gratis" | "gemini_busca" | "sem_ia" | "economico" | "compl
 export const MODOS: { id: ModoIa; nome: string; descricao: string; custo: string }[] = [
   { id: "gratis", nome: "Grátis (Gemini)", descricao: "O Gemini do Google dá nota e sinal aos ativos com os números e as notícias oficiais da CVM e da B3. Sem Busca Google. Usa a chave grátis (GEMINI_API_KEY).", custo: "grátis" },
   { id: "gemini_busca", nome: "Gemini com Busca Google", descricao: "Igual ao Grátis, mas o Gemini também pesquisa as notícias do dia na Busca Google. Usa a chave paga (GEMINI_API_KEY_PAGO). Só reanalisa o que mudou.", custo: "≈ R$ 0,30 a 1 por análise (estimativa)" },
-  { id: "sem_ia", nome: "Só cálculo", descricao: "Só o cálculo (preço teto, qualidade, score), sem nenhuma IA.", custo: "grátis" },
+  { id: "sem_ia", nome: "Só cálculo", descricao: "Refaz o cálculo inteiro (balanços, proventos, preço teto, qualidade, score), sem nenhuma IA. Leva alguns minutos. Para só as cotações, use o botão “Atualizar só os preços”.", custo: "grátis" },
   { id: "economico", nome: "Econômico", descricao: "Claude Haiku dá nota e sinal aos seus ativos e aos melhores de fora. Sem pesquisa na web. Só reanalisa o que mudou.", custo: "≈ R$ 0,02 por análise" },
   { id: "completo", nome: "Completo", descricao: "Claude Haiku pesquisa notícias e resultados na web (até 5 buscas) e o Claude Sonnet decide. Só reanalisa o que mudou.", custo: "≈ R$ 0,30 a 0,70 por análise" },
 ];

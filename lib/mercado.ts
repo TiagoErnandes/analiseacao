@@ -177,7 +177,7 @@ let loteRecusadoAte = 0; // se o Yahoo recusar o pedido em lote, usa um por um p
 
 /**
  * Preço de agora de vários ativos, com o mínimo de pedidos ao Yahoo: primeiro o que já está no banco (fresco),
- * depois o resto em lotes de 20 com pausa entre eles; o que faltar vai um por um, devagar.
+ * depois o resto em lotes de 20 (até 3 lotes juntos); o que faltar vai um por um, 4 de cada vez.
  */
 export async function precosYahoo(simbolos: string[], maxMinutos = PRECO_FRESCO_MIN): Promise<Map<string, PrecoDia>> {
   const unicos = [...new Set(simbolos)];
@@ -194,27 +194,32 @@ export async function precosYahoo(simbolos: string[], maxMinutos = PRECO_FRESCO_
   const faltam = unicos.filter((s) => !r.has(s));
   const novos = new Map<string, PrecoDia>();
   if (faltam.length > 1 && Date.now() > loteRecusadoAte) {
-    for (let i = 0; i < faltam.length; i += 20) {
-      if (i) await esperar(1500);
-      const lote = await sparkYahoo(faltam.slice(i, i + 20));
-      if (!lote) {
+    // Lotes de 20, até 3 ao mesmo tempo: 60 ativos no tempo de um pedido
+    const lotes: string[][] = [];
+    for (let i = 0; i < faltam.length; i += 20) lotes.push(faltam.slice(i, i + 20));
+    for (let i = 0; i < lotes.length; i += 3) {
+      if (i) await esperar(500);
+      const res = await Promise.all(lotes.slice(i, i + 3).map((l) => sparkYahoo(l)));
+      if (res.some((x) => !x)) {
         loteRecusadoAte = Date.now() + 60 * 60_000;
         console.warn("  Yahoo recusou o pedido em lote; usando um por um na próxima hora");
-        break;
       }
-      for (const [s, p] of lote) novos.set(s, p);
+      for (const lote of res) for (const [s, p] of lote ?? []) novos.set(s, p);
+      if (res.some((x) => !x)) break;
     }
   }
-  for (const s of faltam) {
-    if (novos.has(s)) continue;
-    const p = await precoYahooDireto(s).catch(() => null);
-    if (p?.preco != null) novos.set(s, p);
-    await esperar(400);
+  // O que faltou vai um por um, 4 de cada vez
+  const resto = faltam.filter((s) => !novos.has(s));
+  for (let i = 0; i < resto.length; i += 4) {
+    if (i) await esperar(300);
+    await Promise.all(
+      resto.slice(i, i + 4).map(async (s) => {
+        const p = await precoYahooDireto(s).catch(() => null);
+        if (p?.preco != null) novos.set(s, p);
+      }),
+    );
   }
-  for (const [s, p] of novos) {
-    r.set(s, p);
-    await salvarCache(chavePreco(s), p);
-  }
+  await Promise.all([...novos].map(([s, p]) => (r.set(s, p), salvarCache(chavePreco(s), p).catch(() => {}))));
   return r;
 }
 
@@ -546,19 +551,21 @@ export async function buscarCripto(ticker: string, dolar: number | null): Promis
 /** Preço de agora de várias criptos em reais (Binance; guardado alguns minutos). Usado na atualização ao longo do dia. */
 export async function precosCripto(tickers: string[], maxMinutos = PRECO_FRESCO_MIN): Promise<Map<string, PrecoDia>> {
   const r = new Map<string, PrecoDia>();
-  for (const t of [...new Set(tickers.map((x) => x.toUpperCase()))]) {
-    const c = await lerCache<PrecoDia>(chavePreco(`binance:${t}`));
-    if (c && c.dados.preco != null && c.idadeDias * 1440 < maxMinutos) {
-      r.set(t, c.dados);
-      continue;
-    }
-    try {
-      const { preco, variacaoDia } = await cotacaoBinance(t);
-      r.set(t, { preco, variacaoDia });
-      await salvarCache(chavePreco(`binance:${t}`), { preco, variacaoDia });
-    } catch {
-      /* fica sem: quem chamou usa o Yahoo */
-    }
-  }
+  await Promise.all(
+    [...new Set(tickers.map((x) => x.toUpperCase()))].map(async (t) => {
+      const c = await lerCache<PrecoDia>(chavePreco(`binance:${t}`));
+      if (c && c.dados.preco != null && c.idadeDias * 1440 < maxMinutos) {
+        r.set(t, c.dados);
+        return;
+      }
+      try {
+        const { preco, variacaoDia } = await cotacaoBinance(t);
+        r.set(t, { preco, variacaoDia });
+        await salvarCache(chavePreco(`binance:${t}`), { preco, variacaoDia });
+      } catch {
+        /* fica sem: quem chamou usa o Yahoo */
+      }
+    }),
+  );
   return r;
 }

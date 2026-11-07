@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { iniciarAnalise, salvarModoIa } from "./analise-actions";
+import { atualizarSoPrecos, iniciarAnalise, salvarModoIa } from "./analise-actions";
 import { MODOS, type ModoIa } from "@/lib/modos";
 
 type Props = {
@@ -29,6 +29,7 @@ export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMe
   const info = MODOS.find((m) => m.id === modoAtual);
   const router = useRouter();
   const [pendente, startTransition] = useTransition();
+  const [buscandoPrecos, startPrecos] = useTransition();
   const [mensagem, setMensagem] = useState<string | null>(null);
   const rodando = status === "rodando";
 
@@ -67,6 +68,21 @@ export function BotaoAnalise({ status, inicio, erro, etapa, modo, custo, custoMe
         ))}
       </select>
       )}
+      <button
+        disabled={buscandoPrecos}
+        onClick={() =>
+          startPrecos(async () => {
+            const r = await atualizarSoPrecos();
+            setMensagem(r.mensagem);
+            router.refresh();
+          })
+        }
+        title="Busca só as cotações de agora (Yahoo e Binance), em poucos segundos. Sem IA e sem refazer a análise: notas e recomendações continuam as mesmas."
+        className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border border-borda px-4 text-sm font-semibold text-texto transition hover:border-marca hover:text-marca disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {buscandoPrecos && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-texto/30 border-t-texto" />}
+        {buscandoPrecos ? "Buscando preços…" : "Atualizar só os preços"}
+      </button>
       <button
         disabled={rodando || pendente}
         onClick={() =>
