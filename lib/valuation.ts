@@ -1,8 +1,8 @@
 // Métodos clássicos de preço teto para quem investe pensando em renda e longo prazo.
 
 /**
- * Bazin: o preço máximo para receber pelo menos X% ao ano em dividendos. O clássico é 6%; aqui o X acompanha o juro real
- * do Tesouro IPCA+ (ver lib/juros.ts), com 6% de mínimo.
+ * Bazin: o preço máximo para receber pelo menos X% ao ano em dividendos. O clássico é 6%. Nas ações usamos 10%
+ * (YIELD_BAZIN_ACAO); nos ETFs o X acompanha o juro real do Tesouro IPCA+ (ver lib/juros.ts), com 6% de mínimo.
  */
 export const YIELD_MINIMO_BAZIN = 0.06;
 
@@ -11,23 +11,56 @@ export function tetoBazin(dpaMedio: number | null, exigido = YIELD_MINIMO_BAZIN)
   return dpaMedio / exigido;
 }
 
+/** Bazin das ações: exige 10% de dividendo ao ano (com a Selic acima de 13%, 6% rende menos que a renda fixa). */
+export const YIELD_BAZIN_ACAO = 0.1;
+
 /**
- * Graham: valor justo = raiz(K × LPA × VPA). O K clássico é 22,5 (P/L 15 × P/VP 1,5), pensado para os juros baixos dos EUA.
- * Com juro real alto, P/L 15 rende menos que o Tesouro IPCA+; então o P/L máximo vira 1 ÷ yield exigido
- * (7,8% → P/L 12,8 → K = 19,2), nunca acima de 22,5. Só faz sentido com lucro e patrimônio positivos.
+ * Graham revisado (1974), com juro brasileiro: valor = LPA × (8,5 + 2 × g) × 4,4 ÷ Y.
+ * 8,5 é o P/L de uma empresa que não cresce, g é o crescimento esperado em pontos percentuais (3) e Y é o juro de
+ * referência (13,5%, no lugar dos 4,4% dos títulos AAA americanos da época). Só faz sentido com lucro positivo.
  */
-export function tetoGraham(lpa: number | null, vpa: number | null, exigido = YIELD_MINIMO_BAZIN): number | null {
-  if (!lpa || !vpa || lpa <= 0 || vpa <= 0) return null;
-  const k = Math.min(22.5, 1.5 / exigido);
-  return Math.sqrt(k * lpa * vpa);
+export const GRAHAM_CRESCIMENTO = 3;
+export const GRAHAM_JURO_BR = 13.5;
+
+export function tetoGraham(lpa: number | null): number | null {
+  if (!lpa || lpa <= 0) return null;
+  return (lpa * (8.5 + 2 * GRAHAM_CRESCIMENTO) * 4.4) / GRAHAM_JURO_BR;
 }
 
 /**
- * Preço teto final. Para previdência o foco é renda, então Bazin manda quando a empresa paga dividendos.
- * Sem dividendos, usamos Graham.
+ * Buffett conservador (fluxo de caixa descontado do lucro do dono, por ação): o LPA de 12 meses cresce 3% ao ano por
+ * 10 anos, depois 3,5% para sempre, tudo descontado a 16% ao ano. O teto é esse valor justo com 30% de margem de
+ * segurança. O LPA já vem depois dos juros da dívida, então a dívida não é descontada de novo.
  */
-export function precoTeto(bazin: number | null, graham: number | null): number | null {
-  return bazin ?? graham ?? null;
+export const BUFFETT = { crescimento: 0.03, anos: 10, perpetuidade: 0.035, desconto: 0.16, margemSeguranca: 0.3 } as const;
+
+export function valorJustoBuffett(lpa: number | null): number | null {
+  if (!lpa || lpa <= 0) return null;
+  const { crescimento, anos, perpetuidade, desconto } = BUFFETT;
+  let valor = 0;
+  let lucro = lpa;
+  for (let t = 1; t <= anos; t++) {
+    if (t > 1) lucro *= 1 + crescimento;
+    valor += lucro / (1 + desconto) ** t;
+  }
+  const terminal = (lucro * (1 + perpetuidade)) / (desconto - perpetuidade);
+  return valor + terminal / (1 + desconto) ** anos;
+}
+
+export function tetoBuffett(lpa: number | null): number | null {
+  const justo = valorJustoBuffett(lpa);
+  return justo == null ? null : justo * (1 - BUFFETT.margemSeguranca);
+}
+
+/**
+ * Preço teto final das ações: a mediana dos métodos que deram valor (Bazin, Graham e Buffett).
+ * Com dois métodos, a média dos dois; com um, ele mesmo. A mediana evita que um método fora da curva mande sozinho.
+ */
+export function precoTeto(...valores: (number | null)[]): number | null {
+  const v = valores.filter((x): x is number => x != null && Number.isFinite(x) && x > 0).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const meio = Math.floor(v.length / 2);
+  return v.length % 2 ? v[meio] : (v[meio - 1] + v[meio]) / 2;
 }
 
 /**
@@ -152,6 +185,7 @@ export type Indicadores = {
   dy12m: number | null;
   bazin: number | null;
   graham: number | null;
+  buffett: number | null;
   teto: number | null;
   margem: number | null;
   alertas: string[];
@@ -163,7 +197,8 @@ export type Indicadores = {
  *   e só se o 12m dele bater com o do Fundamentus.
  * - Bazin usa o MENOR entre o DPA 12m e a média de 5 anos, para não pagar caro por dividendos
  *   extraordinários do passado (ex.: Petrobras 2022) nem por um pico pontual recente.
- * - LPA claramente errado (ROE implícito < 1%) invalida o Graham.
+ * - Bazin a 10%, Graham revisado e Buffett conservador; o teto é a mediana dos três.
+ * - LPA claramente errado (ROE implícito < 1%) invalida o Graham e o Buffett.
  */
 export function calcularIndicadores(d: {
   preco: number | null;
@@ -195,20 +230,22 @@ export function calcularIndicadores(d: {
   let bazin: number | null = null;
   if (dy12m != null && dy12m >= dyMinimo) {
     const base = Math.min(dpa12m ?? Infinity, dpaMedio ?? Infinity);
-    bazin = tetoBazin(Number.isFinite(base) ? base : null, exigido);
+    bazin = tetoBazin(Number.isFinite(base) ? base : null, YIELD_BAZIN_ACAO);
   } else {
-    alertas.push(`paga pouco dividendo (DY abaixo de ${(dyMinimo * 100).toFixed(1).replace(".", ",")}%), teto pelo Graham`);
+    alertas.push(`paga pouco dividendo (DY abaixo de ${(dyMinimo * 100).toFixed(1).replace(".", ",")}%), teto pelo Graham e Buffett`);
     if (!dpa12m) dpa12m = null;
   }
 
-  let graham = tetoGraham(d.lpa, d.vpa, exigido);
+  let graham = tetoGraham(d.lpa);
+  let buffett = tetoBuffett(d.lpa);
   if (d.lpa != null && d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01) {
-    alertas.push(`LPA ${d.lpa} parece errado (ROE implícito < 1%), Graham ignorado`);
+    alertas.push(`LPA ${d.lpa} parece errado (ROE implícito < 1%), Graham e Buffett ignorados`);
     graham = null;
+    buffett = null;
   }
 
-  const teto = precoTeto(bazin, graham);
-  return { dpa12m, dpaMedio, dy12m, bazin, graham, teto, margem: margem(d.preco, teto), alertas };
+  const teto = precoTeto(bazin, graham, buffett);
+  return { dpa12m, dpaMedio, dy12m, bazin, graham, buffett, teto, margem: margem(d.preco, teto), alertas };
 }
 
 /** FIIs pagam mais que ações; para valer a pena frente à renda fixa, exigimos pelo menos 8% ao ano (ou juro real + 1,5 ponto). */
@@ -246,6 +283,7 @@ export function calcularIndicadoresFii(d: {
     dy12m: dpa12m && d.preco ? dpa12m / d.preco : null,
     bazin,
     graham: null,
+    buffett: null,
     teto: bazin,
     margem: margem(d.preco, bazin),
     alertas,
@@ -266,5 +304,5 @@ export function calcularIndicadoresEtf(d: {
   const bazin = dy12m != null && dy12m >= DY_MINIMO_PAGADORA ? tetoBazin(Math.min(dpa12m!, dpaMedio ?? Infinity), exigido) : null;
   const teto = bazin ?? d.media12m;
   const alertas = teto == null ? ["sem histórico de preço suficiente para referência"] : [];
-  return { dpa12m, dpaMedio, dy12m, bazin, graham: null, teto, margem: margem(d.preco, teto), alertas };
+  return { dpa12m, dpaMedio, dy12m, bazin, graham: null, buffett: null, teto, margem: margem(d.preco, teto), alertas };
 }

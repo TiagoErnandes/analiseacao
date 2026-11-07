@@ -78,7 +78,7 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
     // Sem lucro nem dividendo: a referência é a média de 200 dias (múltiplo de Mayer) e a nota mede o risco
     const c = avaliarCripto(d.ticker, d.cripto ?? null, d.preco);
     return {
-      ind: { dpa12m: null, dpaMedio: null, dy12m: null, bazin: null, graham: null, teto: c.teto, margem: c.margem, alertas: c.alertas },
+      ind: { dpa12m: null, dpaMedio: null, dy12m: null, bazin: null, graham: null, buffett: null, teto: c.teto, margem: c.margem, alertas: c.alertas },
       qual: { nota: c.nota, pontos: c.pontos, alertas: [] },
     };
   }
@@ -434,6 +434,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       pontos_fortes: qual.pontos,
       teto_bazin: ind.bazin,
       teto_graham: ind.graham,
+      teto_buffett: ind.buffett,
       preco_teto: ind.teto,
       margem: ind.margem,
       score_sem_ia: Math.round(
@@ -577,6 +578,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
       roe: l.roe,
       teto_bazin: l.teto_bazin,
       teto_graham: l.teto_graham,
+      teto_buffett: l.teto_buffett,
       preco_teto: l.preco_teto,
       margem: l.margem,
       nota_ia: a?.nota ?? null,
@@ -862,6 +864,7 @@ export async function analisarAvulso(tickerBruto: string): Promise<Analise | nul
     roe: d.roe,
     teto_bazin: ind.bazin,
     teto_graham: ind.graham,
+    teto_buffett: ind.buffett,
     preco_teto: ind.teto,
     margem: ind.margem,
     nota_ia: null,

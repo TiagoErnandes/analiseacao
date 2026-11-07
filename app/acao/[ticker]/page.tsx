@@ -75,6 +75,8 @@ export default async function AcaoPage({ params }: Params) {
       ? null
       : tipo === "cripto"
         ? "Média dos últimos 200 dias (Mayer = 1)"
+        : tipo === "acao"
+        ? "Mediana de Bazin, Graham e Buffett"
         : a.teto_bazin != null && a.preco_teto === a.teto_bazin
         ? tipo === "fii" ? `Rendimento sustentável ÷ ${yFii}` : "Bazin"
         : tipo === "etf" ? "Média de preço de 12 meses" : "Graham";
@@ -192,17 +194,18 @@ export default async function AcaoPage({ params }: Params) {
             </div>
             <ReguaTeto preco={a.preco} teto={a.preco_teto} />
             {tipo === "acao" ? (
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className={`rounded-lg border p-3 ${metodo === "Bazin" ? "border-marca/40" : "border-borda"}`}>
-                  <p className="text-xs text-suave">Bazin</p>
-                  <p className="font-semibold tabular-nums">{brl(a.teto_bazin)}</p>
-                  <p className="mt-1 text-[11px] leading-snug text-fraco">Dividendo conservador ÷ {yAcao}</p>
-                </div>
-                <div className={`rounded-lg border p-3 ${metodo === "Graham" ? "border-marca/40" : "border-borda"}`}>
-                  <p className="text-xs text-suave">Graham</p>
-                  <p className="font-semibold tabular-nums">{brl(a.teto_graham)}</p>
-                  <p className="mt-1 text-[11px] leading-snug text-fraco">√(22,5 × LPA × VPA)</p>
-                </div>
+              <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+                {[
+                  { nome: "Bazin", valor: a.teto_bazin, regra: "Dividendo conservador ÷ 10%" },
+                  { nome: "Graham revisado", valor: a.teto_graham, regra: "LPA × (8,5 + 2 × 3) × 4,4 ÷ 13,5" },
+                  { nome: "Buffett conservador", valor: a.teto_buffett, regra: "LPA cresce 3% por 10 anos, perpetuidade 3,5%, desconto 16%, margem de 30%" },
+                ].map((m) => (
+                  <div key={m.nome} className={`rounded-lg border p-3 ${m.valor != null && m.valor === a.preco_teto ? "border-marca/40" : "border-borda"}`}>
+                    <p className="text-xs text-suave">{m.nome}</p>
+                    <p className="font-semibold tabular-nums">{brl(m.valor)}</p>
+                    <p className="mt-1 text-[11px] leading-snug text-fraco">{m.regra}</p>
+                  </div>
+                ))}
               </div>
             ) : (
               <p className="rounded-lg border border-borda p-3 text-xs leading-relaxed text-suave">
@@ -213,7 +216,7 @@ export default async function AcaoPage({ params }: Params) {
                   : `Para ETFs: se paga dividendos relevantes, Bazin (÷ ${yAcao}); senão, a média de preço dos últimos 12 meses. Abaixo dela, você compra mais barato que a média do ano.`}
               </p>
             )}
-            {(tipo === "acao" || tipo === "fii" || tipo === "etf") && <p className="text-[11px] leading-snug text-fraco">{textoJuro}</p>}
+            {(tipo === "fii" || tipo === "etf") && <p className="text-[11px] leading-snug text-fraco">{textoJuro}</p>}
           </div>
         </Cartao>
 

@@ -86,6 +86,7 @@ export async function montarExportacao(usuario: Usuario) {
       preco_teto: r2(x.a?.preco_teto ?? null),
       teto_bazin: r2(x.a?.teto_bazin ?? null),
       teto_graham: r2(x.a?.teto_graham ?? null),
+      teto_buffett: r2(x.a?.teto_buffett ?? null),
       margem_ate_teto: r2(x.a?.margem ?? null, 4),
       qualidade_0a10: r2(x.a?.qualidade ?? null, 1),
       nota_ia_0a10: r2(x.a?.nota_ia ?? null, 1),
@@ -127,7 +128,7 @@ export async function montarExportacao(usuario: Usuario) {
     gerado_em: hoje,
     data_da_analise: p.rel?.data ?? null,
     observacoes:
-      `Percentuais em fração (0,12 = 12%). Valores *_brl em reais; preços na moeda do ativo. Preço teto: Bazin (dividendo ÷ ${yp(y.acao)}) ou Graham para ações; ` +
+      `Percentuais em fração (0,12 = 12%). Valores *_brl em reais; preços na moeda do ativo. Preço teto das ações: mediana de Bazin (dividendo ÷ 10%), Graham revisado e Buffett conservador; ` +
       `FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ ${yp(y.fii)}` +
       (y.juroReal ? ` (yield exigido ligado ao juro real do Tesouro IPCA+, ${yp(y.juroReal.taxa)})` : "") +
       ". margem_ate_teto > 0 = abaixo do teto. Qualidade 0-10 vem do balanço/histórico.",
@@ -284,7 +285,7 @@ export function paraCsv(e: Exportacao): string {
   const cols = [
     "ticker", "nome", "tipo", "setor", "moeda", "quantidade", "preco_medio", "preco_atual", "variacao_dia", "investido_brl", "valor_atual_brl",
     "lucro_brl", "rentabilidade", "peso_na_carteira", "proventos_recebidos_brl", "renda_12m_brl", "dy_12m", "dpa_12m", "dpa_medio_5a", "lpa", "vpa",
-    "roe", "preco_teto", "teto_bazin", "teto_graham", "margem_ate_teto", "qualidade_0a10", "nota_ia_0a10", "recomendacao", "score_0a100",
+    "roe", "preco_teto", "teto_bazin", "teto_graham", "teto_buffett", "margem_ate_teto", "qualidade_0a10", "nota_ia_0a10", "recomendacao", "score_0a100",
     "resumo_ia", "riscos_ia", "alertas",
   ] as const;
   const cel = (v: unknown) => {
@@ -327,7 +328,7 @@ export async function montarRanking(usuario: Usuario) {
       origem: a.na_carteira ? "carteira" : a.garimpo ? "garimpo" : "lista",
       preco: r2(a.preco),
       preco_teto: r2(a.preco_teto),
-      metodo_teto: a.teto_bazin != null && a.preco_teto === a.teto_bazin ? "Bazin" : a.teto_graham != null && a.preco_teto === a.teto_graham ? "Graham" : null,
+      metodo_teto: a.preco_teto == null ? null : a.tipo === "acao" ? "Mediana de Bazin, Graham e Buffett" : a.teto_bazin != null && a.preco_teto === a.teto_bazin ? "Bazin" : null,
       margem_ate_teto: r2(a.margem, 4),
       dy_12m: r2(a.dy_12m, 4),
       pl: r2(n("pl")),
