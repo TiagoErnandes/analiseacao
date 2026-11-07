@@ -14,8 +14,9 @@ async function garantirColuna() {
 /**
  * Busca o preço de agora de todos os ativos da última análise e grava preço, variação do dia,
  * margem até o teto e dividend yield (que dependem do preço). Nota, teto e recomendação continuam os da análise.
+ * `maxMinutos`: reaproveita o preço que alguém buscou há menos que isso (o botão do site usa 1 minuto).
  */
-export async function atualizarPrecosDoDia(): Promise<number> {
+export async function atualizarPrecosDoDia(maxMinutos = 2): Promise<number> {
   await garantirColuna();
   const linhas = await query<{ ticker: string; tipo: string }>(
     "select ticker, tipo from analises where data = (select max(data) from analises)",
@@ -23,9 +24,9 @@ export async function atualizarPrecosDoDia(): Promise<number> {
   if (!linhas.length) return 0;
   const simbolo = (l: { ticker: string; tipo: string }) => simboloYahoo(l.ticker, l.tipo as Tipo);
   // Cripto: preço em reais direto da Binance (onde a compra é feita); o Yahoo fica de reserva
-  const binance = await precosCripto(linhas.filter((l) => l.tipo === "cripto").map((l) => l.ticker), 2);
+  const binance = await precosCripto(linhas.filter((l) => l.tipo === "cripto").map((l) => l.ticker), maxMinutos);
   const doYahoo = linhas.filter((l) => !(l.tipo === "cripto" && binance.has(l.ticker)));
-  const precos = await precosYahoo([...doYahoo.map(simbolo), "BRL=X"], 2);
+  const precos = await precosYahoo([...doYahoo.map(simbolo), "BRL=X"], maxMinutos);
   const dolar = precos.get("BRL=X")?.preco ?? null;
 
   const tickers: string[] = [];
