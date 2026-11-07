@@ -21,7 +21,7 @@ const FILTROS: { id: Filtro; rotulo: string }[] = [
 type Coluna = { id: string; rotulo: string; valor: (a: Analise) => number | string | null; alinhar?: "right" | "center"; dica?: string };
 const COLUNAS: Coluna[] = [
   { id: "preco", rotulo: "Cotação", valor: (a) => a.preco, alinhar: "right" },
-  { id: "teto", rotulo: "Preço teto", valor: (a) => a.preco_teto, alinhar: "right", dica: "Bazin quando paga dividendos; senão Graham" },
+  { id: "teto", rotulo: "Preço teto", valor: (a) => a.preco_teto, alinhar: "right", dica: "Ações: mediana de Bazin, Graham e Buffett" },
   { id: "margem", rotulo: "Margem", valor: (a) => a.margem, alinhar: "right", dica: "Quanto o preço pode subir até o teto (negativo: está acima do teto)" },
   { id: "dy", rotulo: "DY 12m", valor: (a) => a.dy_12m, alinhar: "right" },
   { id: "pl", rotulo: "P/L", valor: (a) => (a.preco && a.lpa && a.lpa > 0 ? a.preco / a.lpa : null), alinhar: "right" },
@@ -162,7 +162,7 @@ export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]
                           <Alertas txt={a.alertas} />
                         </div>
                         <div className="text-xs text-suave">
-                          <p>Teto Bazin: {brl(a.teto_bazin)} · Teto Graham: {brl(a.teto_graham)}</p>
+                          <p>Teto Bazin: {brl(a.teto_bazin)} · Graham: {brl(a.teto_graham)} · Buffett: {brl(a.teto_buffett)}</p>
                           <p>DPA 12m: {brl(a.dpa_12m)} · Média 5 anos: {brl(a.dpa_medio)}</p>
                           <Link href={`/acao/${a.ticker}`} className="mt-2 inline-block text-marca hover:underline">Ver detalhes de {a.ticker} →</Link>
                         </div>

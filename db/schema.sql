@@ -31,6 +31,7 @@ create table if not exists analises (
   roe             numeric,
   teto_bazin      numeric,
   teto_graham     numeric,
+  teto_buffett    numeric,           -- fluxo de caixa descontado conservador, já com margem de segurança
   preco_teto      numeric,
   margem          numeric,           -- (teto - preço) / teto
   nota_ia         numeric,           -- 0 a 10

@@ -45,6 +45,7 @@ export type Analise = {
   roe: number | null;
   teto_bazin: number | null;
   teto_graham: number | null;
+  teto_buffett: number | null;
   preco_teto: number | null;
   margem: number | null;
   nota_ia: number | null;
@@ -76,7 +77,7 @@ export type Relatorio = {
 
 const COLUNAS_ANALISE = [
   "data", "ticker", "nome", "logo", "preco", "variacao_dia", "lpa", "vpa", "dpa_12m", "dpa_medio", "dy_12m", "roe",
-  "teto_bazin", "teto_graham", "preco_teto", "margem", "nota_ia", "recomendacao", "resumo_ia", "riscos_ia", "score",
+  "teto_bazin", "teto_graham", "teto_buffett", "preco_teto", "margem", "nota_ia", "recomendacao", "resumo_ia", "riscos_ia", "score",
   "na_carteira", "garimpo", "qualidade", "setor", "alertas", "tipo", "indicadores", "moeda", "cambio",
 ] as const satisfies readonly (keyof Analise)[];
 
@@ -144,6 +145,7 @@ export async function migrar() {
       erro    text
     );
     alter table analises add column if not exists qualidade numeric;
+    alter table analises add column if not exists teto_buffett numeric;
     alter table analises add column if not exists setor text;
     alter table analises add column if not exists alertas text;
     alter table relatorio_diario add column if not exists revisao text;
