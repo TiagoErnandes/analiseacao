@@ -1,10 +1,11 @@
 // Preço-alvo: cada pessoa define o preço em que quer comprar (ou vender) um ativo.
 // O vigia do agendador confere a cotação ao longo do dia; quando o preço chega no alvo, o aviso aparece no site
-// e, para o dono, vai para o celular: WhatsApp (CallMeBot), Telegram e/ou ntfy, configurados no .env.production.
+// para o email da conta Google da pessoa e, para o dono, para o celular (WhatsApp, Telegram e/ou ntfy).
 import { migrar, query } from "./db";
 import { precoYahoo } from "./mercado";
 import { simboloYahoo, type Tipo } from "./tipos";
 import { celularConfigurado, enviarCelular } from "./alertas";
+import { emailConfigurado, enviarEmail } from "./email";
 
 /** compra: avisa quando o preço CAI até o alvo. venda: avisa quando SOBE até o alvo. */
 export type Direcao = "compra" | "venda";
@@ -19,6 +20,7 @@ export type PrecoAlvo = {
   direcao: Direcao;
   via_site: boolean;
   via_whatsapp: boolean;
+  via_email: boolean;
   criado_em: string;
   atingido_em: string | null;
   preco_atingido: number | null;
@@ -48,6 +50,9 @@ async function garantirTabela() {
     );
     -- Quando o aviso chegou no celular (vazio: ainda não chegou; o vigia tenta de novo por até 24 horas)
     alter table precos_alvo add column if not exists celular_enviado_em timestamptz;
+    -- Email para a conta Google da pessoa (mesma regra: tenta por até 24 horas)
+    alter table precos_alvo add column if not exists via_email boolean not null default true;
+    alter table precos_alvo add column if not exists email_enviado_em timestamptz;
     create unique index if not exists precos_alvo_usuario_ticker on precos_alvo (usuario_id, ticker) nulls not distinct;
   `);
   pronto = true;
@@ -59,7 +64,7 @@ const normalizar = (r: PrecoAlvo): PrecoAlvo => {
   return r;
 };
 
-const CAMPOS = "id, ticker, tipo, moeda, preco_alvo, preco_criacao, direcao, via_site, via_whatsapp, criado_em::text, atingido_em::text, preco_atingido, visto";
+const CAMPOS = "id, ticker, tipo, moeda, preco_alvo, preco_criacao, direcao, via_site, via_whatsapp, via_email, criado_em::text, atingido_em::text, preco_atingido, visto";
 
 /** O alvo de um ativo para a pessoa (ou null). */
 export async function precoAlvoDe(usuarioId: number | null, ticker: string): Promise<PrecoAlvo | null> {
@@ -86,19 +91,19 @@ export async function precosAlvoDoUsuario(usuarioId: number | null): Promise<Pre
 /** Cria ou troca o alvo. A direção sai do preço de agora: alvo abaixo = ponto de compra; acima = ponto de venda. */
 export async function salvarPrecoAlvo(
   usuarioId: number | null,
-  d: { ticker: string; tipo: string | null; moeda: string; precoAlvo: number; precoAtual: number | null; viaSite: boolean; viaWhatsapp: boolean },
+  d: { ticker: string; tipo: string | null; moeda: string; precoAlvo: number; precoAtual: number | null; viaSite: boolean; viaWhatsapp: boolean; viaEmail: boolean },
 ): Promise<PrecoAlvo> {
   await garantirTabela();
   const direcao: Direcao = d.precoAtual != null && d.precoAlvo > d.precoAtual ? "venda" : "compra";
   const [r] = await query<PrecoAlvo>(
-    `insert into precos_alvo (usuario_id, ticker, tipo, moeda, preco_alvo, preco_criacao, direcao, via_site, via_whatsapp)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `insert into precos_alvo (usuario_id, ticker, tipo, moeda, preco_alvo, preco_criacao, direcao, via_site, via_whatsapp, via_email)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      on conflict (usuario_id, ticker) do update set
        tipo = excluded.tipo, moeda = excluded.moeda, preco_alvo = excluded.preco_alvo, preco_criacao = excluded.preco_criacao,
-       direcao = excluded.direcao, via_site = excluded.via_site, via_whatsapp = excluded.via_whatsapp,
-       criado_em = now(), atingido_em = null, preco_atingido = null, visto = false, celular_enviado_em = null
+       direcao = excluded.direcao, via_site = excluded.via_site, via_whatsapp = excluded.via_whatsapp, via_email = excluded.via_email,
+       criado_em = now(), atingido_em = null, preco_atingido = null, visto = false, celular_enviado_em = null, email_enviado_em = null
      returning ${CAMPOS}`,
-    [usuarioId, d.ticker, d.tipo, d.moeda, d.precoAlvo, d.precoAtual, direcao, d.viaSite, d.viaWhatsapp],
+    [usuarioId, d.ticker, d.tipo, d.moeda, d.precoAlvo, d.precoAtual, direcao, d.viaSite, d.viaWhatsapp, d.viaEmail],
   );
   return normalizar(r);
 }
@@ -191,8 +196,30 @@ export async function vigiarPrecosAlvo(): Promise<number> {
       }
     }
   }
+  // Email: para a conta Google de cada pessoa (sem login, o ADMIN_EMAIL do dono)
+  if (emailConfigurado()) {
+    const paraEmail = await query<PrecoAlvo & { email: string | null }>(
+      `select ${CAMPOS.split(", ").map((c) => `p.${c}`).join(", ")}, coalesce(u.email, nullif($2, '')) as email
+         from precos_alvo p left join usuarios u on u.id = p.usuario_id
+        where p.via_email and p.atingido_em is not null and p.email_enviado_em is null
+          and p.atingido_em > now() - make_interval(hours => $1::int)`,
+      [TENTAR_CELULAR_HORAS, process.env.ADMIN_EMAIL ?? ""],
+    );
+    for (const bruto of paraEmail) {
+      if (!bruto.email) continue;
+      const p = normalizar(bruto);
+      const m = aviso(p, p.preco_atingido ?? p.preco_alvo, process.env.SITE_URL);
+      const ok = await enviarEmail(bruto.email, {
+        assunto: m.cabecalho,
+        titulo: m.cabecalho,
+        linhas: [m.titulo, m.motivo],
+        link: m.link,
+      });
+      if (ok) await query("update precos_alvo set email_enviado_em = now() where id = $1", [p.id]);
+    }
+  }
   console.log(`Preço-alvo: ${pendentes.length} alvos conferidos, ${avisos} atingidos`);
   return avisos;
 }
 
-export { celularConfigurado };
+export { celularConfigurado, emailConfigurado };

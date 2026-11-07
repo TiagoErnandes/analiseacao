@@ -89,7 +89,7 @@ Cada alerta é enviado uma vez só, no Telegram (`TELEGRAM_BOT_TOKEN` e `TELEGRA
 
 Na página de cada ativo, **🎯 Definir meu Preço-Alvo**: abaixo da cotação é um ponto de compra (avisa quando o preço cair até ele),
 acima é um ponto de venda. O agendador confere a cotação a cada 10 minutos no pregão (`PRECO_ALVO_CRON`); quando chega no alvo,
-aparece o aviso no painel (via website) e, para o dono, a mensagem no celular: WhatsApp (um chip próprio pela Evolution API na VPS, a API oficial da Meta ou o CallMeBot), Telegram e/ou ntfy
+aparece o aviso no painel (via website), vai um email para a conta Google de quem criou o alvo (Gmail com senha de app, `SMTP_USUARIO` e `SMTP_SENHA`) e, para o dono, a mensagem no celular: WhatsApp (um chip próprio pela Evolution API na VPS, a API oficial da Meta ou o CallMeBot), Telegram e/ou ntfy
 (passo a passo no [DEPLOY.md](DEPLOY.md#alerta-de-preço-alvo-no-whatsapp)).
 Cada pessoa tem os seus alvos (tabela `precos_alvo`); cada alvo avisa uma vez. `lib/precoAlvo.ts` e `lib/whatsapp.ts`.
 
