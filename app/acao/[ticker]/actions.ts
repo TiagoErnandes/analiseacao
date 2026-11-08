@@ -66,3 +66,21 @@ export async function dispensarAvisoAlvo(ticker: string): Promise<void> {
   await marcarVisto(u.id, ticker.toUpperCase());
   revalidatePath("/");
 }
+
+/** Manda um email de teste para a conta de quem está logado (confere o SMTP_USUARIO e o SMTP_SENHA). */
+export async function testarEmail(): Promise<{ ok: boolean; mensagem: string }> {
+  const u = await usuarioOuErro();
+  const para = u.email || process.env.ADMIN_EMAIL;
+  if (!para) return { ok: false, mensagem: "Sua conta não tem email (entre com o Google ou preencha ADMIN_EMAIL)." };
+  const { emailConfigurado, enviarEmail } = await import("@/lib/email");
+  if (!emailConfigurado()) return { ok: false, mensagem: "O servidor não tem SMTP_USUARIO e SMTP_SENHA. Preencha no .env.production e faça o deploy." };
+  const ok = await enviarEmail(para, {
+    assunto: "🎯 Teste do alerta de preço-alvo",
+    titulo: "Teste do alerta de preço-alvo",
+    linhas: ["Se você recebeu este email, os avisos de preço-alvo vão chegar aqui."],
+    link: process.env.SITE_URL || null,
+  });
+  return ok
+    ? { ok, mensagem: `Email de teste enviado para ${para}. Confira também o spam.` }
+    : { ok, mensagem: "O Gmail recusou o envio. Confira a senha de app (16 letras, sem espaços) e veja o motivo no log do site." };
+}
