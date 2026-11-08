@@ -55,7 +55,7 @@ export type ProventoAnunciado = { tipo: string; valor: number | null; dataCom: s
 export type InfoB3 = { codigoCvm: number | null; proventos: ProventoAnunciado[] };
 
 /** Classe da ação no ISIN (BRPETRACNPR6 -> ACNPR) para separar proventos de ON e PN. */
-const CLASSE: Record<string, string[]> = { "3": ["ACNOR"], "4": ["ACNPR"], "5": ["ACNPA"], "6": ["ACNPB"], "7": ["ACNPC"], "8": ["ACNPD"] };
+export const CLASSE: Record<string, string[]> = { "3": ["ACNOR"], "4": ["ACNPR"], "5": ["ACNPA"], "6": ["ACNPB"], "7": ["ACNPC"], "8": ["ACNPD"] };
 
 /** Dados da empresa na B3 (guardados por 1 dia). Só para ações. */
 export async function infoB3(ticker: string): Promise<InfoB3 | null> {
