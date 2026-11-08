@@ -90,7 +90,7 @@ export function PrecoAlvo({
   function salvar() {
     if (!valido) return setErro("Digite um preço-alvo maior que zero.");
     iniciar(async () => {
-      const r = await definirPrecoAlvo({ ticker, tipo, moeda, precoAlvo: numero, viaSite, viaWhatsapp: viaZap, viaEmail }).catch((e: Error) => ({ ok: false, mensagem: e.message, alvo: undefined }));
+      const r = await definirPrecoAlvo({ ticker, tipo, moeda, precoAlvo: numero, viaSite, viaWhatsapp: viaZap, viaEmail, direcao: precoAtual ? (numero > precoAtual ? "venda" : "compra") : undefined }).catch((e: Error) => ({ ok: false, mensagem: e.message, alvo: undefined }));
       if (!r.ok) return setErro(r.mensagem);
       setAlvo(r.alvo ?? null);
       setAviso(r.mensagem);

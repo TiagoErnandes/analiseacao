@@ -28,6 +28,8 @@ export async function definirPrecoAlvo(d: {
   viaSite: boolean;
   viaWhatsapp: boolean;
   viaEmail: boolean;
+  /** O que a tela mostrou: alvo abaixo da cotação exibida = compra, acima = venda. */
+  direcao?: "compra" | "venda";
 }): Promise<{ ok: boolean; mensagem: string; alvo?: PrecoAlvo }> {
   const u = await usuarioOuErro();
   const t = d.ticker.toUpperCase();
@@ -46,6 +48,7 @@ export async function definirPrecoAlvo(d: {
     viaSite: d.viaSite,
     viaWhatsapp: d.viaWhatsapp && u.admin,
     viaEmail: d.viaEmail,
+    direcao: d.direcao === "compra" || d.direcao === "venda" ? d.direcao : undefined,
   });
   revalidatePath(`/acao/${t}`);
   revalidatePath("/");

@@ -91,10 +91,11 @@ export async function precosAlvoDoUsuario(usuarioId: number | null): Promise<Pre
 /** Cria ou troca o alvo. A direção sai do preço de agora: alvo abaixo = ponto de compra; acima = ponto de venda. */
 export async function salvarPrecoAlvo(
   usuarioId: number | null,
-  d: { ticker: string; tipo: string | null; moeda: string; precoAlvo: number; precoAtual: number | null; viaSite: boolean; viaWhatsapp: boolean; viaEmail: boolean },
+  d: { ticker: string; tipo: string | null; moeda: string; precoAlvo: number; precoAtual: number | null; viaSite: boolean; viaWhatsapp: boolean; viaEmail: boolean; direcao?: Direcao },
 ): Promise<PrecoAlvo> {
   await garantirTabela();
-  const direcao: Direcao = d.precoAtual != null && d.precoAlvo > d.precoAtual ? "venda" : "compra";
+  // A direção que a pessoa viu na tela vale; sem ela, compara com a cotação de agora
+  const direcao: Direcao = d.direcao ?? (d.precoAtual != null && d.precoAlvo > d.precoAtual ? "venda" : "compra");
   const [r] = await query<PrecoAlvo>(
     `insert into precos_alvo (usuario_id, ticker, tipo, moeda, preco_alvo, preco_criacao, direcao, via_site, via_whatsapp, via_email)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
