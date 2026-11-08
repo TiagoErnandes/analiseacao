@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { importarB3, type ResultadoB3 } from "@/lib/b3";
-import { pool, query } from "@/lib/db";
+import { importarB3, type NegocioImportado, type ResultadoB3 } from "@/lib/b3";
+import { migrar, pool, query } from "@/lib/db";
 import { infoTipo, type Tipo } from "@/lib/tipos";
 import { usuarioOuErro } from "@/lib/auth";
 import { cotacaoUsdtBrl } from "@/lib/cripto";
@@ -103,17 +103,24 @@ export async function lerArquivosB3(form: FormData): Promise<{ ok: true; resulta
 export async function aplicarImportacaoB3(
   itens: { ticker: string; quantidade: number; preco_medio: number; tipo: Tipo | null }[],
   modo: "substituir" | "atualizar",
+  negocios: NegocioImportado[] = [],
 ): Promise<{ ok: boolean; mensagem: string }> {
   const validos = itens.filter(
     (i) => /^[A-Z]{4}\d{1,2}$/.test(i.ticker) && Number.isFinite(i.quantidade) && i.quantidade > 0 && Number.isFinite(i.preco_medio) && i.preco_medio >= 0,
   );
   if (validos.length !== itens.length) return { ok: false, mensagem: "Há linhas com código, quantidade ou preço médio inválidos." };
   if (validos.length === 0) return { ok: false, mensagem: "Nenhum ativo para importar." };
+  const negociosValidos = negocios.filter(
+    (n) => /^\d{4}-\d{2}-\d{2}$/.test(n.data) && (n.tipo === "C" || n.tipo === "V") && /^[A-Z]{4}\d{1,2}$/.test(n.ticker) &&
+      Number.isFinite(n.quantidade) && n.quantidade > 0 && Number.isFinite(n.preco) && n.preco > 0,
+  );
   const { id: dono } = await usuarioOuErro();
+  await migrar();
 
   const client = await pool().connect();
   try {
     await client.query("begin");
+    const novas = await guardarNegocios(client, negociosValidos, dono);
     let removidas = 0;
     if (modo === "substituir") {
       const r = await client.query("delete from carteira where usuario_id is not distinct from $2 and coalesce(tipo, '') <> 'renda_fixa' and not (ticker = any($1::text[]))", [
@@ -135,7 +142,9 @@ export async function aplicarImportacaoB3(
     revalidatePath("/");
     return {
       ok: true,
-      mensagem: `${validos.length} ativos importados${removidas ? `, ${removidas} removidos` : ""}. Eles entram na próxima análise.`,
+      mensagem:
+        `${validos.length} ativos importados${removidas ? `, ${removidas} removidos` : ""}. Eles entram na próxima análise.` +
+        (negociosValidos.length ? ` ${novas} negociações novas no histórico (${negociosValidos.length - novas} já estavam lá); elas alimentam a página do IR.` : ""),
     };
   } catch (err) {
     await client.query("rollback");
@@ -143,6 +152,36 @@ export async function aplicarImportacaoB3(
   } finally {
     client.release();
   }
+}
+
+/**
+ * Grava as negociações da B3 no histórico de operações, sem duplicar: para cada data, ativo, tipo, quantidade e preço,
+ * só entra a diferença entre o que o arquivo tem e o que já está lançado (duas execuções iguais no mesmo dia contam duas).
+ */
+async function guardarNegocios(client: import("pg").PoolClient, negocios: NegocioImportado[], dono: number | null): Promise<number> {
+  const grupos = new Map<string, { n: NegocioImportado; vezes: number }>();
+  for (const n of negocios) {
+    const chave = [n.data, n.ticker, n.tipo, n.quantidade, n.preco].join("|");
+    const g = grupos.get(chave);
+    if (g) g.vezes++;
+    else grupos.set(chave, { n, vezes: 1 });
+  }
+  let novas = 0;
+  for (const { n, vezes } of grupos.values()) {
+    const { rows } = await client.query<{ total: number }>(
+      `select count(*)::int as total from operacoes
+        where usuario_id is not distinct from $1 and data = $2 and ticker = $3 and tipo = $4 and quantidade = $5 and round(preco, 4) = round($6::numeric, 4)`,
+      [dono, n.data, n.ticker, n.tipo, n.quantidade, n.preco],
+    );
+    for (let i = rows[0]?.total ?? 0; i < vezes; i++) {
+      await client.query(
+        "insert into operacoes (data, ticker, tipo, quantidade, preco, custos, tipo_ativo, usuario_id) values ($1, $2, $3, $4, $5, 0, $6, $7)",
+        [n.data, n.ticker, n.tipo, n.quantidade, n.preco, n.tipoAtivo, dono],
+      );
+      novas++;
+    }
+  }
+  return novas;
 }
 
 // ---------- Compra e venda ----------
@@ -185,6 +224,7 @@ export async function registrarOperacao(dados: {
   const fmt = (v: number) => `${simbolo} ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtQtd = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 8 });
   const { id: dono } = await usuarioOuErro();
+  await migrar();
 
   const client = await pool().connect();
   try {
@@ -224,10 +264,10 @@ export async function registrarOperacao(dados: {
       mensagem = `Venda registrada${conversao}. ${resultado >= 0 ? "Lucro" : "Prejuízo"} de ${fmt(Math.abs(resultado))} sobre o preço médio.`;
     }
     await client.query(
-      `insert into operacoes (data, ticker, tipo, quantidade, preco, custos, tipo_ativo, usuario_id, moeda_paga, cambio_pago)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `insert into operacoes (data, ticker, tipo, quantidade, preco, custos, tipo_ativo, usuario_id, moeda_paga, cambio_pago, preco_medio_venda)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [dados.data, ticker, dados.tipo, dados.quantidade, dados.preco, custos, info.id, dono, dados.moedaPaga === "USDT" ? "USDT" : null,
-        dados.moedaPaga === "USDT" ? dados.cotacaoUsdt : null],
+        dados.moedaPaga === "USDT" ? dados.cotacaoUsdt : null, dados.tipo === "V" ? pmAtual : null],
     );
     await client.query("commit");
     revalidatePath("/carteira");

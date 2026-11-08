@@ -169,6 +169,8 @@ export async function migrar() {
     -- Cripto paga em USDT: o preço fica em reais e guardamos a moeda e a cotação do USDT usadas na conversão
     alter table operacoes add column if not exists moeda_paga text;
     alter table operacoes add column if not exists cambio_pago numeric;
+    -- Preço médio na hora da venda (para o lucro exato no imposto de renda)
+    alter table operacoes add column if not exists preco_medio_venda numeric;
     -- Dividendos/JCP/rendimentos por ativo (Yahoo), para calcular os proventos recebidos
     create table if not exists proventos (
       ticker  text not null,

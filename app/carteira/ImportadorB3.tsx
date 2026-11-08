@@ -27,6 +27,7 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
   const [resultado, setResultado] = useState<ResultadoB3 | null>(null);
   const [linhas, setLinhas] = useState<Linha[]>([]);
   const [modo, setModo] = useState<"substituir" | "atualizar">("atualizar");
+  const [guardarHistorico, setGuardarHistorico] = useState(true);
 
   const porTicker = new Map(atual.map((a) => [a.ticker, a]));
   const selecionadas = linhas.filter((l) => l.incluir);
@@ -66,6 +67,7 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
           preco_medio: l.pmTexto === l.pmOriginal && l.precoMedio != null ? l.precoMedio : paraNumero(l.pmTexto),
         })),
         modo,
+        guardarHistorico ? (resultado?.negocios ?? []) : [],
       );
       if (r.ok) {
         setOk(r.mensagem);
@@ -199,6 +201,15 @@ export function ImportadorB3({ atual }: { atual: Atual[] }) {
                   Substituir a carteira pelo arquivo
                 </label>
               </div>
+              {resultado.negocios.length > 0 && (
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" checked={guardarHistorico} onChange={(e) => setGuardarHistorico(e.target.checked)} className="mt-1 accent-emerald-500" />
+                  <span>
+                    Guardar as {resultado.negocios.length} negociações no histórico de compras e vendas
+                    <span className="block text-xs text-fraco">Calculam o imposto de renda das vendas e os proventos pela data certa. As que já estão lançadas não se repetem.</span>
+                  </span>
+                </label>
+              )}
               {removidas.length > 0 && (
                 <p className="text-xs text-amber-300/90">
                   Serão removidas da carteira: {removidas.map((r) => r.ticker).join(", ")}

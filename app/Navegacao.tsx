@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/", rotulo: "Painel" },
   { href: "/ranking", rotulo: "Ranking" },
   { href: "/carteira", rotulo: "Carteira" },
+  { href: "/ir", rotulo: "IR" },
   { href: "/placar", rotulo: "Placar" },
 ];
 
