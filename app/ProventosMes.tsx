@@ -36,7 +36,7 @@ export function ProventosMes({ meses }: { meses: Mes[] }) {
           );
         })}
       </div>
-      <p className="mt-3 text-xs text-fraco">Pela data com de cada provento. Passe o mouse para ver os ativos.</p>
+      <p className="mt-3 text-xs text-fraco">Pela data com de cada provento, já sem o IR do JCP. Passe o mouse para ver os ativos.</p>
     </div>
   );
 }
