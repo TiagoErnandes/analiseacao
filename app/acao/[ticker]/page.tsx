@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { brl, dataBr, dinheiro, num, pct } from "@/lib/format";
-import { carregarPainel, historicoDe } from "@/lib/painel";
+import { aplicarMetodoTeto, carregarPainel, historicoDe } from "@/lib/painel";
 import { exigirUsuario } from "@/lib/auth";
 import { query, type Analise } from "@/lib/db";
 import { Logo } from "../../Logo";
@@ -11,7 +11,8 @@ import type { DadosFii, Fundamentos, HistoricoPreco } from "@/lib/mercado";
 import type { IndicadoresCripto } from "@/lib/cripto";
 import type { Documento, HistoricoLucro, ProventoAnunciado } from "@/lib/cvm";
 import { yieldAtual } from "@/lib/juros";
-import type { ConsistenciaDividendos } from "@/lib/valuation";
+import { infoMetodo, METODOS_TETO, todosOsTetos, type ConsistenciaDividendos } from "@/lib/valuation";
+import { SeletorMetodoTeto } from "../../SeletorMetodoTeto";
 import { Constancia } from "./Constancia";
 import { Alertas, Cartao, Nota, ReguaTeto, Score, Sinal, Variacao } from "../../ui";
 import { GraficoHistorico } from "./GraficoHistorico";
@@ -45,15 +46,19 @@ function Indicador({ rotulo, valor, dica }: { rotulo: string; valor: React.React
 export default async function AcaoPage({ params }: Params) {
   const ticker = (await params).ticker.toUpperCase();
   const usuario = await exigirUsuario();
-  const { rel, porTicker, posicoes } = await carregarPainel(usuario);
+  const { rel, porTicker, posicoes, metodoTeto, estrategia } = await carregarPainel(usuario);
+  const balancear = estrategia.atual === "balanceamento";
   let a: Analise | undefined = porTicker.get(ticker);
   if (!a) {
     [a] = await query<Analise>("select * from analises where ticker = $1 order by data desc limit 1", [ticker]);
-    if (a) a = { ...a, na_carteira: posicoes.some((p) => p.ticker === ticker) };
+    if (a) a = aplicarMetodoTeto({ ...a, na_carteira: posicoes.some((p) => p.ticker === ticker) }, metodoTeto, balancear);
   }
   // Fora da lista: analisa na hora (mesmo cálculo, sem IA, não entra no ranking)
   const avulso = !a;
-  if (!a) a = (await analisarAvulso(ticker)) ?? undefined;
+  if (!a) {
+    const novo = await analisarAvulso(ticker);
+    if (novo) a = aplicarMetodoTeto(novo, metodoTeto, balancear);
+  }
   if (!a) notFound();
   const jaAcompanha = avulso
     ? (await query<{ ativo: boolean }>("select ativo from universo where ticker = $1", [ticker]).catch(() => []))[0]?.ativo === true
@@ -76,10 +81,11 @@ export default async function AcaoPage({ params }: Params) {
       : tipo === "cripto"
         ? "Média dos últimos 200 dias (Mayer = 1)"
         : tipo === "acao"
-        ? "Mediana de Bazin, Graham e Buffett"
+        ? infoMetodo(metodoTeto).nome
         : a.teto_bazin != null && a.preco_teto === a.teto_bazin
         ? tipo === "fii" ? `Rendimento sustentável ÷ ${yFii}` : "Bazin"
         : tipo === "etf" ? "Média de preço de 12 meses" : "Graham";
+  const tetos = tipo === "acao" ? todosOsTetos({ ...a, preco_teto: a.teto_mediana !== undefined ? a.teto_mediana : a.preco_teto }) : [];
   const fii = tipo === "fii" ? (a.indicadores as DadosFii | null) : null;
   const etf = tipo === "etf" ? (a.indicadores as HistoricoPreco | null) : null;
   const fund = tipo === "acao" ? (a.indicadores as Fundamentos | null) : null;
@@ -194,18 +200,37 @@ export default async function AcaoPage({ params }: Params) {
             </div>
             <ReguaTeto preco={a.preco} teto={a.preco_teto} />
             {tipo === "acao" ? (
-              <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
-                {[
-                  { nome: "Bazin", valor: a.teto_bazin, regra: "Dividendo conservador ÷ 10%" },
-                  { nome: "Graham revisado", valor: a.teto_graham, regra: "LPA × (8,5 + 2 × 3) × 4,4 ÷ 13,5" },
-                  { nome: "Buffett conservador", valor: a.teto_buffett, regra: "LPA cresce 3% por 10 anos, perpetuidade 3,5%, desconto 16%, margem de 30%" },
-                ].map((m) => (
-                  <div key={m.nome} className={`rounded-lg border p-3 ${m.valor != null && m.valor === a.preco_teto ? "border-marca/40" : "border-borda"}`}>
-                    <p className="text-xs text-suave">{m.nome}</p>
-                    <p className="font-semibold tabular-nums">{brl(m.valor)}</p>
-                    <p className="mt-1 text-[11px] leading-snug text-fraco">{m.regra}</p>
-                  </div>
-                ))}
+              <div className="space-y-2">
+                <SeletorMetodoTeto metodo={metodoTeto} compacto />
+                <div className="overflow-hidden rounded-lg border border-borda">
+                  <table className="w-full text-xs">
+                    <thead className="bg-painel2 text-[10px] uppercase tracking-wider text-fraco">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left font-medium">Método</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Teto</th>
+                        <th className="px-2 py-1.5 text-right font-medium">vs. {brl(a.preco)}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tetos.map((t) => {
+                        const m = METODOS_TETO.find((x) => x.id === t.id)!;
+                        const ativo = t.id === metodoTeto;
+                        return (
+                          <tr key={t.id} className={`border-t border-borda ${ativo ? "bg-marca/10" : ""}`} title={m.regra}>
+                            <td className="px-2 py-1.5">
+                              <span className={ativo ? "font-semibold text-texto" : "text-suave"}>{t.id === "mediana" ? "Mediana (padrão)" : m.nome}</span>
+                              <span className="block text-[10px] leading-snug text-fraco">{m.regra}</span>
+                            </td>
+                            <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{brl(t.valor)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">
+                              <Variacao v={a.preco && t.valor ? t.valor / a.preco - 1 : null} />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             ) : (
               <p className="rounded-lg border border-borda p-3 text-xs leading-relaxed text-suave">

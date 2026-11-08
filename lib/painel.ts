@@ -1,6 +1,7 @@
 // Dados que as páginas do site usam: última análise, carteira e posições já calculadas.
-import { modoIa, ultimaExecucao } from "./analise";
-import { estrategiaAtual } from "./estrategia";
+import { fatorScore, modoIa, ultimaExecucao } from "./analise";
+import { estrategiaAtual, metodoTetoDe } from "./estrategia";
+import { margem as margemAte, scoreFinal, tetoPorMetodo, type MetodoTeto } from "./valuation";
 import { query, type Analise, type Carteira, type Relatorio } from "./db";
 import { infoTipo } from "./tipos";
 import { proventosRecebidos } from "./proventos";
@@ -57,12 +58,40 @@ function melhorDaCarteira(analises: Analise[]): { ticker: string; justificativa:
   };
 }
 
+/**
+ * Troca o preço teto das ações pelo método escolhido pelo usuário e recalcula a margem e o score.
+ * O score muda só na parte do desconto (a diferença entre a margem nova e a gravada); qualidade, nota da IA e peso
+ * faltando continuam os da análise. Sinal e comentário continuam os da IA, que olhou a mediana.
+ */
+export function aplicarMetodoTeto<T extends Analise>(a: T, metodo: MetodoTeto, balancear: boolean): T {
+  if (metodo === "mediana" || (a.tipo ?? "acao") !== "acao") return a;
+  const teto = tetoPorMetodo(metodo, a);
+  const novaMargem = margemAte(a.preco, teto);
+  let score = a.score;
+  if (score != null) {
+    const base = { qualidade: a.qualidade, notaIa: a.nota_ia, faltaParaIdeal: 0, balancear };
+    const delta = scoreFinal({ ...base, margem: novaMargem }) - scoreFinal({ ...base, margem: a.margem });
+    const fator = fatorScore({ tipo: a.tipo ?? "acao", alertas: a.alertas ? [a.alertas] : [] });
+    score = Math.max(0, Math.min(100, Math.round(score + delta * fator)));
+  }
+  return { ...a, preco_teto: teto, teto_mediana: a.preco_teto, margem: novaMargem, score };
+}
+
+export function aplicarMetodoTetoEmTodas<T extends Analise>(analises: T[], metodo: MetodoTeto, balancear: boolean): T[] {
+  return metodo === "mediana" ? analises : analises.map((a) => aplicarMetodoTeto(a, metodo, balancear));
+}
+
 export async function carregarPainel(usuario: Usuario) {
   const exec = await ultimaExecucao(); // também garante as colunas novas no banco
   const [relDia] = await query<Relatorio>("select * from relatorio_diario order by data desc limit 1");
   const carteira = await carteiraDe(usuario.id);
+  const [estrategia, metodoTeto] = await Promise.all([estrategiaAtual(usuario.id), metodoTetoDe(usuario.id)]);
   const analises = relDia
-    ? marcarCarteira(await query<Analise>("select * from analises where data = $1", [relDia.data]), carteira.map((c) => c.ticker))
+    ? aplicarMetodoTetoEmTodas(
+        marcarCarteira(await query<Analise>("select * from analises where data = $1", [relDia.data]), carteira.map((c) => c.ticker)),
+        metodoTeto,
+        estrategia.atual === "balanceamento",
+      )
     : [];
   const porTicker = new Map(analises.map((a) => [a.ticker, a]));
   let rel = relDia;
@@ -129,7 +158,8 @@ export async function carregarPainel(usuario: Usuario) {
   return {
     exec,
     modo: await modoIa(),
-    estrategia: await estrategiaAtual(usuario.id),
+    estrategia,
+    metodoTeto,
     classes: [...classes.keys()]
       .map((nome) => ({ nome, valor: classes.get(nome) ?? 0, peso: patrimonio > 0 ? (classes.get(nome) ?? 0) / patrimonio : 0 }))
       .filter((c) => c.valor > 0)

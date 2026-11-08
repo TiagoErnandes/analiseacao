@@ -47,6 +47,7 @@ export type Analise = {
   teto_graham: number | null;
   teto_buffett: number | null;
   preco_teto: number | null;
+  teto_mediana?: number | null; // só na leitura: o teto gravado (mediana) quando o usuário escolhe outro método
   margem: number | null;
   nota_ia: number | null;
   recomendacao: string | null;

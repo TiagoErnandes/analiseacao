@@ -13,6 +13,7 @@ import { ProventosMes } from "./ProventosMes";
 import { Projecao } from "./Projecao";
 import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
 import { SeletorEstrategia } from "./SeletorEstrategia";
+import { SeletorMetodoTeto } from "./SeletorMetodoTeto";
 import { AlertasVenda } from "./AlertasVenda";
 import { alertasRecentes } from "@/lib/alertas";
 import { precosAlvoDoUsuario } from "@/lib/precoAlvo";
@@ -72,7 +73,7 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 
 export default async function Painel() {
   const usuario = await exigirUsuario();
-  const { exec, modo, estrategia, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel(usuario);
+  const { exec, modo, estrategia, metodoTeto, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel(usuario);
   // Os alertas no celular vigiam a carteira do dono (Telegram/ntfy configurados no servidor)
   const alertas = usuario.admin ? await alertasRecentes() : [];
   const urgentes = alertas.filter((a) => a.nivel === "VENDER");
@@ -144,6 +145,7 @@ export default async function Painel() {
       </section>
 
       <SeletorEstrategia escolha={estrategia.escolha} atual={estrategia.atual} trocaEm={estrategia.trocaEm} />
+      <SeletorMetodoTeto metodo={metodoTeto} />
 
       {posicoes.length === 0 && (
         <div className="flex flex-col gap-3 rounded-xl border border-marca/30 bg-marca/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">

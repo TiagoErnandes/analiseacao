@@ -67,6 +67,18 @@ export async function salvarEstrategia(escolha: EscolhaEstrategia) {
   revalidatePath("/");
 }
 
+/** Método do preço teto das ações (cada usuário escolhe o seu; muda na hora, sem refazer a análise). */
+export async function salvarMetodoTeto(metodo: string) {
+  const { ehMetodoTeto } = await import("@/lib/valuation");
+  if (!ehMetodoTeto(metodo)) return;
+  const { id } = await usuarioOuErro();
+  await query(
+    "insert into config_usuario (usuario_id, chave, valor) values ($1, 'metodo_teto', $2) on conflict (usuario_id, chave) do update set valor = excluded.valor",
+    [id, metodo],
+  );
+  revalidatePath("/", "layout");
+}
+
 /** Manda um alerta de teste para o celular (confere se o Telegram, o ntfy ou o WhatsApp estão configurados). */
 export async function testarAlerta(): Promise<{ ok: boolean; mensagem: string }> {
   if (!(await usuarioAtual())?.admin) return { ok: false, mensagem: "Os alertas no celular são só do dono do site." };

@@ -306,3 +306,103 @@ export function calcularIndicadoresEtf(d: {
   const alertas = teto == null ? ["sem histórico de preço suficiente para referência"] : [];
   return { dpa12m, dpaMedio, dy12m, bazin, graham: null, buffett: null, teto, margem: margem(d.preco, teto), alertas };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Método do preço teto escolhido pelo usuário (select no painel, no ranking e na página da ação).
+// A análise diária grava a mediana; os outros métodos são recalculados na hora a partir do LPA, VPA, DPA e ROE gravados.
+
+export type MetodoTeto =
+  | "mediana"
+  | "bazin6" | "bazin8" | "bazin10"
+  | "graham_classico" | "graham_revisado"
+  | "buffett_base" | "buffett_conservador"
+  | "gordon" | "pl_justo" | "pvp_justo";
+
+export const METODO_TETO_PADRAO: MetodoTeto = "mediana";
+
+/** Premissas dos métodos extras (Gordon e P/VP justo usam o mesmo k e g). */
+export const PREMISSAS = { k: 0.15, g: 0.05, plJusto: 6.5 } as const;
+
+/** Buffett base: o LPA cresce 6% ao ano por 10 anos, perpetuidade 4%, desconto 15%, margem de 30%. */
+export const BUFFETT_BASE = { crescimento: 0.06, anos: 10, perpetuidade: 0.04, desconto: 0.15, margemSeguranca: 0.3 } as const;
+
+export const METODOS_TETO: { id: MetodoTeto; grupo: string; nome: string; regra: string }[] = [
+  { id: "mediana", grupo: "Padrão", nome: "Mediana (Bazin 10%, Graham revisado, Buffett conservador)", regra: "A mediana dos três métodos conservadores" },
+  { id: "bazin6", grupo: "Bazin", nome: "Bazin clássico (6%)", regra: "Dividendo conservador ÷ 6%" },
+  { id: "bazin8", grupo: "Bazin", nome: "Bazin ajustado (8%)", regra: "Dividendo conservador ÷ 8%" },
+  { id: "bazin10", grupo: "Bazin", nome: "Bazin ajustado (10%)", regra: "Dividendo conservador ÷ 10%" },
+  { id: "graham_classico", grupo: "Graham", nome: "Graham clássico", regra: "√(22,5 × LPA × VPA)" },
+  { id: "graham_revisado", grupo: "Graham", nome: "Graham revisado (juro brasileiro)", regra: "LPA × (8,5 + 2 × 3) × 4,4 ÷ 13,5" },
+  { id: "buffett_base", grupo: "Buffett", nome: "Buffett base", regra: "LPA cresce 6% por 10 anos, perpetuidade 4%, desconto 15%, margem de 30%" },
+  { id: "buffett_conservador", grupo: "Buffett", nome: "Buffett conservador", regra: "LPA cresce 3% por 10 anos, perpetuidade 3,5%, desconto 16%, margem de 30%" },
+  { id: "gordon", grupo: "Outros", nome: "Gordon", regra: "Dividendo × 1,05 ÷ (15% − 5%)" },
+  { id: "pl_justo", grupo: "Outros", nome: "P/L justo (6,5x)", regra: "LPA × 6,5" },
+  { id: "pvp_justo", grupo: "Outros", nome: "P/VP justo", regra: "VPA × (ROE − 5%) ÷ (15% − 5%)" },
+];
+
+export function ehMetodoTeto(v: unknown): v is MetodoTeto {
+  return METODOS_TETO.some((m) => m.id === v);
+}
+
+export function infoMetodo(id: MetodoTeto) {
+  return METODOS_TETO.find((m) => m.id === id) ?? METODOS_TETO[0];
+}
+
+/** Fluxo de caixa descontado do LPA com as premissas dadas, já com a margem de segurança. */
+function dcfLpa(lpa: number | null, p: { crescimento: number; anos: number; perpetuidade: number; desconto: number; margemSeguranca: number }) {
+  if (!lpa || lpa <= 0) return null;
+  let valor = 0;
+  let lucro = lpa;
+  for (let t = 1; t <= p.anos; t++) {
+    if (t > 1) lucro *= 1 + p.crescimento;
+    valor += lucro / (1 + p.desconto) ** t;
+  }
+  const terminal = (lucro * (1 + p.perpetuidade)) / (p.desconto - p.perpetuidade);
+  return (valor + terminal / (1 + p.desconto) ** p.anos) * (1 - p.margemSeguranca);
+}
+
+type DadosTeto = {
+  lpa: number | null;
+  vpa: number | null;
+  dpa_12m: number | null;
+  dpa_medio: number | null;
+  roe: number | null;
+  teto_bazin: number | null;
+  teto_graham: number | null;
+  teto_buffett: number | null;
+  preco_teto: number | null;
+};
+
+/**
+ * Preço teto de uma ação pelo método escolhido. Usa os mesmos cuidados da análise diária:
+ * dividendo = o menor entre o de 12 meses e a média de 5 anos; LPA claramente errado (ROE < 1%) não vale.
+ */
+export function tetoPorMetodo(metodo: MetodoTeto, d: DadosTeto): number | null {
+  if (metodo === "mediana") return d.preco_teto;
+  const lpaOk = d.lpa != null && d.lpa > 0 && !(d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01) ? d.lpa : null;
+  const divs = [d.dpa_12m, d.dpa_medio].filter((v): v is number => v != null && v > 0);
+  const dividendo = divs.length ? Math.min(...divs) : null;
+  const { k, g, plJusto } = PREMISSAS;
+  switch (metodo) {
+    case "bazin6": return tetoBazin(dividendo, 0.06);
+    case "bazin8": return tetoBazin(dividendo, 0.08);
+    case "bazin10": return tetoBazin(dividendo, 0.1);
+    case "graham_classico": return lpaOk && d.vpa && d.vpa > 0 ? Math.sqrt(22.5 * lpaOk * d.vpa) : null;
+    case "graham_revisado": return tetoGraham(lpaOk);
+    case "buffett_base": return dcfLpa(lpaOk, BUFFETT_BASE);
+    case "buffett_conservador": return tetoBuffett(lpaOk);
+    case "gordon": return dividendo ? (dividendo * (1 + g)) / (k - g) : null;
+    case "pl_justo": return lpaOk ? lpaOk * plJusto : null;
+    case "pvp_justo": {
+      if (!d.vpa || d.vpa <= 0) return null;
+      const roe = d.roe ?? (lpaOk ? lpaOk / d.vpa : null);
+      if (roe == null || roe <= g) return null;
+      return (d.vpa * (roe - g)) / (k - g);
+    }
+  }
+}
+
+/** Todos os métodos de uma vez (a tabela da página da ação). */
+export function todosOsTetos(d: DadosTeto): { id: MetodoTeto; valor: number | null }[] {
+  return METODOS_TETO.map((m) => ({ id: m.id, valor: tetoPorMetodo(m.id, d) }));
+}
