@@ -10,6 +10,7 @@ import { GraficoEvolucao } from "./GraficoEvolucao";
 import { MeusAtivos } from "./MeusAtivos";
 import { Comparativo } from "./Comparativo";
 import { ProventosMes } from "./ProventosMes";
+import { RentabilidadeMensal } from "./RentabilidadeMensal";
 import { Projecao } from "./Projecao";
 import { SimuladorAporte, type ItemAporte } from "./SimuladorAporte";
 import { SeletorEstrategia } from "./SeletorEstrategia";
@@ -73,7 +74,7 @@ function AcaoDoDia({ titulo, a, justificativa }: { titulo: string; a?: Analise; 
 
 export default async function Painel() {
   const usuario = await exigirUsuario();
-  const { exec, modo, estrategia, metodoTeto, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, resumo, setores, classes } = await carregarPainel(usuario);
+  const { exec, modo, estrategia, metodoTeto, rel, analises, porTicker, posicoes, evolucao, comparativo, proventosPorMes, rentMensal, resumo, setores, classes } = await carregarPainel(usuario);
   // Os alertas no celular vigiam a carteira do dono (Telegram/ntfy configurados no servidor)
   const alertas = usuario.admin ? await alertasRecentes() : [];
   const urgentes = alertas.filter((a) => a.nivel === "VENDER");
@@ -225,7 +226,7 @@ export default async function Painel() {
               <p>Rentabilidade total <Variacao v={resumo.rentabilidadeTotal} casas={2} /></p>
             </div>
           }
-          dica="Inclui ganho de capital e proventos recebidos"
+          dica="Por cotas: inclui ganho de capital e proventos, sem contar aportes e vendas como ganho ou perda"
         />
       </section>
 
@@ -285,6 +286,10 @@ export default async function Painel() {
           <Comparativo carteira={resumo.rentabilidade12m.valor} dados={comparativo} />
         </Cartao>
       </section>
+
+      <Cartao titulo="Rentabilidade mês a mês × CDI e Ibovespa" acao={<span className="text-xs text-fraco">por cotas</span>}>
+        <RentabilidadeMensal dados={rentMensal} />
+      </Cartao>
 
       <Cartao titulo="Projeção para a aposentadoria">
         <Projecao patrimonio={resumo.patrimonio} />
