@@ -99,6 +99,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <li><Link href="/" className="hover:text-texto">Painel</Link></li>
                 <li><Link href="/ranking" className="hover:text-texto">Ranking</Link></li>
                 <li><Link href="/carteira" className="hover:text-texto">Carteira</Link></li>
+                <li><Link href="/ir" className="hover:text-texto">Imposto de renda</Link></li>
                 <li><Link href="/placar" className="hover:text-texto">Placar</Link></li>
               </ul>
             </div>

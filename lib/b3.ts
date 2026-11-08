@@ -20,7 +20,10 @@ export type ItemImportado = {
 
 export type Ignorado = { codigo: string; motivo: string };
 
-export type ResultadoB3 = { itens: ItemImportado[]; ignorados: Ignorado[]; arquivos: string[] };
+/** Compra ou venda do arquivo de Negociação: vai para o histórico de operações (base do imposto de renda). */
+export type NegocioImportado = { data: string; tipo: "C" | "V"; ticker: string; quantidade: number; preco: number; tipoAtivo: Tipo | null };
+
+export type ResultadoB3 = { itens: ItemImportado[]; ignorados: Ignorado[]; arquivos: string[]; negocios: NegocioImportado[] };
 
 const norm = (s: unknown) =>
   String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -198,8 +201,12 @@ export function importarB3(arquivos: { nome: string; dados: Uint8Array }[], cart
 
   itens.sort((a, b) => a.ticker.localeCompare(b.ticker));
   const vistos = new Set<string>();
+  const tipoPos = new Map((posicoes ?? []).map((p) => [p.ticker, p.tipo]));
   return {
     itens,
+    negocios: negocios
+      .filter((n) => /^\d{4}-\d{2}-\d{2}$/.test(n.data) && (ACAO.test(n.ticker) || BDR.test(n.ticker)))
+      .map((n) => ({ ...n, tipoAtivo: tipoPos.get(n.ticker) ?? (BDR.test(n.ticker) ? "bdr" : null) })),
     ignorados: ignorados.filter((i) => (vistos.has(i.codigo) ? false : (vistos.add(i.codigo), true))),
     arquivos: descricao,
   };

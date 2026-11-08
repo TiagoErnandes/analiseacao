@@ -8,6 +8,8 @@ import { proventosRecebidos } from "./proventos";
 import { compararDesde } from "./indices";
 import type { Usuario } from "./auth";
 import { precosRendaFixa } from "./rendafixa";
+import { lucrosRealizados } from "./ir";
+import { rentabilidadeMensal } from "./rentabilidade";
 
 /** Limite de concentração por setor de referência para previdência (a estratégia Balanceamento usa este). */
 export const LIMITE_SETOR = 0.3;
@@ -132,7 +134,11 @@ export async function carregarPainel(usuario: Usuario) {
   );
 
   const investido = posicoes.reduce((s, p) => s + p.investido, 0);
-  const rent12 = rentabilidade12m(evolucao, patrimonio, investido, recebidos);
+  // Por cotas (desconta aportes e vendas); sem fotos suficientes, a conta simples sobre o investido
+  const rentMensal = await rentabilidadeMensal(evolucao, await lucrosRealizados(usuario.id).catch(() => []), recebidos.porMes).catch(() => null);
+  const rent12 = rentMensal?.acumulado
+    ? { valor: rentMensal.acumulado.carteira, desde: rentMensal.acumulado.desde }
+    : rentabilidade12m(evolucao, patrimonio, investido, recebidos);
   // Mesma janela da rentabilidade: a foto mais antiga dos últimos 12 meses ou, sem fotos, a primeira compra
   const umAno = new Date();
   umAno.setFullYear(umAno.getFullYear() - 1);
@@ -171,6 +177,7 @@ export async function carregarPainel(usuario: Usuario) {
     evolucao,
     comparativo,
     proventosPorMes: recebidos.porMes,
+    rentMensal,
     resumo: {
       patrimonio,
       investido,
