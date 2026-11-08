@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { dinheiro } from "@/lib/format";
 import type { PrecoAlvo as Alvo } from "@/lib/precoAlvo";
-import { definirPrecoAlvo, excluirPrecoAlvo } from "./actions";
+import { definirPrecoAlvo, excluirPrecoAlvo, testarEmail } from "./actions";
 
 /** "14,07", "1.234,56" ou "14.07" viram número. */
 function lerNumero(txt: string): number {
@@ -68,6 +68,8 @@ export function PrecoAlvo({
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [salvando, iniciar] = useTransition();
+  const [testeEmail, setTesteEmail] = useState<string | null>(null);
+  const [testando, iniciarTeste] = useTransition();
 
   useEffect(() => {
     if (!aberto) return;
@@ -88,7 +90,7 @@ export function PrecoAlvo({
   function salvar() {
     if (!valido) return setErro("Digite um preço-alvo maior que zero.");
     iniciar(async () => {
-      const r = await definirPrecoAlvo({ ticker, tipo, moeda, precoAlvo: numero, viaSite, viaWhatsapp: viaZap, viaEmail }).catch((e: Error) => ({ ok: false, mensagem: e.message, alvo: undefined }));
+      const r = await definirPrecoAlvo({ ticker, tipo, moeda, precoAlvo: numero, viaSite, viaWhatsapp: viaZap, viaEmail, direcao: precoAtual ? (numero > precoAtual ? "venda" : "compra") : undefined }).catch((e: Error) => ({ ok: false, mensagem: e.message, alvo: undefined }));
       if (!r.ok) return setErro(r.mensagem);
       setAlvo(r.alvo ?? null);
       setAviso(r.mensagem);
@@ -186,7 +188,18 @@ export function PrecoAlvo({
                 {email && viaEmail && (
                   <p className={`text-xs leading-snug ${emailPronto ? "text-suave" : "text-amber-300"}`}>
                     {emailPronto
-                      ? <>O aviso vai para <b className="text-texto">{email}</b>.</>
+                      ? <>
+                          O aviso vai para <b className="text-texto">{email}</b>.{" "}
+                          <button
+                            type="button"
+                            disabled={testando}
+                            onClick={() => iniciarTeste(async () => setTesteEmail((await testarEmail().catch((e: Error) => ({ mensagem: e.message }))).mensagem))}
+                            className="text-marca hover:underline disabled:opacity-50"
+                          >
+                            {testando ? "Enviando…" : "Enviar email de teste"}
+                          </button>
+                          {testeEmail && <span className="mt-1 block">{testeEmail}</span>}
+                        </>
                       : <>O envio de email ainda não está configurado no servidor (SMTP_USUARIO e SMTP_SENHA no .env.production). Pode deixar ligado: depois de configurado, os avisos vão para <b className="text-texto">{email}</b>.</>}
                   </p>
                 )}
