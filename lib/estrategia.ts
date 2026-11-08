@@ -1,5 +1,6 @@
 // Qual estratégia vale hoje: a escolhida pelo usuário ou, no automático, Oportunidade nos primeiros meses da carteira.
 import { migrar, query } from "./db";
+import { ehMetodoTeto, METODO_TETO_PADRAO, type MetodoTeto } from "./valuation";
 import { LIMITE_SETOR, MESES_OPORTUNIDADE, type EscolhaEstrategia, type Estrategia } from "./modos";
 
 export type InfoEstrategia = {
@@ -44,4 +45,14 @@ export async function estrategiaAtual(usuarioId: number | null): Promise<InfoEst
   );
   const atual: Estrategia = escolha === "auto" ? (t.antes ? "oportunidade" : "balanceamento") : escolha;
   return { escolha, atual, inicio, trocaEm: t.troca, limiteSetor: LIMITE_SETOR[atual] };
+}
+
+/** Método do preço teto das ações escolhido pelo usuário (padrão: a mediana de Bazin, Graham e Buffett). */
+export async function metodoTetoDe(usuarioId: number | null): Promise<MetodoTeto> {
+  await migrar();
+  const [c] = await query<{ valor: string }>(
+    "select valor from config_usuario where usuario_id is not distinct from $1 and chave = 'metodo_teto'",
+    [usuarioId],
+  );
+  return ehMetodoTeto(c?.valor) ? c.valor : METODO_TETO_PADRAO;
 }

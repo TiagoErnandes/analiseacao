@@ -21,7 +21,7 @@ const FILTROS: { id: Filtro; rotulo: string }[] = [
 type Coluna = { id: string; rotulo: string; valor: (a: Analise) => number | string | null; alinhar?: "right" | "center"; dica?: string };
 const COLUNAS: Coluna[] = [
   { id: "preco", rotulo: "Cotação", valor: (a) => a.preco, alinhar: "right" },
-  { id: "teto", rotulo: "Preço teto", valor: (a) => a.preco_teto, alinhar: "right", dica: "Ações: mediana de Bazin, Graham e Buffett" },
+  { id: "teto", rotulo: "Preço teto", valor: (a) => a.preco_teto, alinhar: "right", dica: "Ações: método escolhido" },
   { id: "margem", rotulo: "Margem", valor: (a) => a.margem, alinhar: "right", dica: "Quanto o preço pode subir até o teto (negativo: está acima do teto)" },
   { id: "dy", rotulo: "DY 12m", valor: (a) => a.dy_12m, alinhar: "right" },
   { id: "pl", rotulo: "P/L", valor: (a) => (a.preco && a.lpa && a.lpa > 0 ? a.preco / a.lpa : null), alinhar: "right" },
@@ -32,7 +32,7 @@ const COLUNAS: Coluna[] = [
   { id: "score", rotulo: "Score", valor: (a) => a.score },
 ];
 
-export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]; filtroInicial?: string }) {
+export function TabelaRanking({ analises, filtroInicial, metodoNome }: { analises: Analise[]; filtroInicial?: string; metodoNome?: string }) {
   const [filtro, setFiltro] = useState<Filtro>(FILTROS.some((f) => f.id === filtroInicial) ? (filtroInicial as Filtro) : "todas");
   const [setor, setSetor] = useState("");
   const [tipo, setTipo] = useState("");
@@ -107,7 +107,7 @@ export function TabelaRanking({ analises, filtroInicial }: { analises: Analise[]
               <th className="w-8">#</th>
               <th>Ativo</th>
               {COLUNAS.map((c) => (
-                <th key={c.id} className={c.alinhar === "right" ? "!text-right" : c.alinhar === "center" ? "!text-center" : ""} title={c.dica}>
+                <th key={c.id} className={c.alinhar === "right" ? "!text-right" : c.alinhar === "center" ? "!text-center" : ""} title={c.id === "teto" && metodoNome ? `Ações: ${metodoNome}` : c.dica}>
                   <button
                     onClick={() => setOrdem((o) => ({ col: c.id, desc: o.col === c.id ? !o.desc : true }))}
                     className={`inline-flex items-center gap-1 hover:text-texto ${ordem.col === c.id ? "text-texto" : ""}`}

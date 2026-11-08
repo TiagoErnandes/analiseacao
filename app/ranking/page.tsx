@@ -4,7 +4,10 @@ import { yieldAtual } from "@/lib/juros";
 import { query, type Analise, type Relatorio } from "@/lib/db";
 import { ultimaExecucao } from "@/lib/analise";
 import { exigirUsuario } from "@/lib/auth";
-import { carteiraDe, marcarCarteira } from "@/lib/painel";
+import { aplicarMetodoTetoEmTodas, carteiraDe, marcarCarteira } from "@/lib/painel";
+import { estrategiaAtual, metodoTetoDe } from "@/lib/estrategia";
+import { infoMetodo } from "@/lib/valuation";
+import { SeletorMetodoTeto } from "../SeletorMetodoTeto";
 import { Cartao, Vazio } from "../ui";
 import { TabelaRanking } from "./TabelaRanking";
 import { ExportarCarteira } from "../carteira/ExportarCarteira";
@@ -17,7 +20,14 @@ export default async function Ranking({ searchParams }: { searchParams: Promise<
   await ultimaExecucao(); // garante as colunas novas
   const [rel] = await query<Pick<Relatorio, "data">>("select data from relatorio_diario order by data desc limit 1");
   const meus = (await carteiraDe(usuario.id)).map((c) => c.ticker);
-  const analises = rel ? marcarCarteira(await query<Analise>("select * from analises where data = $1", [rel.data]), meus) : [];
+  const [estrategia, metodo] = await Promise.all([estrategiaAtual(usuario.id), metodoTetoDe(usuario.id)]);
+  const analises = rel
+    ? aplicarMetodoTetoEmTodas(
+        marcarCarteira(await query<Analise>("select * from analises where data = $1", [rel.data]), meus),
+        metodo,
+        estrategia.atual === "balanceamento",
+      )
+    : [];
   const { filtro } = await searchParams;
   const y = await yieldAtual();
 
@@ -29,13 +39,14 @@ export default async function Ranking({ searchParams }: { searchParams: Promise<
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-suave">
           Score de 0 a 100: 35% qualidade do balanço, 25% nota da IA e 40% desconto em relação ao preço teto (30% desconto e 10% peso
           faltando na carteira, na estratégia Balanceamento). Desconto acima de 40% não soma mais: costuma ser armadilha. Foco em ações: FIIs entram com 85% do score, e ativos com alerta grave com 75%.
-          Preço teto: ações pela mediana de Bazin (dividendo ÷ 10%), Graham revisado com juro brasileiro e Buffett conservador; FIIs pelo rendimento
+          Preço teto: ações pelo método escolhido abaixo (agora: {infoMetodo(metodo).nome}); FIIs pelo rendimento
           sustentável ÷ {pct(y.fii)}; ETFs por Bazin ou pela média de preço de 12 meses. Clique numa linha para ver o comentário da IA.
           {y.juroReal && (
             <> O yield exigido segue o juro real do Tesouro IPCA+ ({pct(y.juroReal.taxa, 2)}), com mínimo de 6% nos ETFs e 8% nos FIIs (nas ações o Bazin pede 10%).</>
           )}
         </p>
       </div>
+      <SeletorMetodoTeto metodo={metodo} />
       {analises.length > 0 && (
         <Cartao titulo="Exportar o ranking">
           <ExportarCarteira
@@ -44,7 +55,7 @@ export default async function Ranking({ searchParams }: { searchParams: Promise<
           />
         </Cartao>
       )}
-      {analises.length ? <TabelaRanking analises={analises} filtroInicial={filtro} /> : <Vazio>Ainda não há análise.</Vazio>}
+      {analises.length ? <TabelaRanking analises={analises} filtroInicial={filtro} metodoNome={infoMetodo(metodo).nome} /> : <Vazio>Ainda não há análise.</Vazio>}
     </div>
   );
 }

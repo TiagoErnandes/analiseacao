@@ -218,7 +218,7 @@ const PENALIDADE_GRAVE = 0.75;
 const PESO_FII = 0.85;
 /** Cripto é parcela pequena e de alto risco: entra no ranking com 75% do score. */
 const PESO_CRIPTO = 0.75;
-const fatorScore = (l: { tipo: string; alertas: string[] }) =>
+export const fatorScore = (l: { tipo: string; alertas: string[] }) =>
   (temAlertaGrave(l.alertas) ? PENALIDADE_GRAVE : 1) * (l.tipo === "fii" ? PESO_FII : l.tipo === "cripto" ? PESO_CRIPTO : 1);
 
 /** Sinal sem IA: comprar abaixo do teto com qualidade boa e sem alerta grave; evitar bem acima do teto ou com qualidade baixa. */

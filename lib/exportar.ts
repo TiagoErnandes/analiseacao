@@ -1,5 +1,7 @@
 // Exporta a carteira com tudo o que o site sabe, para mandar a outra IA analisar (Markdown, JSON ou CSV).
-import { carregarPainel, carteiraDe, marcarCarteira } from "./painel";
+import { aplicarMetodoTetoEmTodas, carregarPainel, carteiraDe, marcarCarteira } from "./painel";
+import { estrategiaAtual, metodoTetoDe } from "./estrategia";
+import { infoMetodo } from "./valuation";
 import type { Usuario } from "./auth";
 import { ehBesst } from "./besst";
 import { query, type Analise } from "./db";
@@ -128,7 +130,7 @@ export async function montarExportacao(usuario: Usuario) {
     gerado_em: hoje,
     data_da_analise: p.rel?.data ?? null,
     observacoes:
-      `Percentuais em fração (0,12 = 12%). Valores *_brl em reais; preços na moeda do ativo. Preço teto das ações: mediana de Bazin (dividendo ÷ 10%), Graham revisado e Buffett conservador; ` +
+      `Percentuais em fração (0,12 = 12%). Valores *_brl em reais; preços na moeda do ativo. Preço teto das ações: ${infoMetodo(p.metodoTeto).nome}; ` +
       `FIIs pelo menor entre rendimento, FFO e média de 5 anos ÷ ${yp(y.fii)}` +
       (y.juroReal ? ` (yield exigido ligado ao juro real do Tesouro IPCA+, ${yp(y.juroReal.taxa)})` : "") +
       ". margem_ate_teto > 0 = abaixo do teto. Qualidade 0-10 vem do balanço/histórico.",
@@ -310,8 +312,13 @@ export async function montarRanking(usuario: Usuario) {
     "select data::text, contexto_mercado from relatorio_diario order by data desc limit 1",
   );
   const meus = (await carteiraDe(usuario.id)).map((c) => c.ticker);
+  const [estrategia, metodo] = await Promise.all([estrategiaAtual(usuario.id), metodoTetoDe(usuario.id)]);
   const analises = rel
-    ? marcarCarteira(await query<Analise>("select * from analises where data = $1 order by score desc nulls last", [rel.data]), meus)
+    ? aplicarMetodoTetoEmTodas(
+        marcarCarteira(await query<Analise>("select * from analises where data = $1", [rel.data]), meus),
+        metodo,
+        estrategia.atual === "balanceamento",
+      ).sort((x, y) => (y.score ?? -1) - (x.score ?? -1))
     : [];
   const y = await yieldAtual();
   const ativos = analises.map((a, i) => {
@@ -328,7 +335,7 @@ export async function montarRanking(usuario: Usuario) {
       origem: a.na_carteira ? "carteira" : a.garimpo ? "garimpo" : "lista",
       preco: r2(a.preco),
       preco_teto: r2(a.preco_teto),
-      metodo_teto: a.preco_teto == null ? null : a.tipo === "acao" ? "Mediana de Bazin, Graham e Buffett" : a.teto_bazin != null && a.preco_teto === a.teto_bazin ? "Bazin" : null,
+      metodo_teto: a.preco_teto == null ? null : a.tipo === "acao" ? infoMetodo(metodo).nome : a.teto_bazin != null && a.preco_teto === a.teto_bazin ? "Bazin" : null,
       margem_ate_teto: r2(a.margem, 4),
       dy_12m: r2(a.dy_12m, 4),
       pl: r2(n("pl")),
