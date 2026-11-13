@@ -14,7 +14,7 @@ import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, tipoDeSe
 import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, scoreFinal, type Indicadores } from "./valuation";
 import { juroReal, yieldAtual, yieldExigido, type YieldExigido } from "./juros";
 import {
-  atualizarDocumentosCvm, atualizarLucrosCvm, documentosRecentes, historicoLucros, infoB3, proventosRecentes,
+  atualizarDocumentosCvm, atualizarLucrosCvm, atualizarTickersCvm, documentosRecentes, salvarTickersCvm, historicoLucros, infoB3, proventosRecentes,
   type Documento, type HistoricoLucro, type ProventoAnunciado,
 } from "./cvm";
 
@@ -336,12 +336,17 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   await atualizarLucrosCvm()
     .then((f) => f.length && console.log(`CVM: lucros anuais de ${f.join(", ")}`))
     .catch((e) => console.warn(`  CVM balanços: ${e.message}`));
+  await atualizarTickersCvm()
+    .then((n) => n && console.log(`CVM: código CVM de ${n} ações da bolsa`))
+    .catch((e) => console.warn(`  CVM cadastro: ${e.message}`));
   etapa("lendo proventos anunciados na B3");
   const b3 = new Map<string, { codigoCvm: number | null; proventos: ProventoAnunciado[] }>();
   for (const d of dados.filter((x) => x.tipo === "acao")) {
     const info = await infoB3(d.ticker).catch(() => null);
     if (info) b3.set(d.ticker, info);
   }
+  // O código CVM da B3 também serve para o histórico de 10 anos no ranking de toda a bolsa
+  await salvarTickersCvm(new Map([...b3].filter(([, i]) => i.codigoCvm).map(([t, i]) => [t, i.codigoCvm!]))).catch(() => {});
   const codigos = [...new Set([...b3.values()].map((i) => i.codigoCvm).filter((c): c is number => !!c))];
   const [docs, lucros] = await Promise.all([
     documentosRecentes(codigos).catch(() => new Map<number, Documento[]>()),

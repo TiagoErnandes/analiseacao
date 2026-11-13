@@ -39,8 +39,10 @@ export default async function Ranking({ searchParams }: { searchParams: Promise<
         <p className="rotulo">{rel ? `Análise de ${dataBr(rel.data)}` : "Sem análise"}</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Ranking do dia</h1>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-suave">
-          Todas as ações da B3, ordenadas pela margem até o preço teto do método escolhido abaixo (clique em outra coluna para
-          mudar a ordem). As ações fora da análise diária aparecem com a etiqueta B3: o teto delas é estimado com os números do
+          Todas as ações da B3, ordenadas pela Nota: 50% margem até o preço teto do método escolhido abaixo, 30% anos com lucro e
+          20% anos com dividendo nos últimos 10 anos (balanços da CVM). O filtro "Só boas empresas" (ligado) deixa de fora quem
+          não lucrou em 7 de 10 anos, não pagou dividendo em 5 de 10, tem ROE abaixo de 10%, dívida alta, pouco porte ou pouca
+          liquidez. Clique numa coluna para mudar a ordem. As ações fora da análise diária aparecem com a etiqueta B3: o teto delas é estimado com os números do
           Fundamentus (cotação de fechamento, P/L, P/VP e dividend yield), sem histórico de dividendos, balanço e IA.
         </p>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-suave">
