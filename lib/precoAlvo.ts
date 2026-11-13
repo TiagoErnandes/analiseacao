@@ -1,6 +1,6 @@
-// Preço-alvo: cada pessoa define o preço em que quer comprar (ou vender) um ativo.
-// O vigia do agendador confere a cotação ao longo do dia; quando o preço chega no alvo, o aviso aparece no site
-// para o email da conta Google da pessoa e, para o dono, para o celular (WhatsApp, Telegram e/ou ntfy).
+// Preço-alvo: o controle de compra de cada pessoa. Ela define o preço em que quer comprar um ativo e, enquanto a
+// cotação estiver nesse valor ou abaixo, o vigia do agendador avisa no site, no email da conta Google e, para o dono,
+// no celular (WhatsApp, Telegram e/ou ntfy). No máximo 3 avisos por dia por ativo, com pelo menos 2 horas entre eles.
 import { migrar, query } from "./db";
 import { precoYahoo } from "./mercado";
 import { simboloYahoo, type Tipo } from "./tipos";
@@ -25,6 +25,8 @@ export type PrecoAlvo = {
   atingido_em: string | null;
   preco_atingido: number | null;
   visto: boolean;
+  avisos_hoje: number;
+  ultimo_aviso_em: string | null;
 };
 
 let pronto = false;
@@ -53,18 +55,31 @@ async function garantirTabela() {
     -- Email para a conta Google da pessoa (mesma regra: tenta por até 24 horas)
     alter table precos_alvo add column if not exists via_email boolean not null default true;
     alter table precos_alvo add column if not exists email_enviado_em timestamptz;
+    -- Avisos repetidos: quantos saíram no dia (horário de Brasília) e quando foi o último
+    alter table precos_alvo add column if not exists avisos_dia date;
+    alter table precos_alvo add column if not exists avisos_hoje int not null default 0;
+    alter table precos_alvo add column if not exists ultimo_aviso_em timestamptz;
+    -- O preço-alvo é sempre ponto de compra (avisa com a cotação no alvo ou abaixo)
+    update precos_alvo set direcao = 'compra' where direcao <> 'compra';
     create unique index if not exists precos_alvo_usuario_ticker on precos_alvo (usuario_id, ticker) nulls not distinct;
   `);
   pronto = true;
 }
 
-const NUM = ["id", "preco_alvo", "preco_criacao", "preco_atingido"] as const;
+const NUM = ["id", "preco_alvo", "preco_criacao", "preco_atingido", "avisos_hoje"] as const;
 const normalizar = (r: PrecoAlvo): PrecoAlvo => {
   for (const k of NUM) if (r[k] != null) (r as Record<string, unknown>)[k] = Number(r[k]);
   return r;
 };
 
-const CAMPOS = "id, ticker, tipo, moeda, preco_alvo, preco_criacao, direcao, via_site, via_whatsapp, via_email, criado_em::text, atingido_em::text, preco_atingido, visto";
+/** As colunas lidas (com `p` = "p." quando a consulta junta outra tabela). Os avisos de ontem contam como zero. */
+const campos = (p = "") =>
+  ["id", "ticker", "tipo", "moeda", "preco_alvo", "preco_criacao", "direcao", "via_site", "via_whatsapp", "via_email", "criado_em::text as criado_em",
+   "atingido_em::text as atingido_em", "preco_atingido", "visto", "ultimo_aviso_em::text as ultimo_aviso_em"]
+    .map((c) => p + c)
+    .concat(`case when ${p}avisos_dia = (now() at time zone 'America/Sao_Paulo')::date then ${p}avisos_hoje else 0 end as avisos_hoje`)
+    .join(", ");
+const CAMPOS = campos();
 
 /** O alvo de um ativo para a pessoa (ou null). */
 export async function precoAlvoDe(usuarioId: number | null, ticker: string): Promise<PrecoAlvo | null> {
@@ -88,21 +103,21 @@ export async function precosAlvoDoUsuario(usuarioId: number | null): Promise<Pre
   }
 }
 
-/** Cria ou troca o alvo. A direção sai do preço de agora: alvo abaixo = ponto de compra; acima = ponto de venda. */
+/** Cria ou troca o alvo (sempre ponto de compra: avisa com a cotação no alvo ou abaixo). Zera os avisos do dia. */
 export async function salvarPrecoAlvo(
   usuarioId: number | null,
-  d: { ticker: string; tipo: string | null; moeda: string; precoAlvo: number; precoAtual: number | null; viaSite: boolean; viaWhatsapp: boolean; viaEmail: boolean; direcao?: Direcao },
+  d: { ticker: string; tipo: string | null; moeda: string; precoAlvo: number; precoAtual: number | null; viaSite: boolean; viaWhatsapp: boolean; viaEmail: boolean },
 ): Promise<PrecoAlvo> {
   await garantirTabela();
-  // A direção que a pessoa viu na tela vale; sem ela, compara com a cotação de agora
-  const direcao: Direcao = d.direcao ?? (d.precoAtual != null && d.precoAlvo > d.precoAtual ? "venda" : "compra");
+  const direcao: Direcao = "compra";
   const [r] = await query<PrecoAlvo>(
     `insert into precos_alvo (usuario_id, ticker, tipo, moeda, preco_alvo, preco_criacao, direcao, via_site, via_whatsapp, via_email)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      on conflict (usuario_id, ticker) do update set
        tipo = excluded.tipo, moeda = excluded.moeda, preco_alvo = excluded.preco_alvo, preco_criacao = excluded.preco_criacao,
        direcao = excluded.direcao, via_site = excluded.via_site, via_whatsapp = excluded.via_whatsapp, via_email = excluded.via_email,
-       criado_em = now(), atingido_em = null, preco_atingido = null, visto = false, celular_enviado_em = null, email_enviado_em = null
+       criado_em = now(), atingido_em = null, preco_atingido = null, visto = false, celular_enviado_em = null, email_enviado_em = null,
+       avisos_dia = null, avisos_hoje = 0, ultimo_aviso_em = null
      returning ${CAMPOS}`,
     [usuarioId, d.ticker, d.tipo, d.moeda, d.precoAlvo, d.precoAtual, direcao, d.viaSite, d.viaWhatsapp, d.viaEmail],
   );
@@ -127,10 +142,11 @@ const valor = (v: number, moeda: string) =>
   v.toLocaleString("pt-BR", { style: "currency", currency: moeda === "USD" ? "USD" : "BRL" });
 
 /** A mensagem do celular quando o preço chega no alvo. */
-export function aviso(a: Pick<PrecoAlvo, "ticker" | "direcao" | "preco_alvo" | "moeda">, preco: number, site?: string) {
+export function aviso(a: Pick<PrecoAlvo, "ticker" | "preco_alvo" | "moeda">, preco: number, site?: string, n?: number) {
   return {
-    cabecalho: `🎯 ${a.ticker} ${a.direcao === "compra" ? "está no ponto de COMPRA" : "chegou no seu preço de VENDA"}`,
+    cabecalho: `🎯 ${a.ticker} está no ponto de COMPRA`,
     titulo: `Cotação: ${valor(preco, a.moeda)} | Seu preço-alvo: ${valor(a.preco_alvo, a.moeda)}`,
+    contagem: n ? `Aviso ${n} de ${MAX_AVISOS_DIA} de hoje: enquanto a cotação estiver no alvo ou abaixo, você recebe até ${MAX_AVISOS_DIA} avisos por dia.` : "",
     motivo: "Confira a análise antes de decidir.",
     link: site ? `${site.replace(/\/$/, "")}/acao/${a.ticker}` : null,
     tag: "dart",
@@ -138,7 +154,7 @@ export function aviso(a: Pick<PrecoAlvo, "ticker" | "direcao" | "preco_alvo" | "
     modelo: {
       nome: process.env.WHATSAPP_META_MODELO,
       parametros: [
-        `${a.ticker} ${a.direcao === "compra" ? "chegou no ponto de compra" : "chegou no preço de venda"}`,
+        `${a.ticker} chegou no ponto de compra`,
         valor(preco, a.moeda),
         valor(a.preco_alvo, a.moeda),
       ],
@@ -146,80 +162,87 @@ export function aviso(a: Pick<PrecoAlvo, "ticker" | "direcao" | "preco_alvo" | "
   };
 }
 
-/** Quanto tempo o vigia continua tentando mandar para o celular um alvo atingido (ex.: WhatsApp ainda não conectado). */
-const TENTAR_CELULAR_HORAS = 24;
+/** Quantos avisos cada alvo manda por dia (horário de Brasília) e o intervalo mínimo entre eles. */
+export const MAX_AVISOS_DIA = Math.max(1, Number(process.env.PRECO_ALVO_MAX_DIA) || 3);
+export const INTERVALO_AVISOS_HORAS = Math.max(0, Number(process.env.PRECO_ALVO_INTERVALO_HORAS ?? 2) || 0);
+
+/** Pode mandar mais um aviso agora? (já mandou `hoje` avisos no dia; o último foi `horasDesdeUltimo` horas atrás) */
+export function podeAvisar(hoje: number, horasDesdeUltimo: number | null, max = MAX_AVISOS_DIA, intervalo = INTERVALO_AVISOS_HORAS) {
+  return hoje < max && (horasDesdeUltimo == null || horasDesdeUltimo >= intervalo);
+}
+
+const HOJE_SP = "(now() at time zone 'America/Sao_Paulo')::date";
 
 /**
- * Confere todos os alvos ainda não atingidos (de todas as pessoas). Roda no vigia do agendador.
- * Cada alvo avisa uma vez só; para avisar de novo, a pessoa define o alvo outra vez.
- * Se o celular falhar (WhatsApp desconectado ou ainda não configurado), o aviso fica no site e o vigia
- * tenta mandar de novo a cada rodada, por até 24 horas.
+ * Confere todos os alvos (de todas as pessoas). Roda no vigia do agendador, a cada 10 minutos no pregão.
+ * Enquanto a cotação estiver no alvo ou abaixo, avisa de novo: no máximo 3 vezes por dia por alvo, com pelo menos
+ * 2 horas entre um aviso e outro (PRECO_ALVO_MAX_DIA e PRECO_ALVO_INTERVALO_HORAS no .env.production).
+ * Se nenhum canal entregar (email recusado, WhatsApp desconectado e sem aviso no site), o aviso não conta e o vigia
+ * tenta de novo na próxima rodada.
  */
 export async function vigiarPrecosAlvo(): Promise<number> {
   await garantirTabela();
-  const pendentes = await query<PrecoAlvo>(`select ${CAMPOS} from precos_alvo where atingido_em is null`);
+  const todos = await query<PrecoAlvo & { email: string | null; admin: boolean }>(
+    `select ${campos("p.")},
+            coalesce(u.email, nullif($1, '')) as email, coalesce(u.admin, p.usuario_id is null) as admin
+       from precos_alvo p left join usuarios u on u.id = p.usuario_id`,
+    [process.env.ADMIN_EMAIL ?? ""],
+  );
   // Uma cotação por ativo, mesmo que várias pessoas tenham alvo nele
   const cotacoes = new Map<string, number | null>();
-  for (const p of pendentes) {
+  for (const p of todos) {
     const simbolo = simboloYahoo(p.ticker, (p.tipo as Tipo | null) ?? null);
     if (!cotacoes.has(simbolo)) cotacoes.set(simbolo, (await precoYahoo(simbolo).catch(() => null))?.preco ?? null);
   }
+  const celular = celularConfigurado();
+  const email = emailConfigurado();
   let avisos = 0;
-  for (const bruto of pendentes) {
+  for (const bruto of todos) {
     const p = normalizar(bruto);
     const preco = cotacoes.get(simboloYahoo(p.ticker, (p.tipo as Tipo | null) ?? null));
-    if (preco == null || !atingiu(p.direcao, preco, p.preco_alvo)) continue;
-    const [marcado] = await query<{ id: number }>(
-      "update precos_alvo set atingido_em = now(), preco_atingido = $2 where id = $1 and atingido_em is null returning id",
-      [p.id, preco],
-    );
-    if (!marcado) continue;
-    avisos++;
-    console.log(`  PREÇO-ALVO ${p.ticker} (${p.direcao}): cotação ${preco}, alvo ${p.preco_alvo}`);
-  }
+    if (preco == null || !atingiu("compra", preco, p.preco_alvo)) continue;
+    const horas = p.ultimo_aviso_em ? (Date.now() - new Date(p.ultimo_aviso_em).getTime()) / 3_600_000 : null;
+    if (!podeAvisar(p.avisos_hoje, horas)) continue;
 
-  // Celular (WhatsApp, Telegram, ntfy): só o dono do site (as chaves ficam no .env.production)
-  const paraCelular = await query<PrecoAlvo>(
-    `select ${CAMPOS.split(", ").map((c) => `p.${c}`).join(", ")}
-       from precos_alvo p left join usuarios u on u.id = p.usuario_id
-      where p.via_whatsapp and p.atingido_em is not null and p.celular_enviado_em is null
-        and p.atingido_em > now() - make_interval(hours => $1::int)
-        and coalesce(u.admin, p.usuario_id is null)`,
-    [TENTAR_CELULAR_HORAS],
-  );
-  if (paraCelular.length && !celularConfigurado()) {
-    console.log(`  Preço-alvo: ${paraCelular.length} aviso(s) esperando o WhatsApp ser configurado`);
-  } else {
-    for (const bruto of paraCelular) {
-      const p = normalizar(bruto);
-      if (await enviarCelular(aviso(p, p.preco_atingido ?? p.preco_alvo, process.env.SITE_URL))) {
-        await query("update precos_alvo set celular_enviado_em = now() where id = $1", [p.id]);
+    // Reserva o aviso antes de mandar (duas rodadas ao mesmo tempo não mandam em dobro)
+    const [reservado] = await query<{ n: number; dia_antes: string | null; qtd_antes: number; ultimo_antes: string | null }>(
+      `update precos_alvo p set
+          avisos_hoje = case when p.avisos_dia = ${HOJE_SP} then p.avisos_hoje + 1 else 1 end,
+          avisos_dia = ${HOJE_SP}, ultimo_aviso_em = now(),
+          atingido_em = now(), preco_atingido = $2, visto = false
+        from (select id, avisos_dia, avisos_hoje, ultimo_aviso_em from precos_alvo where id = $1) antes
+       where p.id = antes.id
+         and (p.avisos_dia is distinct from ${HOJE_SP} or p.avisos_hoje < $3)
+         and (p.ultimo_aviso_em is null or p.ultimo_aviso_em <= now() - make_interval(mins => $4::int))
+      returning p.avisos_hoje as n, antes.avisos_dia::text as dia_antes, antes.avisos_hoje as qtd_antes, antes.ultimo_aviso_em::text as ultimo_antes`,
+      [p.id, preco, MAX_AVISOS_DIA, Math.round(INTERVALO_AVISOS_HORAS * 60)],
+    );
+    if (!reservado) continue;
+    const m = aviso(p, preco, process.env.SITE_URL, Number(reservado.n));
+
+    let entregue = p.via_site;
+    if (p.via_whatsapp && bruto.admin && celular && (await enviarCelular(m))) {
+      entregue = true;
+      await query("update precos_alvo set celular_enviado_em = now() where id = $1", [p.id]);
+    }
+    if (p.via_email && email && bruto.email) {
+      const ok = await enviarEmail(bruto.email, { assunto: m.cabecalho, titulo: m.cabecalho, linhas: [m.titulo, m.contagem, m.motivo], link: m.link });
+      if (ok) {
+        entregue = true;
+        await query("update precos_alvo set email_enviado_em = now() where id = $1", [p.id]);
       }
     }
-  }
-  // Email: para a conta Google de cada pessoa (sem login, o ADMIN_EMAIL do dono)
-  if (emailConfigurado()) {
-    const paraEmail = await query<PrecoAlvo & { email: string | null }>(
-      `select ${CAMPOS.split(", ").map((c) => `p.${c}`).join(", ")}, coalesce(u.email, nullif($2, '')) as email
-         from precos_alvo p left join usuarios u on u.id = p.usuario_id
-        where p.via_email and p.atingido_em is not null and p.email_enviado_em is null
-          and p.atingido_em > now() - make_interval(hours => $1::int)`,
-      [TENTAR_CELULAR_HORAS, process.env.ADMIN_EMAIL ?? ""],
-    );
-    for (const bruto of paraEmail) {
-      if (!bruto.email) continue;
-      const p = normalizar(bruto);
-      const m = aviso(p, p.preco_atingido ?? p.preco_alvo, process.env.SITE_URL);
-      const ok = await enviarEmail(bruto.email, {
-        assunto: m.cabecalho,
-        titulo: m.cabecalho,
-        linhas: [m.titulo, m.motivo],
-        link: m.link,
-      });
-      if (ok) await query("update precos_alvo set email_enviado_em = now() where id = $1", [p.id]);
+    if (!entregue) {
+      // Nada chegou: devolve a reserva para tentar na próxima rodada
+      await query("update precos_alvo set avisos_dia = $2::date, avisos_hoje = $3, ultimo_aviso_em = $4::timestamptz where id = $1", [
+        p.id, reservado.dia_antes, reservado.qtd_antes, reservado.ultimo_antes,
+      ]);
+      continue;
     }
+    avisos++;
+    console.log(`  PREÇO-ALVO ${p.ticker}: cotação ${preco}, alvo ${p.preco_alvo} (aviso ${reservado.n} de ${MAX_AVISOS_DIA} hoje)`);
   }
-  console.log(`Preço-alvo: ${pendentes.length} alvos conferidos, ${avisos} atingidos`);
+  console.log(`Preço-alvo: ${todos.length} alvos conferidos, ${avisos} avisos enviados`);
   return avisos;
 }
 

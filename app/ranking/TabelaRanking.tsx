@@ -9,13 +9,22 @@ import { Logo } from "../Logo";
 import { TipoAtivo } from "../TipoAtivo";
 import { Alertas, Nota, Score, Sinal, Variacao } from "../ui";
 
-type Filtro = "todas" | "carteira" | "comprar" | "abaixo" | "besst";
+type Filtro = "todas" | "analisadas" | "carteira" | "comprar" | "abaixo" | "besst";
 const FILTROS: { id: Filtro; rotulo: string }[] = [
-  { id: "todas", rotulo: "Todas" },
+  { id: "todas", rotulo: "Toda a bolsa" },
+  { id: "analisadas", rotulo: "Analisadas" },
   { id: "carteira", rotulo: "Na carteira" },
   { id: "comprar", rotulo: "Sinal Comprar" },
   { id: "abaixo", rotulo: "Abaixo do teto" },
   { id: "besst", rotulo: "BESST e FIIs" },
+];
+
+/** Volume médio diário mínimo (R$, últimos 2 meses). */
+const LIQUIDEZ = [
+  { valor: 0, rotulo: "Qualquer liquidez" },
+  { valor: 100_000, rotulo: "Liquidez ≥ R$ 100 mil/dia" },
+  { valor: 1_000_000, rotulo: "Liquidez ≥ R$ 1 mi/dia" },
+  { valor: 10_000_000, rotulo: "Liquidez ≥ R$ 10 mi/dia" },
 ];
 
 type Coluna = { id: string; rotulo: string; valor: (a: Analise) => number | string | null; alinhar?: "right" | "center"; dica?: string };
@@ -37,7 +46,8 @@ export function TabelaRanking({ analises, filtroInicial, metodoNome }: { analise
   const [setor, setSetor] = useState("");
   const [tipo, setTipo] = useState("");
   const [busca, setBusca] = useState("");
-  const [ordem, setOrdem] = useState<{ col: string; desc: boolean }>({ col: "score", desc: true });
+  const [liquidez, setLiquidez] = useState(0);
+  const [ordem, setOrdem] = useState<{ col: string; desc: boolean }>({ col: "margem", desc: true });
   const [aberto, setAberto] = useState<string | null>(null);
 
   const setores = useMemo(() => [...new Set(analises.map((a) => a.setor).filter(Boolean) as string[])].sort(), [analises]);
@@ -47,10 +57,12 @@ export function TabelaRanking({ analises, filtroInicial, metodoNome }: { analise
     const termo = busca.trim().toUpperCase();
     return analises
       .filter((a) =>
-        filtro === "carteira" ? a.na_carteira : filtro === "comprar" ? a.recomendacao === "COMPRAR" : filtro === "abaixo" ? (a.margem ?? -1) > 0 : filtro === "besst" ? ehBesst(a) : true,
+        filtro === "analisadas" ? !a.fora_da_analise : filtro === "carteira" ? a.na_carteira : filtro === "comprar" ? a.recomendacao === "COMPRAR" : filtro === "abaixo" ? (a.margem ?? -1) > 0 : filtro === "besst" ? ehBesst(a) : true,
       )
       .filter((a) => !setor || a.setor === setor)
       .filter((a) => !tipo || a.tipo === tipo)
+      // Sem a liquidez do Fundamentus (FIIs, ETFs, cripto e exterior), as analisadas passam no filtro
+      .filter((a) => !liquidez || (a.liquidez == null ? !a.fora_da_analise : a.liquidez >= liquidez))
       .filter((a) => !termo || a.ticker.includes(termo) || (a.nome ?? "").toUpperCase().includes(termo))
       .sort((x, y) => {
         const vx = col.valor(x) as number | null;
@@ -59,7 +71,7 @@ export function TabelaRanking({ analises, filtroInicial, metodoNome }: { analise
         if (vy == null) return -1;
         return ordem.desc ? vy - vx : vx - vy;
       });
-  }, [analises, filtro, setor, tipo, busca, ordem]);
+  }, [analises, filtro, setor, tipo, liquidez, busca, ordem]);
 
   const fmt = (id: string, a: Analise) => {
     switch (id) {
@@ -91,6 +103,9 @@ export function TabelaRanking({ analises, filtroInicial, metodoNome }: { analise
             <option value="acao">Só ações</option>
             <option value="fii">Só FIIs</option>
             <option value="etf">Só ETFs</option>
+          </select>
+          <select value={liquidez} onChange={(e) => setLiquidez(Number(e.target.value))} className="campo" aria-label="Liquidez mínima">
+            {LIQUIDEZ.map((l) => <option key={l.valor} value={l.valor}>{l.rotulo}</option>)}
           </select>
           <select value={setor} onChange={(e) => setSetor(e.target.value)} className="campo min-w-0 flex-1 lg:w-52">
             <option value="">Todos os setores</option>
@@ -138,6 +153,11 @@ export function TabelaRanking({ analises, filtroInicial, metodoNome }: { analise
                               GARIMPO
                             </span>
                           )}
+                          {a.fora_da_analise && (
+                            <span className="rounded bg-painel2 px-1 text-[10px] font-semibold text-suave ring-1 ring-borda" title="Fora da análise diária: teto estimado com os números do Fundamentus, sem qualidade, IA e score">
+                              B3
+                            </span>
+                          )}
                           {a.alertas && <span className="text-[11px] text-amber-300" title={a.alertas}>⚠</span>}
                         </p>
                         <p className="max-w-40 truncate text-[11px] text-fraco">{a.setor}</p>
@@ -157,13 +177,18 @@ export function TabelaRanking({ analises, filtroInicial, metodoNome }: { analise
                     <td colSpan={COLUNAS.length + 2} className="!whitespace-normal">
                       <div className="grid gap-3 py-1 md:grid-cols-[2fr_1fr]">
                         <div className="space-y-1.5 text-sm">
-                          <p className="text-texto">{a.resumo_ia ?? "Sem comentário da IA."}</p>
+                          <p className="text-texto">
+                            {a.fora_da_analise
+                              ? "Fora da análise diária: preço teto estimado com a cotação de fechamento, o P/L, o P/VP e o dividend yield do Fundamentus (dividendo só dos últimos 12 meses). Sem nota de qualidade, comentário da IA e score. Abra a ação para a análise completa."
+                              : a.resumo_ia ?? "Sem comentário da IA."}
+                          </p>
                           {a.riscos_ia && <p className="text-xs text-amber-300/80">Risco: {a.riscos_ia}</p>}
                           <Alertas txt={a.alertas} />
                         </div>
                         <div className="text-xs text-suave">
                           <p>Teto Bazin: {brl(a.teto_bazin)} · Graham: {brl(a.teto_graham)} · Buffett: {brl(a.teto_buffett)}</p>
                           <p>DPA 12m: {brl(a.dpa_12m)} · Média 5 anos: {brl(a.dpa_medio)}</p>
+                          {a.liquidez != null && <p>Liquidez: {brl(a.liquidez)} por dia (média de 2 meses)</p>}
                           <Link href={`/acao/${a.ticker}`} className="mt-2 inline-block text-marca hover:underline">Ver detalhes de {a.ticker} →</Link>
                         </div>
                       </div>

@@ -47,7 +47,7 @@ cron.schedule(
 );
 console.log(`Atualização de preços ativa: "${PRECOS}"`);
 
-// Preço-alvo: a cada 10 minutos no horário do pregão (cada alvo avisa uma vez só, no site e no WhatsApp)
+// Preço-alvo: a cada 10 minutos no horário do pregão (com a cotação no alvo ou abaixo, até 3 avisos por dia por alvo)
 const PRECO_ALVO = process.env.PRECO_ALVO_CRON ?? "*/10 10-18 * * 1-5";
 let conferindoAlvos = false;
 cron.schedule(

@@ -7,6 +7,7 @@ import { exigirUsuario } from "@/lib/auth";
 import { aplicarMetodoTetoEmTodas, carteiraDe, marcarCarteira } from "@/lib/painel";
 import { estrategiaAtual, metodoTetoDe } from "@/lib/estrategia";
 import { infoMetodo } from "@/lib/valuation";
+import { comTodaABolsa } from "@/lib/bolsa";
 import { SeletorMetodoTeto } from "../SeletorMetodoTeto";
 import { Cartao, Vazio } from "../ui";
 import { TabelaRanking } from "./TabelaRanking";
@@ -21,15 +22,16 @@ export default async function Ranking({ searchParams }: { searchParams: Promise<
   const [rel] = await query<Pick<Relatorio, "data">>("select data from relatorio_diario order by data desc limit 1");
   const meus = (await carteiraDe(usuario.id)).map((c) => c.ticker);
   const [estrategia, metodo] = await Promise.all([estrategiaAtual(usuario.id), metodoTetoDe(usuario.id)]);
+  const y = await yieldAtual();
+  // As analisadas do dia e todas as outras ações da bolsa (teto estimado pelo Fundamentus), pelo método escolhido
   const analises = rel
     ? aplicarMetodoTetoEmTodas(
-        marcarCarteira(await query<Analise>("select * from analises where data = $1", [rel.data]), meus),
+        marcarCarteira(await comTodaABolsa(await query<Analise>("select * from analises where data = $1", [rel.data]), rel.data, y.acao), meus),
         metodo,
         estrategia.atual === "balanceamento",
       )
     : [];
   const { filtro } = await searchParams;
-  const y = await yieldAtual();
 
   return (
     <div className="space-y-5">
@@ -37,7 +39,12 @@ export default async function Ranking({ searchParams }: { searchParams: Promise<
         <p className="rotulo">{rel ? `Análise de ${dataBr(rel.data)}` : "Sem análise"}</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Ranking do dia</h1>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-suave">
-          Score de 0 a 100: 35% qualidade do balanço, 25% nota da IA e 40% desconto em relação ao preço teto (30% desconto e 10% peso
+          Todas as ações da B3, ordenadas pela margem até o preço teto do método escolhido abaixo (clique em outra coluna para
+          mudar a ordem). As ações fora da análise diária aparecem com a etiqueta B3: o teto delas é estimado com os números do
+          Fundamentus (cotação de fechamento, P/L, P/VP e dividend yield), sem histórico de dividendos, balanço e IA.
+        </p>
+        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-suave">
+          Score das analisadas de 0 a 100: 35% qualidade do balanço, 25% nota da IA e 40% desconto em relação ao preço teto (30% desconto e 10% peso
           faltando na carteira, na estratégia Balanceamento). Desconto acima de 40% não soma mais: costuma ser armadilha. Foco em ações: FIIs entram com 85% do score, e ativos com alerta grave com 75%.
           Preço teto: ações pelo método escolhido abaixo (agora: {infoMetodo(metodo).nome}); FIIs pelo rendimento
           sustentável ÷ {pct(y.fii)}; ETFs por Bazin ou pela média de preço de 12 meses. Clique numa linha para ver o comentário da IA.

@@ -123,8 +123,9 @@ Salve o número do robô que aparece em https://www.callmebot.com/blog/free-api-
 
 Reinicie (`docker compose -f docker-compose.prod.yml up -d`) e clique em **Testar no celular** no painel ("Alertas da carteira").
 Se der erro, o motivo aparece no log do agendador (`docker compose -f docker-compose.prod.yml logs agendador`).
-O vigia confere os alvos a cada 10 minutos no pregão (`PRECO_ALVO_CRON`, padrão `*/10 10-18 * * 1-5`). Cada alvo avisa uma vez;
-para avisar de novo, defina o alvo outra vez. Os alertas de venda da carteira também chegam pelo WhatsApp.
+O vigia confere os alvos a cada 10 minutos no pregão (`PRECO_ALVO_CRON`, padrão `*/10 10-18 * * 1-5`). O preço-alvo é ponto
+de compra: enquanto a cotação estiver no alvo ou abaixo, ele avisa de novo, no máximo 3 vezes por dia por ativo e com pelo
+menos 2 horas entre um aviso e outro (`PRECO_ALVO_MAX_DIA=3` e `PRECO_ALVO_INTERVALO_HORAS=2` no `.env.production`, se quiser mudar). Os alertas de venda da carteira também chegam pelo WhatsApp.
 
 ## Alerta de preço-alvo por email (Gmail, grátis)
 

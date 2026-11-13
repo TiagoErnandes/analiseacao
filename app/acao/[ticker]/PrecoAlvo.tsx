@@ -90,7 +90,7 @@ export function PrecoAlvo({
   function salvar() {
     if (!valido) return setErro("Digite um preço-alvo maior que zero.");
     iniciar(async () => {
-      const r = await definirPrecoAlvo({ ticker, tipo, moeda, precoAlvo: numero, viaSite, viaWhatsapp: viaZap, viaEmail, direcao: precoAtual ? (numero > precoAtual ? "venda" : "compra") : undefined }).catch((e: Error) => ({ ok: false, mensagem: e.message, alvo: undefined }));
+      const r = await definirPrecoAlvo({ ticker, tipo, moeda, precoAlvo: numero, viaSite, viaWhatsapp: viaZap, viaEmail }).catch((e: Error) => ({ ok: false, mensagem: e.message, alvo: undefined }));
       if (!r.ok) return setErro(r.mensagem);
       setAlvo(r.alvo ?? null);
       setAviso(r.mensagem);
@@ -107,7 +107,6 @@ export function PrecoAlvo({
     });
   }
 
-  const ponto = alvo?.direcao === "venda" ? "venda" : "compra";
   return (
     <>
       <div className="flex flex-col items-start gap-1">
@@ -122,8 +121,8 @@ export function PrecoAlvo({
           <span aria-hidden>🎯</span>
           {alvo
             ? alvo.atingido_em
-              ? `Atingiu o alvo de ${dinheiro(alvo.preco_alvo, moeda)}`
-              : `Preço-alvo de ${ponto}: ${dinheiro(alvo.preco_alvo, moeda)}`
+              ? `No ponto de compra (alvo ${dinheiro(alvo.preco_alvo, moeda)})`
+              : `Preço-alvo de compra: ${dinheiro(alvo.preco_alvo, moeda)}`
             : "Definir meu Preço-Alvo"}
         </button>
         {aviso && <span className="text-[11px] text-marca">✓ {aviso}</span>}
@@ -141,8 +140,8 @@ export function PrecoAlvo({
               <div className="rounded-xl bg-painel2 p-4">
                 <p className="flex items-center gap-2 text-sm font-semibold"><span aria-hidden>🏷️</span> Preço-alvo de {ticker}</p>
                 <p className="mt-1.5 text-sm leading-relaxed text-suave">
-                  O Preço-Alvo permite definir o valor esperado de um ativo. Abaixo da cotação de agora, é um ponto de compra (avisa quando o preço cair até ele);
-                  acima, um ponto de venda (avisa quando subir até ele).
+                  O Preço-Alvo é o seu ponto de compra: enquanto a cotação estiver nesse valor ou abaixo, você é avisado,
+                  no máximo 3 vezes por dia (com pelo menos 2 horas entre um aviso e outro).
                 </p>
               </div>
 
@@ -167,10 +166,8 @@ export function PrecoAlvo({
               {distancia != null && (
                 <p className="-mt-2 text-xs text-suave">
                   {distancia < 0
-                    ? `Ponto de compra: o preço precisa cair ${(-distancia * 100).toFixed(1).replace(".", ",")}% para chegar lá.`
-                    : distancia > 0
-                      ? `Ponto de venda: o preço precisa subir ${(distancia * 100).toFixed(1).replace(".", ",")}% para chegar lá.`
-                      : "Igual à cotação de agora."}
+                    ? `O preço precisa cair ${(-distancia * 100).toFixed(1).replace(".", ",")}% para chegar lá.`
+                    : "A cotação de agora já está nesse valor ou abaixo: o primeiro aviso sai na próxima conferência (a cada 10 minutos no pregão)."}
                 </p>
               )}
 
