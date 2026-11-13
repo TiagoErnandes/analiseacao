@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { query } from "@/lib/db";
 import { usuarioAtual, usuarioOuErro } from "@/lib/auth";
-import { marcarVisto, removerPrecoAlvo, salvarPrecoAlvo, type PrecoAlvo } from "@/lib/precoAlvo";
+import { MAX_AVISOS_DIA, marcarVisto, removerPrecoAlvo, salvarPrecoAlvo, type PrecoAlvo } from "@/lib/precoAlvo";
+import { dinheiro } from "@/lib/format";
 import { precoYahoo } from "@/lib/mercado";
 import { simboloYahoo, TIPOS, type Tipo } from "@/lib/tipos";
 
@@ -28,8 +29,6 @@ export async function definirPrecoAlvo(d: {
   viaSite: boolean;
   viaWhatsapp: boolean;
   viaEmail: boolean;
-  /** O que a tela mostrou: alvo abaixo da cotação exibida = compra, acima = venda. */
-  direcao?: "compra" | "venda";
 }): Promise<{ ok: boolean; mensagem: string; alvo?: PrecoAlvo }> {
   const u = await usuarioOuErro();
   const t = d.ticker.toUpperCase();
@@ -37,7 +36,7 @@ export async function definirPrecoAlvo(d: {
   if (!Number.isFinite(d.precoAlvo) || d.precoAlvo <= 0) return { ok: false, mensagem: "Digite um preço-alvo maior que zero." };
   if (!d.viaSite && !d.viaWhatsapp && !d.viaEmail) return { ok: false, mensagem: "Escolha pelo menos um jeito de receber o alerta." };
   const tipo = d.tipo && TIPOS.some((x) => x.id === d.tipo) ? (d.tipo as Tipo) : null;
-  // Cotação de agora (não a da análise das 7h): define se o alvo é de compra (abaixo) ou de venda (acima)
+  // Cotação de agora (não a da análise das 7h), guardada como referência
   const agora = (await precoYahoo(simboloYahoo(t, tipo)).catch(() => null))?.preco ?? null;
   const alvo = await salvarPrecoAlvo(u.id, {
     ticker: t,
@@ -48,12 +47,11 @@ export async function definirPrecoAlvo(d: {
     viaSite: d.viaSite,
     viaWhatsapp: d.viaWhatsapp && u.admin,
     viaEmail: d.viaEmail,
-    direcao: d.direcao === "compra" || d.direcao === "venda" ? d.direcao : undefined,
   });
   revalidatePath(`/acao/${t}`);
   revalidatePath("/");
-  const quando = alvo.direcao === "compra" ? "cair até" : "subir até";
-  return { ok: true, mensagem: `Pronto: você será avisado quando ${t} ${quando} o seu preço-alvo.`, alvo };
+  const ja = agora != null && agora <= alvo.preco_alvo ? " Ela já está nesse valor: o primeiro aviso sai na próxima conferência." : "";
+  return { ok: true, mensagem: `Pronto: você será avisado quando ${t} estiver em ${dinheiro(alvo.preco_alvo, alvo.moeda)} ou menos (até ${MAX_AVISOS_DIA} avisos por dia).${ja}`, alvo };
 }
 
 export async function excluirPrecoAlvo(ticker: string): Promise<void> {

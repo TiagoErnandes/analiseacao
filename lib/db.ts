@@ -63,6 +63,8 @@ export type Analise = {
   moeda: "BRL" | "USD"; // moeda de preco, tetos e dividendos
   cambio: number; // reais por unidade da moeda no dia
   indicadores: Record<string, unknown> | null; // extras de cada tipo (balanço da ação, dados do FII, histórico do ETF)
+  fora_da_analise?: boolean; // só no ranking: ação da bolsa fora da análise diária (teto estimado pelo Fundamentus)
+  liquidez?: number | null; // só no ranking: volume médio diário de 2 meses (Fundamentus), em R$
 };
 
 export type Relatorio = {

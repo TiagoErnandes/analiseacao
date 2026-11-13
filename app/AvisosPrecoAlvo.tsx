@@ -9,12 +9,12 @@ import { dispensarAvisoAlvo } from "./acao/[ticker]/actions";
 const quando = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 
-/** No painel: aviso de cada preço-alvo atingido (via website) e a lista dos alvos que ainda estão esperando. */
+/** No painel: aviso de cada preço-alvo atingido (via website) e a lista de todos os alvos de compra. */
 export function AvisosPrecoAlvo({ alvos }: { alvos: PrecoAlvo[] }) {
   const [fechados, setFechados] = useState<string[]>([]);
   const [, iniciar] = useTransition();
   const atingidos = alvos.filter((a) => a.atingido_em && a.via_site && !a.visto && !fechados.includes(a.ticker));
-  const esperando = alvos.filter((a) => !a.atingido_em);
+  const esperando = alvos;
   if (!atingidos.length && !esperando.length) return null;
 
   return (
@@ -22,9 +22,9 @@ export function AvisosPrecoAlvo({ alvos }: { alvos: PrecoAlvo[] }) {
       {atingidos.map((a) => (
         <div key={a.ticker} className="flex items-center justify-between gap-3 rounded-xl border border-marca/50 bg-marca/10 px-4 py-3 text-sm">
           <Link href={`/acao/${a.ticker}`} className="hover:underline">
-            <b className="text-marca">🎯 {a.ticker} {a.direcao === "compra" ? "está no ponto de compra" : "chegou no seu preço de venda"}</b>{" "}
+            <b className="text-marca">🎯 {a.ticker} está no ponto de compra</b>{" "}
             <span className="text-suave">
-              cotação de {dinheiro(a.preco_atingido, a.moeda)} em {quando(a.atingido_em)} (seu alvo: {dinheiro(a.preco_alvo, a.moeda)}).
+              cotação de {dinheiro(a.preco_atingido, a.moeda)} em {quando(a.atingido_em)} (seu alvo: {dinheiro(a.preco_alvo, a.moeda)}){a.avisos_hoje > 0 ? `, aviso ${a.avisos_hoje} de 3 hoje` : ""}.
             </span>
           </Link>
           <button
@@ -39,7 +39,7 @@ export function AvisosPrecoAlvo({ alvos }: { alvos: PrecoAlvo[] }) {
       {esperando.length > 0 && (
         <details className="group rounded-xl border border-borda bg-painel px-4 py-2.5 text-sm">
           <summary className="cursor-pointer list-none text-suave hover:text-texto">
-            🎯 Meus preços-alvo: <b className="text-texto">{esperando.length}</b> esperando{" "}
+            🎯 Meus preços-alvo: <b className="text-texto">{esperando.length}</b> de compra{" "}
             <span className="text-xs text-marca group-open:hidden">ver ↓</span>
           </summary>
           <ul className="mt-2 flex flex-wrap gap-1.5">
@@ -47,7 +47,7 @@ export function AvisosPrecoAlvo({ alvos }: { alvos: PrecoAlvo[] }) {
               <li key={a.ticker}>
                 <Link href={`/acao/${a.ticker}`} className="chip inline-flex items-center gap-1.5">
                   <b className="text-texto">{a.ticker}</b>
-                  {a.direcao === "compra" ? "compra ≤" : "venda ≥"} {dinheiro(a.preco_alvo, a.moeda)}
+                  ≤ {dinheiro(a.preco_alvo, a.moeda)}
                 </Link>
               </li>
             ))}

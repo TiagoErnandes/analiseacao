@@ -8,7 +8,7 @@ const UA = { "User-Agent": "Mozilla/5.0 (compatible; analiseacao/1.0)" };
 export const MAX_ACOES = 20; // depois, só fica quem passa no padrão previdência (porte, setor, 10 anos de lucro e dividendo)
 export const MAX_FIIS = 2; // foco em ações: poucos FIIs de fora
 
-type Linha = Record<string, string>;
+export type Linha = Record<string, string>;
 
 /** Lê a tabela de resultado do Fundamentus (cabeçalho em <th>, valores em <td>). */
 export function lerTabela(html: string): Linha[] {
@@ -22,7 +22,7 @@ export function lerTabela(html: string): Linha[] {
     .map((c) => Object.fromEntries(cab.map((h, i) => [h, c[i]])));
 }
 
-const col = (l: Linha, ...nomes: RegExp[]) => {
+export const col = (l: Linha, ...nomes: RegExp[]) => {
   const k = Object.keys(l).find((h) => nomes.some((n) => n.test(h)));
   return k ? numeroBr(l[k]) : null;
 };
@@ -107,23 +107,32 @@ async function pagina(url: string): Promise<string> {
   return new TextDecoder("latin1").decode(await res.arrayBuffer());
 }
 
+export type TabelaFundamentus = { acoes: Linha[]; fiis: Linha[] };
+
+/**
+ * As tabelas públicas do Fundamentus com todas as ações e FIIs da bolsa (guardadas por 1 dia).
+ * Se o Fundamentus estiver fora do ar, usa a última guardada (de qualquer idade).
+ */
+export async function tabelaFundamentus(): Promise<TabelaFundamentus> {
+  const c = await lerCache<TabelaFundamentus>("garimpo");
+  if (c && c.idadeDias < 1) return c.dados;
+  try {
+    const [acoes, fiis] = await Promise.all([
+      pagina("https://www.fundamentus.com.br/resultado.php").then(lerTabela),
+      pagina("https://www.fundamentus.com.br/fii_resultado.php").then(lerTabela),
+    ]);
+    if (!acoes.length && !fiis.length) throw new Error("tabela vazia");
+    const dados = { acoes, fiis };
+    await salvarCache("garimpo", dados);
+    return dados;
+  } catch (err) {
+    if (!c) throw err;
+    return c.dados;
+  }
+}
+
 /** Ativos achados hoje (guardados por 1 dia). `ja`: tickers que já estão na análise. */
 export async function garimpar(ja: Set<string>): Promise<Achado[]> {
-  const c = await lerCache<{ acoes: Linha[]; fiis: Linha[] }>("garimpo");
-  let dados = c && c.idadeDias < 1 ? c.dados : null;
-  if (!dados) {
-    try {
-      const [acoes, fiis] = await Promise.all([
-        pagina("https://www.fundamentus.com.br/resultado.php").then(lerTabela),
-        pagina("https://www.fundamentus.com.br/fii_resultado.php").then(lerTabela),
-      ]);
-      if (!acoes.length && !fiis.length) throw new Error("tabela vazia");
-      dados = { acoes, fiis };
-      await salvarCache("garimpo", dados);
-    } catch (err) {
-      if (!c) throw err;
-      dados = c.dados;
-    }
-  }
+  const dados = await tabelaFundamentus();
   return [...filtrarAcoes(dados.acoes, ja), ...filtrarFiis(dados.fiis, ja)];
 }
