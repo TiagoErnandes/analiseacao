@@ -5,6 +5,7 @@
 import { unzipSync } from "fflate";
 import { query } from "./db";
 import { lerCache, salvarCache } from "./mercado";
+import type { Constancia } from "./boaEmpresa";
 
 const UA = { "User-Agent": "Mozilla/5.0 (compatible; analiseacao/1.0)" };
 const CVM = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC";
@@ -205,29 +206,61 @@ export function lucrosDaDre(linhas: Record<string, string>[], ano: number): Map<
 }
 
 /**
- * Garante o lucro dos últimos 10 anos no banco. Cada ano é baixado uma vez (≈ 13 MB); os 2 anos mais recentes
- * são baixados de novo a cada 30 dias (empresas reapresentam balanços).
+ * Dividendos + JCP distribuídos no ano por empresa, da DVA (Demonstração do Valor Adicionado), em reais.
+ * Contas "Juros sobre o Capital Próprio" e "Dividendos" dentro de "Remuneração de Capitais Próprios" (7.08.04.xx na maioria).
+ */
+export function dividendosDaDva(linhas: Record<string, string>[], ano: number): Map<number, number> {
+  type Conta = { versao: number; valor: number };
+  const porConta = new Map<string, Conta>(); // cd_cvm|conta -> última versão
+  for (const r of linhas) {
+    if (!/^[ÚU]LTIMO$/i.test(r.ORDEM_EXERC ?? "")) continue;
+    if (!(r.DT_FIM_EXERC ?? "").startsWith(String(ano))) continue;
+    const conta = r.CD_CONTA ?? "";
+    if (!/^7\.\d{2}\.\d{2}\.\d{2}$/.test(conta)) continue;
+    const ds = (r.DS_CONTA ?? "").trim();
+    if (!/^(dividendos|juros sobre (o )?capital pr[óo]prio)/i.test(ds) || /retid|n[ãa]o controlador/i.test(ds)) continue;
+    const cd = Number.parseInt(r.CD_CVM, 10);
+    const valor = Number.parseFloat(r.VL_CONTA) * (/mil/i.test(r.ESCALA_MOEDA ?? "") ? 1000 : 1);
+    const versao = Number.parseInt(r.VERSAO, 10) || 0;
+    if (!cd || !Number.isFinite(valor) || valor <= 0) continue;
+    const k = `${cd}|${conta}`;
+    const atual = porConta.get(k);
+    if (!atual || versao > atual.versao) porConta.set(k, { versao, valor });
+  }
+  const mapa = new Map<number, number>();
+  for (const [k, c] of porConta) {
+    const cd = Number(k.split("|")[0]);
+    mapa.set(cd, (mapa.get(cd) ?? 0) + c.valor);
+  }
+  return mapa;
+}
+
+/**
+ * Garante o lucro e os dividendos dos últimos 10 anos no banco. Cada ano é baixado uma vez (≈ 13 MB); os 2 anos mais
+ * recentes são baixados de novo a cada 30 dias (empresas reapresentam balanços).
  */
 export async function atualizarLucrosCvm(hoje = new Date()): Promise<string[]> {
   const feitos: string[] = [];
   const atual = hoje.getFullYear();
   for (let ano = atual - 10; ano < atual; ano++) {
-    const marca = await lerCache<{ empresas: number }>(`dfp:${ano}`);
+    const marca = await lerCache<{ empresas: number }>(`dfp2:${ano}`); // dfp2: com os dividendos da DVA
     const recente = ano >= atual - 2;
     if (marca && (!recente || marca.idadeDias < 30)) continue;
     try {
-      const arqs = await baixarZip(`${CVM}/DFP/DADOS/dfp_cia_aberta_${ano}.zip`, (n) => /DRE_(con|ind)_/i.test(n));
-      const con = Object.entries(arqs).find(([n]) => /DRE_con_/i.test(n))?.[1];
-      const ind = Object.entries(arqs).find(([n]) => /DRE_ind_/i.test(n))?.[1];
+      const arqs = await baixarZip(`${CVM}/DFP/DADOS/dfp_cia_aberta_${ano}.zip`, (n) => /(DRE|DVA)_(con|ind)_/i.test(n));
+      const arq = (re: RegExp) => Object.entries(arqs).find(([n]) => re.test(n))?.[1];
+      const [con, ind, dvaCon, dvaInd] = [arq(/DRE_con_/i), arq(/DRE_ind_/i), arq(/DVA_con_/i), arq(/DVA_ind_/i)];
       // Consolidado quando existe; senão o individual
       const lucros = new Map([...(ind ? lucrosDaDre(lerCsv(ind), ano) : []), ...(con ? lucrosDaDre(lerCsv(con), ano) : [])]);
+      const dividendos = new Map([...(dvaInd ? dividendosDaDva(lerCsv(dvaInd), ano) : []), ...(dvaCon ? dividendosDaDva(lerCsv(dvaCon), ano) : [])]);
       const cds = [...lucros.keys()];
       await query(
-        `insert into lucros_anuais (cd_cvm, ano, lucro) select c, $3::int, l from unnest($1::int[], $2::numeric[]) as t(c, l)
-         on conflict (cd_cvm, ano) do update set lucro = excluded.lucro`,
-        [cds, cds.map((c) => lucros.get(c)), ano],
+        `insert into lucros_anuais (cd_cvm, ano, lucro, dividendos)
+         select c, $4::int, l, d from unnest($1::int[], $2::numeric[], $3::numeric[]) as t(c, l, d)
+         on conflict (cd_cvm, ano) do update set lucro = excluded.lucro, dividendos = excluded.dividendos`,
+        [cds, cds.map((c) => lucros.get(c)), cds.map((c) => dividendos.get(c) ?? 0), ano],
       );
-      await salvarCache(`dfp:${ano}`, { empresas: cds.length });
+      await salvarCache(`dfp2:${ano}`, { empresas: cds.length });
       feitos.push(`${ano} (${cds.length} empresas)`);
     } catch (err) {
       console.warn(`  Balanços CVM ${ano}: ${(err as Error).message}`);
@@ -265,4 +298,73 @@ export function resumirLucros(lucros: { ano: number; lucro: number }[]): Histori
     if (ini > 0 && fim > 0 && anos > 0) crescimentoAnual = (fim / ini) ** (1 / anos) - 1;
   }
   return { anos: ord.length, anosComLucro, crescimentoAnual, lucros: ord };
+}
+
+// ---------------------------------------------------------------- Código de negociação -> código CVM (toda a bolsa)
+
+/**
+ * Lê o formulário cadastral (FCA) da CVM: o arquivo "geral" tem CNPJ e código CVM; o de "valor mobiliário" tem CNPJ e
+ * código de negociação (PETR4, TAEE11...). Junta os dois pelo CNPJ.
+ */
+export function tickersDoFca(geral: Record<string, string>[], valores: Record<string, string>[]): Map<string, number> {
+  const campo = (r: Record<string, string>, re: RegExp) => r[Object.keys(r).find((k) => re.test(k)) ?? ""] ?? "";
+  const porCnpj = new Map<string, number>();
+  for (const r of geral) {
+    const cd = Number.parseInt(campo(r, /^codigo_cvm$/i), 10);
+    const cnpj = campo(r, /^cnpj_companhia$/i);
+    if (cd && cnpj) porCnpj.set(cnpj, cd);
+  }
+  const mapa = new Map<string, number>();
+  for (const r of valores) {
+    const ticker = campo(r, /^codigo_negociacao$/i).toUpperCase().trim();
+    const cd = porCnpj.get(campo(r, /^cnpj_companhia$/i));
+    if (cd && /^[A-Z]{4}\d{1,2}$/.test(ticker)) mapa.set(ticker, cd);
+  }
+  return mapa;
+}
+
+/** Guarda o código CVM de cada ação da bolsa (FCA do ano, renovado a cada 30 dias). */
+export async function atualizarTickersCvm(hoje = new Date()): Promise<number> {
+  const c = await lerCache<{ tickers: number }>("fca_tickers");
+  if (c && c.idadeDias < 30) return 0;
+  const ano = hoje.getFullYear();
+  for (const a of [ano, ano - 1]) {
+    try {
+      const arqs = await baixarZip(`${CVM}/FCA/DADOS/fca_cia_aberta_${a}.zip`, (n) => /_(geral|valor_mobiliario)_/i.test(n));
+      const geral = Object.entries(arqs).find(([n]) => /_geral_/i.test(n))?.[1];
+      const valores = Object.entries(arqs).find(([n]) => /_valor_mobiliario_/i.test(n))?.[1];
+      if (!geral || !valores) continue;
+      const mapa = tickersDoFca(lerCsv(geral), lerCsv(valores));
+      if (!mapa.size) continue;
+      await salvarTickersCvm(mapa);
+      await salvarCache("fca_tickers", { tickers: mapa.size });
+      return mapa.size;
+    } catch (err) {
+      console.warn(`  Cadastro CVM ${a}: ${(err as Error).message}`);
+    }
+  }
+  return 0;
+}
+
+export async function salvarTickersCvm(mapa: Map<string, number>) {
+  if (!mapa.size) return;
+  const t = [...mapa.keys()];
+  await query(
+    `insert into tickers_cvm (ticker, cd_cvm) select t, c from unnest($1::text[], $2::int[]) as x(t, c)
+     on conflict (ticker) do update set cd_cvm = excluded.cd_cvm`,
+    [t, t.map((k) => mapa.get(k))],
+  );
+}
+
+/** Constância nos últimos 10 anos (balanços da CVM): em quantos anos lucrou e em quantos distribuiu dividendo/JCP. */
+export async function constanciaPorTicker(hoje = new Date()): Promise<Map<string, Constancia>> {
+  const linhas = await query<{ ticker: string; anos: number; com_lucro: number; com_dividendo: number }>(
+    `select t.ticker, count(*)::int as anos, count(*) filter (where l.lucro > 0)::int as com_lucro,
+            count(*) filter (where l.dividendos > 0)::int as com_dividendo
+       from tickers_cvm t join lucros_anuais l on l.cd_cvm = t.cd_cvm
+      where l.ano >= $1 and l.lucro <> 0
+      group by t.ticker`,
+    [hoje.getFullYear() - 10],
+  );
+  return new Map(linhas.map((l) => [l.ticker, { anos: l.anos, anosComLucro: l.com_lucro, anosComDividendo: l.com_dividendo }]));
 }

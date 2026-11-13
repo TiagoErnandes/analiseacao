@@ -65,6 +65,8 @@ export type Analise = {
   indicadores: Record<string, unknown> | null; // extras de cada tipo (balanço da ação, dados do FII, histórico do ETF)
   fora_da_analise?: boolean; // só no ranking: ação da bolsa fora da análise diária (teto estimado pelo Fundamentus)
   liquidez?: number | null; // só no ranking: volume médio diário de 2 meses (Fundamentus), em R$
+  fora_do_filtro?: string | null; // só no ranking: por que não passa no filtro "Boas empresas" (null: passa)
+  constancia?: { anos: number; anosComLucro: number; anosComDividendo: number } | null; // só no ranking: 10 anos na CVM
 };
 
 export type Relatorio = {
@@ -240,6 +242,13 @@ export async function migrar() {
       ano    int not null,
       lucro  numeric not null, -- em reais
       primary key (cd_cvm, ano)
+    );
+    -- Dividendos + JCP distribuídos no ano (DVA da DFP), em reais
+    alter table lucros_anuais add column if not exists dividendos numeric;
+    -- Código de negociação -> código CVM (formulário cadastral da CVM e dados da B3), para o histórico de toda a bolsa
+    create table if not exists tickers_cvm (
+      ticker text primary key,
+      cd_cvm int not null
     );
     -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
     insert into universo (ticker) values
