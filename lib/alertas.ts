@@ -116,11 +116,102 @@ export function lerRss(xml: string, ticker: string): Noticia[] {
   });
 }
 
-async function noticias(ticker: string): Promise<Noticia[]> {
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(`${ticker} when:1d`)}&hl=pt-BR&gl=BR&ceid=BR:pt-419`;
+/** Apelidos que aparecem nas manchetes e nem sempre estão no nome oficial (por emissor, as 4 letras do código). */
+const APELIDOS: Record<string, string[]> = {
+  AXIA: ["axia", "eletrobras"],
+  ELET: ["eletrobras", "axia"],
+  BBAS: ["banco do brasil", "BB"],
+  ITSA: ["itausa"],
+  ITUB: ["itau unibanco", "itau"],
+  PETR: ["petrobras"],
+  BBDC: ["bradesco"],
+  SAPR: ["sanepar"],
+  SBSP: ["sabesp"],
+  CMIG: ["cemig"],
+  CPLE: ["copel"],
+  TAEE: ["taesa"],
+  TRPL: ["isa energia", "isa cteep", "cteep"],
+  ISAE: ["isa energia", "isa cteep", "cteep"],
+  CSMG: ["copasa"],
+  BBSE: ["bb seguridade"],
+  KLBN: ["klabin"],
+  WEGE: ["weg"],
+  ABEV: ["ambev"],
+  EGIE: ["engie"],
+};
+/** Palavras comuns demais para identificar a empresa sozinhas. */
+const GENERICAS = new Set(
+  "companhia cia banco brasil brasileira brasileiro brasileiras brasileiros energia energetica eletrica eletricas centrais participacoes holding grupo fundo investimento investimentos imobiliario imobiliaria fii industria industrias comercio servicos sistemas seguros seguridade saneamento estado paulo parana minas gerais rio grande sul norte nordeste nacional geral gestao renda logistica shopping shoppings capital financeira tecnologia saude transmissao distribuicao petroleo".split(" "),
+);
+const semAcento = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Termos que identificam a empresa numa manchete: apelidos, nome oficial sem "S.A." e as palavras próprias do nome. */
+export function termosDaEmpresa(ticker: string, nome: string | null | undefined): string[] {
+  const termos = new Set<string>(APELIDOS[ticker.slice(0, 4).toUpperCase()] ?? []);
+  for (const parte of semAcento(nome ?? "").split(/\s+-\s+|,|\(|\)/)) {
+    const limpo = parte
+      .toLowerCase()
+      .replace(/\b(s\.?\/?a\.?|ltda|on|pn|pna|pnb|unt|nm|n1|n2|ed|ej|ex|em recuperacao judicial)\b\.?/g, " ")
+      .replace(/[^a-z0-9& ]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (limpo.length >= 4) termos.add(limpo);
+    for (const p of limpo.split(" ")) if (p.length >= 4 && !GENERICAS.has(p) && !/^\d+$/.test(p)) termos.add(p);
+  }
+  return [...termos];
+}
+
+/**
+ * A manchete é mesmo deste ativo? O Google Notícias devolve matérias que citam o código só no corpo
+ * (listas de "quem paga dividendo", carteiras recomendadas), com manchete sobre outro ativo (ex.: ITSA4 -> "SPTW11 corta dividendo").
+ * Vale se a manchete cita o código exato (SAPR4, não SAPR41) ou o nome da empresa.
+ */
+export function noticiaDoAtivo(titulo: string, ticker: string, termos: string[]): boolean {
+  const t = ticker.toUpperCase();
+  if (new RegExp(`(^|[^A-Z0-9])${escRe(t)}F?(?![A-Z0-9])`, "i").test(titulo)) return true; // PETR4 ou PETR4F, nunca SAPR41
+  const manchete = semAcento(titulo.replace(/\s+-\s+[^-]+$/, "")); // tira o " - nome do site" do fim
+  return termos.some((termo) =>
+    termo === termo.toUpperCase() && /[A-Z]/.test(termo)
+      ? new RegExp(`\\b${escRe(termo)}\\b`).test(manchete) // sigla (BB): só em maiúsculas
+      : new RegExp(`\\b${escRe(semAcento(termo))}\\b`, "i").test(manchete),
+  );
+}
+
+async function noticias(ticker: string, termos: string[]): Promise<Noticia[]> {
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(`"${ticker}" when:1d`)}&hl=pt-BR&gl=BR&ceid=BR:pt-419`;
   const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`Google Notícias ${ticker}: HTTP ${res.status}`);
-  return lerRss(await res.text(), ticker).slice(0, 15);
+  return lerRss(await res.text(), ticker)
+    .filter((n) => noticiaDoAtivo(n.titulo, ticker, termos))
+    .slice(0, 15);
+}
+
+/** Nome de cada ativo, da análise mais recente. */
+async function nomesDosAtivos(tickers: string[]): Promise<Map<string, string>> {
+  const linhas = await query<{ ticker: string; nome: string | null }>(
+    `select distinct on (ticker) ticker, nome from analises where ticker = any($1::text[]) and nome is not null order by ticker, data desc`,
+    [tickers],
+  ).catch(() => []);
+  return new Map(linhas.map((l) => [l.ticker.toUpperCase(), l.nome ?? ""]));
+}
+
+/**
+ * Alertas antigos de notícia cuja manchete fala de outro ativo (antes do filtro acima) viram NADA:
+ * somem do painel e não são lidos de novo.
+ */
+export async function limparAlertasDeOutroAtivo(): Promise<number> {
+  const antigos = await query<{ chave: string; ticker: string; titulo: string }>(
+    `select chave, ticker, titulo from alertas where chave like 'noticia:%' and nivel <> 'NADA'`,
+  );
+  if (!antigos.length) return 0;
+  const nomes = await nomesDosAtivos([...new Set(antigos.map((a) => a.ticker.toUpperCase()))]);
+  const errados = antigos.filter((a) => !noticiaDoAtivo(a.titulo, a.ticker, termosDaEmpresa(a.ticker, nomes.get(a.ticker.toUpperCase()))));
+  if (errados.length) {
+    await query(`update alertas set nivel = 'NADA', motivo = 'Notícia de outro ativo (descartada).' where chave = any($1::text[])`, [errados.map((a) => a.chave)]);
+    console.log(`  Alertas: ${errados.length} alertas de notícia de outro ativo descartados`);
+  }
+  return errados.length;
 }
 
 const ESQUEMA_TRIAGEM = {
@@ -136,7 +227,7 @@ const ESQUEMA_TRIAGEM = {
  * Triagem: o Gemini lê os títulos e diz o que é grave. VENDER só para fato que muda a tese de longo prazo
  * (fraude, recuperação judicial, corte de dividendo, intervenção...). Sem Gemini, usa palavras-chave.
  */
-async function triar(itens: { id: number; ticker: string; texto: string }[]): Promise<Map<number, { nivel: Nivel | "NADA"; motivo: string }>> {
+async function triar(itens: { id: number; ticker: string; empresa?: string; texto: string }[]): Promise<Map<number, { nivel: Nivel | "NADA"; motivo: string }>> {
   const r = new Map<number, { nivel: Nivel | "NADA"; motivo: string }>();
   const porPalavra = () => {
     for (const i of itens) r.set(i.id, GRAVE.test(i.texto) ? { nivel: "ATENCAO", motivo: "Palavra de risco na notícia (triagem sem IA). Leia e confira." } : { nivel: "NADA", motivo: "" });
@@ -151,6 +242,8 @@ VENDER: fato grave que pode destruir a tese de longo prazo (fraude, recuperaçã
 intervenção do governo, prejuízo enorme inesperado, investigação séria contra a empresa ou a gestão, OPA ou fechamento de capital abaixo do preço).
 ATENCAO: notícia relevante e negativa que merece leitura, mas não pede venda imediata (resultado fraco, rebaixamento, processo, troca de CEO, dívida).
 NADA: rotina, notícia positiva ou neutra, recomendação de corretora, cotação do dia, notícia de outra empresa.
+Cada item traz o ticker (e a empresa) da carteira a que foi atribuído: se a notícia é sobre outro ativo ou outra empresa
+(ex.: item do ITSA4 com manchete sobre o FII SPTW11), responda NADA, por mais grave que seja.
 Seja rigoroso: queda de preço sozinha não é motivo para vender. Responda só o JSON, em português, com motivo de uma frase.`,
       JSON.stringify(itens),
       { json: true, paga: !chaveGemini(false), esquema: ESQUEMA_TRIAGEM },
@@ -175,6 +268,9 @@ export async function vigiarCarteira(): Promise<number> {
     .map((c) => c.ticker.toUpperCase());
   if (!tickers.length) return 0;
   let enviados = 0;
+  await limparAlertasDeOutroAtivo().catch((e) => console.warn(`  Alertas: limpeza falhou (${e.message})`));
+  const nomes = await nomesDosAtivos(tickers);
+  const termos = new Map(tickers.map((t) => [t, termosDaEmpresa(t, nomes.get(t))]));
 
   // 1) Queda forte no dia
   for (const t of tickers) {
@@ -214,7 +310,7 @@ export async function vigiarCarteira(): Promise<number> {
   // 3) Notícias das últimas 24 horas, só as que ainda não foram vistas
   const novas: Noticia[] = [];
   for (const t of tickers) {
-    const lista = await noticias(t).catch((e) => (console.warn(`  Alertas: ${e.message}`), []));
+    const lista = await noticias(t, termos.get(t) ?? []).catch((e) => (console.warn(`  Alertas: ${e.message}`), []));
     if (!lista.length) continue;
     const vistas = new Set(
       (await query<{ chave: string }>("select chave from alertas where chave = any($1::text[])", [lista.map((n) => n.chave)])).map((x) => x.chave),
@@ -225,7 +321,7 @@ export async function vigiarCarteira(): Promise<number> {
   // Triagem de tudo que é novo, de uma vez
   const itens = [
     ...docs.map((d, i) => ({ id: i, ticker: codigos.get(d.cd_cvm)!, texto: `[CVM ${d.data}] ${d.categoria}: ${d.assunto ?? ""}` })),
-    ...novas.map((n, i) => ({ id: docs.length + i, ticker: n.ticker, texto: `[${n.fonte}] ${n.titulo}` })),
+    ...novas.map((n, i) => ({ id: docs.length + i, ticker: n.ticker, empresa: nomes.get(n.ticker) ?? undefined, texto: `[${n.fonte}] ${n.titulo}` })),
   ];
   const triagem = await triar(itens);
   for (const [i, d] of docs.entries()) {
