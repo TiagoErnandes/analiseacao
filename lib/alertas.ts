@@ -33,6 +33,8 @@ async function garantirTabela() {
 /** Últimos alertas enviados (para o painel). */
 export async function alertasRecentes(dias = 7): Promise<Alerta[]> {
   try {
+    // Antes de mostrar, descarta notícias de outro ativo gravadas antes do filtro (não espera a próxima rodada do vigia)
+    await limparAlertasDeOutroAtivo().catch((e) => console.warn(`  Alertas: limpeza falhou (${e.message})`));
     return await query<Alerta>(
       `select chave, ticker, nivel, titulo, motivo, link, criado_em::text from alertas
         where criado_em > now() - make_interval(days => $1::int) and nivel <> 'NADA' order by criado_em desc limit 20`,
