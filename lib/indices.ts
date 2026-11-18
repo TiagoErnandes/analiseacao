@@ -36,9 +36,13 @@ export async function atualizarIndices(): Promise<string[]> {
   const [{ n }] = await query<{ n: number }>("select count(*)::int as n from indices where serie = 'cdi' and data < current_date - 800");
   const desdeCdi = new Date(desde);
   if (n < 100) desdeCdi.setTime(Date.now() - (10 * 365 - 10) * 86_400_000); // a API do BC aceita no máximo 10 anos por consulta
+  // IPCA: idem, para a renda fixa IPCA+ antiga
+  const [{ m }] = await query<{ m: number }>("select count(*)::int as m from indices where serie = 'ipca' and data < current_date - 800");
+  const desdeIpca = new Date(desde);
+  if (m < 12) desdeIpca.setTime(Date.now() - (10 * 365 - 10) * 86_400_000);
   const fontes: [string, () => Promise<Ponto[]>][] = [
     ["cdi", () => sgs(12, desdeCdi)],
-    ["ipca", () => sgs(433, desde)],
+    ["ipca", () => sgs(433, desdeIpca)],
     ["ibov", ibovespa],
   ];
   for (const [serie, buscar] of fontes) {

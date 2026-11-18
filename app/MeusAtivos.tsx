@@ -3,6 +3,7 @@ import Link from "next/link";
 import { brl, pct } from "@/lib/format";
 import type { Posicao } from "@/lib/painel";
 import { TIPOS } from "@/lib/tipos";
+import { descreverTaxa } from "@/lib/rendafixaInfo";
 import { Logo } from "./Logo";
 import { Nota, Variacao } from "./ui";
 
@@ -102,8 +103,9 @@ export function MeusAtivos({
                           </span>
                         </td>
                         <td colSpan={3} className="text-right text-xs text-suave">
-                          {p.taxa_cdi ? `${Math.round(p.taxa_cdi * 1000) / 10}% do CDI` : "sem rendimento"}
+                          {descreverTaxa(p)}
                           {p.data_aplicacao ? ` desde ${p.data_aplicacao.split("-").reverse().join("/")}` : ""} · aplicado {brl(p.investido)}
+                          {p.liquido != null && p.liquido < p.valor - 0.005 ? ` · líquido de IR ≈ ${brl(p.liquido)}` : ""}
                         </td>
                         <td className="text-right text-fraco">—</td>
                         <td className="text-right"><Variacao v={p.rentabilidade} casas={2} /></td>
