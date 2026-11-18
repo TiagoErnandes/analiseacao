@@ -4,6 +4,7 @@ import { brl, pct } from "@/lib/format";
 import type { Posicao } from "@/lib/painel";
 import { TIPOS } from "@/lib/tipos";
 import { descreverTaxa } from "@/lib/rendafixaInfo";
+import { logoRendaFixa } from "@/lib/instituicoes";
 import { Logo } from "./Logo";
 import { Nota, Variacao } from "./ui";
 
@@ -98,7 +99,7 @@ export function MeusAtivos({
                       <tr key={p.ticker}>
                         <td className="sticky left-0 z-[1] bg-painel">
                           <span className="flex items-center gap-2.5 font-medium">
-                            <Logo ticker={p.ticker} src={null} />
+                            <Logo ticker={p.ticker} src={logoRendaFixa(p.ticker)} />
                             {p.ticker}
                           </span>
                         </td>
