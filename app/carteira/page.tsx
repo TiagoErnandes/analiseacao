@@ -14,6 +14,7 @@ import { PrecoMedio } from "./PrecoMedio";
 import { ExportarCarteira } from "./ExportarCarteira";
 import { FormRendaFixa, MovimentoRendaFixa } from "./RendaFixa";
 import { descreverTaxa } from "@/lib/rendafixaInfo";
+import { logoRendaFixa } from "@/lib/instituicoes";
 import { exigirUsuario } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -78,7 +79,7 @@ export default async function CarteiraPage() {
                   <td>
                     {p.tipo === "renda_fixa" ? (
                       <span className="flex items-center gap-2.5 font-medium">
-                        <Logo ticker={p.ticker} src={null} />
+                        <Logo ticker={p.ticker} src={logoRendaFixa(p.ticker)} />
                         {p.ticker}
                         <TipoAtivo tipo="renda_fixa" />
                       </span>
