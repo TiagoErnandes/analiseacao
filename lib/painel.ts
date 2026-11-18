@@ -7,7 +7,7 @@ import { infoTipo } from "./tipos";
 import { proventosRecebidos } from "./proventos";
 import { compararDesde } from "./indices";
 import type { Usuario } from "./auth";
-import { precosRendaFixa } from "./rendafixa";
+import { liquidoEstimado, precosRendaFixa } from "./rendafixa";
 import { lucrosRealizados } from "./ir";
 import { rentabilidadeMensal } from "./rentabilidade";
 
@@ -25,12 +25,13 @@ export type Posicao = Carteira & {
   peso: number | null;
   renda12m: number | null; // dividendos dos últimos 12 meses x quantidade
   recebido: number; // proventos que você recebeu desde a compra (estimado), em reais
+  liquido: number | null; // renda fixa: valor se resgatar hoje, já sem o IR estimado
 };
 
 /** Carteira de um usuário (null = carteira original, ainda sem dono). */
 export async function carteiraDe(usuarioId: number | null) {
   return query<Carteira & { desde: string }>(
-    `select ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao::text, coalesce(data_aplicacao, criado_em::date)::text as desde
+    `select ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao::text, indexador, taxa_anual, vencimento::text, isento_ir, coalesce(data_aplicacao, criado_em::date)::text as desde
        from carteira where usuario_id is not distinct from $1 order by ticker`,
     [usuarioId],
   );
@@ -119,6 +120,7 @@ export async function carregarPainel(usuario: Usuario) {
       investido: c.quantidade * c.preco_medio * cambio,
       rentabilidade: preco != null && c.preco_medio > 0 ? preco / c.preco_medio - 1 : null,
       renda12m: a?.dpa_12m != null ? a.dpa_12m * c.quantidade * cambio : null,
+      liquido: rf ? liquidoEstimado(c.quantidade * (preco ?? 1), c.quantidade * c.preco_medio, c.data_aplicacao, c.isento_ir).liquido : null,
     };
   });
   const patrimonio = base.reduce((s, p) => s + p.valor, 0);

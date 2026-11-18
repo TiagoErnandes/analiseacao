@@ -12,7 +12,8 @@ import { TIPOS_MERCADO as TIPOS } from "@/lib/tipos";
 import { TipoAtivo } from "../TipoAtivo";
 import { PrecoMedio } from "./PrecoMedio";
 import { ExportarCarteira } from "./ExportarCarteira";
-import { FormRendaFixa } from "./RendaFixa";
+import { FormRendaFixa, MovimentoRendaFixa } from "./RendaFixa";
+import { descreverTaxa } from "@/lib/rendafixaInfo";
 import { exigirUsuario } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +28,7 @@ export default async function CarteiraPage() {
        from operacoes where usuario_id is not distinct from $1 order by data desc, id desc limit 30`,
     [usuario.id],
   );
+  const hojeIso = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
   const dinheiro = (v: number, moeda: string) => v.toLocaleString("pt-BR", { style: "currency", currency: moeda });
   const importador = <ImportadorB3 atual={posicoes.map((p) => ({ ticker: p.ticker, quantidade: p.quantidade, preco_medio: p.preco_medio }))} />;
 
@@ -90,7 +92,14 @@ export default async function CarteiraPage() {
                   </td>
                   {p.tipo === "renda_fixa" ? (
                     <td colSpan={3} className="text-right text-xs text-suave">
-                      {p.taxa_cdi ? `${Math.round(p.taxa_cdi * 1000) / 10}% do CDI` : "sem rendimento"}{p.data_aplicacao ? ` desde ${dataBr(p.data_aplicacao)}` : ""}
+                      {descreverTaxa(p)}{p.data_aplicacao ? ` desde ${dataBr(p.data_aplicacao)}` : ""}
+                      {p.vencimento ? <> · {p.vencimento < hojeIso ? "venceu" : "vence"} em {dataBr(p.vencimento)}</> : null}
+                      {p.isento_ir ? " · isento de IR" : null}
+                      {p.liquido != null && p.liquido < p.valor - 0.005 ? (
+                        <span className="block text-[11px] text-fraco" title="Estimativa se resgatar hoje, pela tabela regressiva do IR (sem IOF)">
+                          líquido de IR ≈ {brl(p.liquido)}
+                        </span>
+                      ) : null}
                     </td>
                   ) : (
                     <>
@@ -109,6 +118,7 @@ export default async function CarteiraPage() {
                   <td className="text-right"><Variacao v={p.rentabilidade} /></td>
                   <td className="text-right">{pct(p.peso)}</td>
                   <td className="text-right">
+                    {p.tipo === "renda_fixa" && <MovimentoRendaFixa nome={p.ticker} desde={p.data_aplicacao} />}
                     <form action={removerAtivo}>
                       <input type="hidden" name="ticker" value={p.ticker} />
                       <button className="rounded-md px-2 py-1 text-xs text-baixa hover:bg-baixa/10">Remover</button>

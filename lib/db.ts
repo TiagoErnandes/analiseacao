@@ -28,6 +28,10 @@ export type Carteira = {
   tipo: Tipo | null;
   taxa_cdi?: number | null; // renda fixa: fração do CDI (1 = 100% do CDI; 0 = valor parado)
   data_aplicacao?: string | null; // renda fixa: desde quando rende
+  indexador?: string | null; // renda fixa: "cdi" (padrão), "pre" ou "ipca"
+  taxa_anual?: number | null; // renda fixa prefixada (taxa ao ano) ou IPCA+ (juro real ao ano), em fração
+  vencimento?: string | null; // renda fixa: o rendimento para nessa data
+  isento_ir?: boolean | null; // renda fixa: LCI, LCA e outros isentos de IR
 };
 
 export type Analise = {
@@ -289,6 +293,11 @@ export async function migrar() {
     -- Renda fixa e outros bens: rendem uma fração do CDI desde a data da aplicação
     alter table carteira add column if not exists taxa_cdi numeric;
     alter table carteira add column if not exists data_aplicacao date;
+    -- Renda fixa prefixada e IPCA+, vencimento e isenção de IR (LCI/LCA)
+    alter table carteira add column if not exists indexador text;
+    alter table carteira add column if not exists taxa_anual numeric;
+    alter table carteira add column if not exists vencimento date;
+    alter table carteira add column if not exists isento_ir boolean;
     -- A estratégia e o início da carteira passam a ser de cada usuário (uma vez: os atuais ficam com a carteira original)
     with marca as (insert into config (chave, valor) values ('config_usuario_migrada', '1') on conflict (chave) do nothing returning 1)
     insert into config_usuario (usuario_id, chave, valor)

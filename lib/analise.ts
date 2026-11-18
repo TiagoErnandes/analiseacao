@@ -274,7 +274,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
   const dono = await idDoDono();
   const [comRendaFixa, universo] = await Promise.all([
     query<Carteira & { usuario_id: number | null }>(
-      "select usuario_id, ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao::text from carteira",
+      "select usuario_id, ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao::text, indexador, taxa_anual, vencimento::text, isento_ir from carteira",
     ),
     query<{ ticker: string }>("select ticker from universo where ativo"),
   ]);
@@ -633,12 +633,13 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
     f.investido += c.quantidade * c.preco_medio * d.cambio;
     f.patrimonio += c.quantidade * (d.preco ?? 0) * d.cambio;
   }
-  const precoRf = await precosRendaFixa(comRendaFixa);
+  const chaveRf = (c: { usuario_id: number | null; ticker: string }) => `${c.usuario_id ?? ""}|${c.ticker}`; // o mesmo nome pode existir em duas contas
+  const precoRf = await precosRendaFixa(comRendaFixa, chaveRf);
   for (const c of comRendaFixa.filter((x) => x.tipo === "renda_fixa")) {
     const f = fotos.get(c.usuario_id) ?? { investido: 0, patrimonio: 0 };
     fotos.set(c.usuario_id, f);
     f.investido += c.quantidade * c.preco_medio;
-    f.patrimonio += c.quantidade * (precoRf.get(c.ticker) ?? 1);
+    f.patrimonio += c.quantidade * (precoRf.get(chaveRf(c)) ?? 1);
   }
   if (!fotos.has(dono)) fotos.set(dono, { investido: 0, patrimonio: 0 });
   for (const [usuario, f] of fotos) {

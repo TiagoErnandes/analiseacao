@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { importarB3, type NegocioImportado, type ResultadoB3 } from "@/lib/b3";
-import { migrar, pool, query } from "@/lib/db";
+import { migrar, pool, query, type Carteira } from "@/lib/db";
+import { carregarSeriesRf, descreverTaxa, fatorPosicao } from "@/lib/rendafixa";
+import { brl, dataBr } from "@/lib/format";
 import { infoTipo, type Tipo } from "@/lib/tipos";
 import { usuarioOuErro } from "@/lib/auth";
 import { cotacaoUsdtBrl } from "@/lib/cripto";
@@ -41,33 +43,103 @@ export async function removerAtivo(form: FormData) {
 
 // ---------- Renda fixa e outros bens ----------
 
-/** CDB, Tesouro, caixa, imóvel, negócio próprio: valor aplicado que rende uma fração do CDI (0% = fica parado). */
+/** CDB, caixinha, Tesouro, LCI, imóvel, negócio próprio: valor aplicado que rende % do CDI, prefixado ou IPCA+ (0% do CDI = fica parado). */
 export async function salvarRendaFixa(form: FormData): Promise<{ ok: boolean; mensagem: string }> {
   try {
     const { id: dono } = await usuarioOuErro();
     const info = infoTipo("renda_fixa")!;
     const nome = String(form.get("nome") ?? "").trim().toUpperCase().replace(/\s+/g, " ");
-    if (!info.formato.test(nome)) return { ok: false, mensagem: "Dê um nome com 2 a 30 letras ou números (ex.: CDB INTER)." };
+    if (!info.formato.test(nome)) return { ok: false, mensagem: "Dê um nome com 2 a 30 letras ou números, sem acento (ex.: CAIXINHA NUBANK)." };
     if (infoTipo("acao")!.formato.test(nome) || /^[A-Z]{1,5}$/.test(nome))
       return { ok: false, mensagem: "Esse nome parece código de ação. Use algo como “CDB INTER”." };
     const valor = numero(form.get("valor"));
     if (!(valor > 0)) return { ok: false, mensagem: "Informe o valor aplicado." };
-    const pctCdi = form.get("taxa") === "" || form.get("taxa") == null ? 100 : numero(form.get("taxa"));
-    if (!(pctCdi >= 0 && pctCdi <= 300)) return { ok: false, mensagem: "O rendimento vai de 0% a 300% do CDI." };
+    const indexador = String(form.get("indexador") ?? "cdi");
+    if (!["cdi", "pre", "ipca"].includes(indexador)) return { ok: false, mensagem: "Escolha como rende: % do CDI, prefixado ou IPCA+." };
+    const vazio = form.get("taxa") == null || String(form.get("taxa")).trim() === "";
+    let taxaCdi: number | null = null;
+    let taxaAnual: number | null = null;
+    if (indexador === "cdi") {
+      const pct = vazio ? 100 : numero(form.get("taxa"));
+      if (!(pct >= 0 && pct <= 300)) return { ok: false, mensagem: "O rendimento vai de 0% a 300% do CDI." };
+      taxaCdi = pct / 100;
+    } else {
+      const pct = numero(form.get("taxa"));
+      if (vazio || !(pct >= 0 && pct <= 50)) return { ok: false, mensagem: "Informe a taxa ao ano (de 0% a 50%), ex.: 12,5." };
+      taxaAnual = pct / 100;
+    }
     const data = String(form.get("data") ?? "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return { ok: false, mensagem: "Data inválida." };
+    const vencimento = String(form.get("vencimento") ?? "").trim() || null;
+    if (vencimento && (!/^\d{4}-\d{2}-\d{2}$/.test(vencimento) || vencimento <= data))
+      return { ok: false, mensagem: "O vencimento precisa ser depois da data da aplicação." };
+    const isento = form.get("isento") === "on";
+    await migrar();
     await query(
-      `insert into carteira (usuario_id, ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao)
-       values ($1, $2, $3, 1, 'renda_fixa', $4, $5)
+      `insert into carteira (usuario_id, ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao, indexador, taxa_anual, vencimento, isento_ir)
+       values ($1, $2, $3, 1, 'renda_fixa', $4, $5, $6, $7, $8, $9)
        on conflict (usuario_id, ticker) do update set quantidade = excluded.quantidade, preco_medio = 1, tipo = 'renda_fixa',
-         taxa_cdi = excluded.taxa_cdi, data_aplicacao = excluded.data_aplicacao`,
-      [dono, nome, valor, pctCdi / 100, data],
+         taxa_cdi = excluded.taxa_cdi, data_aplicacao = excluded.data_aplicacao, indexador = excluded.indexador,
+         taxa_anual = excluded.taxa_anual, vencimento = excluded.vencimento, isento_ir = excluded.isento_ir`,
+      [dono, nome, valor, taxaCdi, data, indexador, taxaAnual, vencimento, isento],
     );
     revalidatePath("/carteira");
     revalidatePath("/");
-    return { ok: true, mensagem: `${nome} salvo: R$ ${valor.toFixed(2).replace(".", ",")} rendendo ${pctCdi}% do CDI desde ${data.split("-").reverse().join("/")}.` };
+    const como = descreverTaxa({ tipo: "renda_fixa", indexador, taxa_cdi: taxaCdi, taxa_anual: taxaAnual });
+    return { ok: true, mensagem: `${nome} salvo: ${brl(valor)} rendendo ${como} desde ${dataBr(data)}.` };
   } catch (err) {
     return { ok: false, mensagem: `Erro ao salvar: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * Aplicar mais ou resgatar parte de uma renda fixa já cadastrada (ex.: guardar ou tirar dinheiro da caixinha).
+ * O valor vira cotas pelo fator do dia: aplicar soma ao investido; resgatar tira o investido na proporção (como uma venda pelo preço médio).
+ */
+export async function movimentarRendaFixa(form: FormData): Promise<{ ok: boolean; mensagem: string }> {
+  try {
+    const { id: dono } = await usuarioOuErro();
+    const nome = String(form.get("nome") ?? "");
+    const operacao = String(form.get("operacao") ?? "");
+    if (operacao !== "aplicar" && operacao !== "resgatar") return { ok: false, mensagem: "Escolha aplicar ou resgatar." };
+    const valor = numero(form.get("valor"));
+    if (!(valor > 0)) return { ok: false, mensagem: "Informe o valor." };
+    const hojeSp = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+    const data = String(form.get("data") ?? "") || hojeSp;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data) || data > hojeSp) return { ok: false, mensagem: "Data inválida (não pode ser no futuro)." };
+
+    const [p] = await query<Carteira>(
+      `select ticker, quantidade, preco_medio, tipo, taxa_cdi, data_aplicacao::text, indexador, taxa_anual, vencimento::text, isento_ir
+         from carteira where usuario_id is not distinct from $1 and ticker = $2 and tipo = 'renda_fixa'`,
+      [dono, nome],
+    );
+    if (!p) return { ok: false, mensagem: "Aplicação não encontrada." };
+    if (p.data_aplicacao && data < p.data_aplicacao) return { ok: false, mensagem: `A data precisa ser a partir de ${dataBr(p.data_aplicacao)}.` };
+    const fator = fatorPosicao(await carregarSeriesRf([p]), p, data);
+    const cotas = valor / fator;
+    const investido = p.quantidade * p.preco_medio;
+
+    if (operacao === "aplicar") {
+      const novas = p.quantidade + cotas;
+      await query("update carteira set quantidade = $3, preco_medio = $4 where usuario_id is not distinct from $1 and ticker = $2", [
+        dono, nome, novas, (investido + valor) / novas,
+      ]);
+    } else {
+      const saldo = p.quantidade * fator;
+      if (valor > saldo * 1.005) return { ok: false, mensagem: `O saldo em ${dataBr(data)} era de ${brl(saldo)}; não dá para resgatar ${brl(valor)}.` };
+      if (valor >= saldo * 0.995) {
+        await query("delete from carteira where usuario_id is not distinct from $1 and ticker = $2", [dono, nome]);
+        revalidatePath("/carteira");
+        revalidatePath("/");
+        return { ok: true, mensagem: `${nome} resgatado por inteiro (${brl(valor)}) e retirado da carteira.` };
+      }
+      await query("update carteira set quantidade = $3 where usuario_id is not distinct from $1 and ticker = $2", [dono, nome, p.quantidade - cotas]);
+    }
+    revalidatePath("/carteira");
+    revalidatePath("/");
+    return { ok: true, mensagem: `${operacao === "aplicar" ? "Aplicação" : "Resgate"} de ${brl(valor)} em ${nome} registrado.` };
+  } catch (err) {
+    return { ok: false, mensagem: `Erro: ${(err as Error).message}` };
   }
 }
 
