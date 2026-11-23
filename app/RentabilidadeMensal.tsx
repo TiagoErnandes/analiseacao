@@ -72,7 +72,7 @@ export function RentabilidadeMensal({ dados }: { dados: Rentabilidade | null }) 
               const p = vsCdi(m.carteira, m.cdi);
               return (
                 <tr key={m.mes}>
-                  <td className="font-medium">{nomeMes(m.mes)}</td>
+                  <td className="font-medium" data-ordem={m.mes.replace(/\D/g, "")}>{nomeMes(m.mes)}</td>
                   <td className="text-right font-semibold"><Variacao v={m.carteira} casas={2} /></td>
                   <td className="text-right text-suave">{pctSinal(m.cdi, 2)}</td>
                   <td className="text-right"><Variacao v={m.ibov} casas={2} /></td>

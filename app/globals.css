@@ -17,3 +17,13 @@ body { @apply bg-fundo text-texto antialiased; font-feature-settings: "cv11", "s
   .chip { @apply rounded-full border border-borda px-3 py-1 text-xs text-suave transition hover:border-suave hover:text-texto; }
   .chip-ativo { @apply border-marca/60 bg-marca/10 text-marca; }
 }
+
+/* Ordenação clicável (app/OrdenarTabelas.tsx) */
+table[data-ordenavel] thead th { cursor: pointer; user-select: none; }
+table[data-ordenavel] thead th:hover { color: theme("colors.texto"); }
+table[data-ordenavel] thead th::after { content: "↕"; margin-left: 0.3em; font-size: 0.8em; opacity: 0.25; }
+table[data-ordenavel] thead th:empty { cursor: default; }
+table[data-ordenavel] thead th:empty::after { content: none; }
+table[data-ordenavel] thead th[data-ordem-dir]::after { opacity: 1; color: theme("colors.marca"); }
+table[data-ordenavel] thead th[data-ordem-dir="desc"]::after { content: "▼"; }
+table[data-ordenavel] thead th[data-ordem-dir="asc"]::after { content: "▲"; }

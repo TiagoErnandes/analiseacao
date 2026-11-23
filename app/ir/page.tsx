@@ -32,7 +32,7 @@ function discriminacao(b: Bem, ano: number) {
 function LinhaMes({ m }: { m: Mes }) {
   return (
     <tr>
-      <td className="font-medium">
+      <td className="font-medium" data-ordem={m.mes.replace(/\D/g, "")}>
         <details>
           <summary className="cursor-pointer">{nomeMes(m.mes)}</summary>
           <ul className="mt-2 space-y-1 text-xs font-normal text-suave">
