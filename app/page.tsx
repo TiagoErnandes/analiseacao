@@ -8,6 +8,7 @@ import { TipoAtivo } from "./TipoAtivo";
 import { Rosca } from "./Rosca";
 import { GraficoEvolucao } from "./GraficoEvolucao";
 import { MeusAtivos } from "./MeusAtivos";
+import { AltasQuedas } from "./AltasQuedas";
 import { Comparativo } from "./Comparativo";
 import { ProventosMes } from "./ProventosMes";
 import { RentabilidadeMensal } from "./RentabilidadeMensal";
@@ -229,6 +230,8 @@ export default async function Painel() {
           dica="Por cotas: inclui ganho de capital e proventos, sem contar aportes e vendas como ganho ou perda"
         />
       </section>
+
+      <AltasQuedas posicoes={posicoes} />
 
       <section className="grid gap-4 lg:grid-cols-5">
         <Cartao titulo="Evolução do patrimônio" className="lg:col-span-3">

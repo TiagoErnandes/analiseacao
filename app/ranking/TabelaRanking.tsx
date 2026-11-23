@@ -142,7 +142,7 @@ export function TabelaRanking({ analises, filtroInicial, metodoNome }: { analise
       </div>
 
       <div className="overflow-x-auto">
-        <table className="tabela">
+        <table className="tabela" data-sem-ordem>
           <thead>
             <tr>
               <th className="w-8">#</th>

@@ -4,6 +4,7 @@ import { Navegacao } from "./Navegacao";
 import { BuscaAtivo } from "./BuscaAtivo";
 import { FaixaIndices } from "./FaixaIndices";
 import { AtualizaPrecos } from "./AtualizaPrecos";
+import { OrdenarTabelas } from "./OrdenarTabelas";
 import { loginAtivo, usuarioAtual, type Usuario } from "@/lib/auth";
 import "./globals.css";
 
@@ -85,6 +86,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </div>
         </header>
         <main className="mx-auto max-w-7xl px-4 py-6 sm:py-8">{children}</main>
+        <OrdenarTabelas />
         <footer className="mt-6 border-t border-borda">
           <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 text-xs leading-relaxed text-fraco sm:grid-cols-[1.4fr_1fr_1fr]">
             <div className="space-y-2">
