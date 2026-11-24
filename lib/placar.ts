@@ -113,3 +113,111 @@ export async function carregarPlacar(hoje = new Date().toISOString().slice(0, 10
   }
   return { resumos, sinais: sinais.sort((a, b) => b.data.localeCompare(a.data)), inicio: analises[0]?.data ?? null };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Placar do ranking: o top 10 da Nota (perfil Equilibrado, preço teto pela mediana, só boas empresas, uma classe por
+// empresa) bateu o Ibovespa? Uma carteira por mês (a primeira foto do mês), com peso igual. O preço vem das fotos
+// diárias do ranking (cotação de fechamento do dia); os proventos, quando a ação está na análise diária.
+
+export const TOP_RANKING = 10;
+export type CarteiraRanking = { data: string; tickers: string[]; resultados: Record<Horizonte, Resultado> };
+
+export async function placarDoRanking(hoje = new Date().toISOString().slice(0, 10)): Promise<{ carteiras: CarteiraRanking[]; resumos: Omit<Resumo, "grupo">[]; inicio: string | null }> {
+  const { notaDeFatores } = await import("./boaEmpresa");
+  type Linha = { data: string; ticker: string; fatores: import("./rankingHistorico").Foto; empresa: number | null };
+  const primeiras = await query<Linha>(
+    `select h.data::text, h.ticker, h.fatores, t.cd_cvm as empresa
+       from ranking_historico h left join tickers_cvm t on t.ticker = h.ticker
+      where h.metodo = 'mediana'
+        and h.data in (select min(data) from ranking_historico where metodo = 'mediana' group by date_trunc('month', data))`,
+  );
+  const porData = new Map<string, Linha[]>();
+  for (const l of primeiras) porData.set(l.data, [...(porData.get(l.data) ?? []), l]);
+  const tops: { data: string; tickers: string[] }[] = [];
+  for (const [data, linhas] of [...porData].sort(([a], [b]) => a.localeCompare(b))) {
+    const vistas = new Set<number>();
+    const ordem = linhas
+      .filter((l) => l.fatores.boa && l.fatores.preco)
+      .map((l) => ({ ...l, nota: notaDeFatores(l.fatores)?.nota ?? null }))
+      .filter((l) => l.nota != null)
+      .sort((a, b) => b.nota! - a.nota!);
+    const tickers: string[] = [];
+    for (const l of ordem) {
+      if (l.empresa != null) {
+        if (vistas.has(l.empresa)) continue;
+        vistas.add(l.empresa);
+      }
+      tickers.push(l.ticker);
+      if (tickers.length === TOP_RANKING) break;
+    }
+    if (tickers.length) tops.push({ data, tickers });
+  }
+  const todos = [...new Set(tops.flatMap((t) => t.tickers))];
+  const [precos, proventos, ibov] = todos.length
+    ? await Promise.all([
+        query<{ ticker: string; data: string; preco: number }>(
+          "select ticker, data::text, (fatores->>'preco')::float8 as preco from ranking_historico where metodo = 'mediana' and ticker = any($1) order by data",
+          [todos],
+        ),
+        query<{ ticker: string; data: string; valor: number }>("select ticker, data::text, valor from proventos where ticker = any($1) order by data", [todos]),
+        query<{ data: string; valor: number }>("select data::text, valor from indices where serie = 'ibov' order by data"),
+      ])
+    : [[], [], []];
+  const serieDe = new Map<string, { data: string; preco: number }[]>();
+  for (const p of precos) if (p.preco > 0) serieDe.set(p.ticker, [...(serieDe.get(p.ticker) ?? []), p]);
+  const provDe = new Map<string, { data: string; valor: number }[]>();
+  for (const p of proventos) provDe.set(p.ticker, [...(provDe.get(p.ticker) ?? []), p]);
+
+  const carteiras: CarteiraRanking[] = tops.map(({ data, tickers }) => {
+    const resultados = {} as Record<Horizonte, Resultado>;
+    const ultima = precos.length ? precos[precos.length - 1].data : data;
+    for (const h of HORIZONTES) {
+      const alvo = h === 0 ? ultima : somarMeses(data, h);
+      if (h !== 0 && alvo > hoje) {
+        resultados[h] = { pendente: alvo };
+        continue;
+      }
+      // Peso igual: a média dos retornos das ações que têm cotação no começo e no fim
+      const rets: number[] = [];
+      let ate = data;
+      for (const t of tickers) {
+        const serie = serieDe.get(t) ?? [];
+        const ini = pontoEm(serie, data, "depois", 0);
+        const fim = h === 0 ? serie[serie.length - 1] : pontoEm(serie, alvo, "depois");
+        if (!ini || !fim || fim.data <= ini.data) continue;
+        const prov = (provDe.get(t) ?? []).filter((p) => p.data > ini.data && p.data <= fim.data).reduce((s, p) => s + p.valor, 0);
+        rets.push((fim.preco + prov) / ini.preco - 1);
+        if (fim.data > ate) ate = fim.data;
+      }
+      if (!rets.length) {
+        resultados[h] = null;
+        continue;
+      }
+      const ibovIni = pontoEm(ibov, data, "antes");
+      const ibovFim = pontoEm(ibov, ate, "antes");
+      resultados[h] = {
+        retorno: rets.reduce((s, r) => s + r, 0) / rets.length,
+        ibov: ibovIni && ibovFim && ibovFim.data > ibovIni.data ? ibovFim.valor / ibovIni.valor - 1 : null,
+        ate,
+      };
+    }
+    return { data, tickers, resultados };
+  });
+
+  const media = (v: number[]) => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : null);
+  const resumos = HORIZONTES.map((h) => {
+    const feitos = carteiras.map((c) => c.resultados[h]).filter((r): r is { retorno: number; ibov: number | null; ate: string } => !!r && "retorno" in r);
+    const pend = carteiras.map((c) => c.resultados[h]).filter((r): r is { pendente: string } => !!r && "pendente" in r);
+    const comIbov = feitos.filter((r) => r.ibov != null);
+    return {
+      horizonte: h,
+      avaliados: feitos.length,
+      retornoMedio: media(feitos.map((r) => r.retorno)),
+      ibovMedio: media(comIbov.map((r) => r.ibov!)),
+      acertos: comIbov.filter((r) => r.retorno > r.ibov!).length,
+      pendentes: pend.length,
+      proximoResultado: pend.map((p) => p.pendente).sort()[0] ?? null,
+    };
+  });
+  return { carteiras: carteiras.reverse(), resumos, inicio: tops[0]?.data ?? null };
+}

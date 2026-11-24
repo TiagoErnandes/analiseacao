@@ -3,7 +3,7 @@ import Link from "next/link";
 import { brl, dataBr } from "@/lib/format";
 import { ultimaExecucao } from "@/lib/analise";
 import { exigirUsuario } from "@/lib/auth";
-import { carregarPlacar, HORIZONTES, type Grupo, type Horizonte, type Resultado } from "@/lib/placar";
+import { carregarPlacar, HORIZONTES, placarDoRanking, TOP_RANKING, type Grupo, type Horizonte, type Resultado } from "@/lib/placar";
 import { Cartao, Sinal, Vazio, Variacao } from "../ui";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ function Celula({ r }: { r: Resultado }) {
 export default async function Placar() {
   await exigirUsuario();
   await ultimaExecucao(); // garante as tabelas
-  const { resumos, sinais, inicio } = await carregarPlacar();
+  const [{ resumos, sinais, inicio }, ranking] = await Promise.all([carregarPlacar(), placarDoRanking().catch(() => null)]);
 
   return (
     <div className="space-y-5">
@@ -43,6 +43,70 @@ export default async function Placar() {
           aparecem conforme o prazo chega.
         </p>
       </div>
+
+      <Cartao titulo={`Top ${TOP_RANKING} do ranking`}>
+        <div className="space-y-3 p-4">
+          <p className="text-xs leading-relaxed text-suave">
+            Todo mês, as {TOP_RANKING} primeiras do ranking pela Nota (perfil Equilibrado, teto pela mediana, só boas empresas, uma classe por empresa)
+            viram uma carteira com peso igual. O retorno usa a cotação de cada dia do ranking (e os proventos das ações analisadas) e é comparado com o
+            Ibovespa. É o teste de que a Nota escolhe bem.
+          </p>
+          {!ranking?.carteiras.length ? (
+            <p className="text-sm text-suave">A primeira carteira entra quando o ranking for aberto depois da próxima análise; os resultados aparecem conforme os prazos chegam.</p>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+              <div className="overflow-x-auto">
+                <table className="tabela">
+                  <thead>
+                    <tr>
+                      <th>Prazo</th>
+                      <th className="!text-right">Retorno médio</th>
+                      <th className="!text-right">Ibovespa</th>
+                      <th className="!text-right">Bateu</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ranking.resumos.map((r) => (
+                      <tr key={r.horizonte}>
+                        <td>
+                          {ROTULO_H[r.horizonte]}
+                          <span className="block text-[11px] text-fraco">
+                            {r.avaliados} {r.avaliados === 1 ? "carteira" : "carteiras"}
+                            {r.pendentes > 0 && r.proximoResultado ? ` · próxima em ${dataBr(r.proximoResultado)}` : ""}
+                          </span>
+                        </td>
+                        <td className="text-right"><Variacao v={r.retornoMedio} /></td>
+                        <td className="text-right"><Variacao v={r.ibovMedio} /></td>
+                        <td className="text-right tabular-nums">{r.avaliados ? `${r.acertos} de ${r.avaliados}` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="max-h-80 overflow-auto">
+                <table className="tabela">
+                  <thead>
+                    <tr>
+                      <th>Mês</th>
+                      <th>Ações</th>
+                      {HORIZONTES.map((h) => <th key={h} className="!text-right">{ROTULO_H[h]}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ranking.carteiras.map((c) => (
+                      <tr key={c.data}>
+                        <td>{dataBr(c.data)}</td>
+                        <td className="!whitespace-normal text-xs text-suave">{c.tickers.join(", ")}</td>
+                        {HORIZONTES.map((h) => <td key={h} className="text-right"><Celula r={c.resultados[h]} /></td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </Cartao>
 
       {!sinais.length ? (
         <Vazio>Ainda não há recomendações para medir. O placar começa a encher depois das primeiras análises.</Vazio>

@@ -3,9 +3,9 @@
 // da CVM e IA: ficam sem qualidade, nota e score, mas com o teto de cada método e a margem até ele.
 import type { Analise } from "./db";
 import { col, tabelaFundamentus, type Linha } from "./garimpo";
-import { calcularIndicadores, YIELD_MINIMO_BAZIN } from "./valuation";
-import { BOA_EMPRESA, motivosConstancia, type Constancia } from "./boaEmpresa";
-import { constanciaPorTicker } from "./cvm";
+import { calcularIndicadores, mediasPorAcao, YIELD_MINIMO_BAZIN } from "./valuation";
+import { BOA_EMPRESA, motivosConstancia } from "./boaEmpresa";
+import { dadosCvmPorTicker, type DadosCvm } from "./cvm";
 
 /** Ações, units e preferenciais da B3 (ex.: PETR4, TAEE11). */
 const TICKER_ACAO = /^[A-Z]{4}\d{1,2}$/;
@@ -62,23 +62,35 @@ export function motivosAnalisada(a: Pick<Analise, "qualidade">, b?: LinhaBolsa):
   return m;
 }
 
-/** Uma linha do Fundamentus vira uma "análise" só com o preço teto (as mesmas regras da análise diária, sem o histórico). */
-export function analiseDaBolsa(b: LinhaBolsa, data: string, exigido = YIELD_MINIMO_BAZIN, constancia?: Constancia | null, usarConstancia = false): Analise {
+/** Número de ações da empresa (valor de mercado ÷ cotação), com o patrimônio e o P/VP do Fundamentus. */
+export function acoesDaEmpresa(b: Pick<LinhaBolsa, "preco" | "pvp" | "patrimonio">): number | null {
+  if (!b.patrimonio || b.patrimonio <= 0 || !b.pvp || b.pvp <= 0 || !b.preco) return null;
+  return (b.patrimonio * b.pvp) / b.preco;
+}
+
+/**
+ * Uma linha do Fundamentus vira uma "análise" só com o preço teto (as mesmas regras da análise diária, sem o Yahoo e a IA).
+ * Com os balanços da CVM, o teto usa o lucro médio de 5 anos (pico de ciclo não infla o Graham e o Buffett) e o dividendo
+ * médio de 5 anos (um dividendo extraordinário não infla o Bazin); a empresa ganha nome e setor.
+ */
+export function analiseDaBolsa(b: LinhaBolsa, data: string, exigido = YIELD_MINIMO_BAZIN, cvm?: DadosCvm | null, usarConstancia = false): Analise {
   // P/L e P/VP negativos (prejuízo, patrimônio negativo) dão LPA e VPA negativos: os métodos de lucro ficam sem valor
   const lpa = b.pl ? b.preco / b.pl : null;
   const vpa = b.pvp ? b.preco / b.pvp : null;
-  const ind = calcularIndicadores({ preco: b.preco, lpa, vpa, dyFundamentus: b.dy, proventos: [] }, new Date(), exigido);
+  const { lpaMedio, dpaMedio } = mediasPorAcao(cvm?.anos ?? [], acoesDaEmpresa(b));
+  const ind = calcularIndicadores({ preco: b.preco, lpa, vpa, dyFundamentus: b.dy, proventos: [], lpaMedio, dpaMedioCvm: dpaMedio }, new Date(), exigido);
+  const constancia = cvm?.constancia ?? null;
   return {
     data,
     ticker: b.ticker,
-    nome: null,
+    nome: cvm?.nome ?? null,
     logo: null,
     preco: b.preco,
     variacao_dia: null,
     lpa,
     vpa,
     dpa_12m: ind.dpa12m,
-    dpa_medio: null,
+    dpa_medio: ind.dpaMedio,
     dy_12m: b.dy,
     roe: b.roe,
     teto_bazin: ind.bazin,
@@ -93,22 +105,26 @@ export function analiseDaBolsa(b: LinhaBolsa, data: string, exigido = YIELD_MINI
     score: null,
     na_carteira: false,
     qualidade: null,
-    setor: null,
-    alertas: null,
+    setor: cvm?.setor ?? null,
+    alertas: ind.alertas.filter((a) => /lucro de 12 meses|prejuízo na média/.test(a)).join("; ") || null,
     tipo: "acao",
     moeda: "BRL",
     cambio: 1,
     indicadores: null,
     fora_da_analise: true,
     liquidez: b.liquidez,
-    constancia: constancia ?? null,
+    constancia,
+    empresa: cvm?.cdCvm ?? null,
+    divida: b.divida ?? null,
+    lpa_medio: lpaMedio,
     fora_do_filtro: [...motivosFundamentus(b), ...(usarConstancia ? motivosConstancia(constancia) : [])].join("; ") || null,
   };
 }
 
 /**
- * Junta as análises do dia com todas as outras ações da bolsa. As analisadas ganham a liquidez do Fundamentus
- * (para o filtro de liquidez); as de fora entram com o teto estimado. Fundamentus fora do ar: só as analisadas.
+ * Junta as análises do dia com todas as outras ações da bolsa. As analisadas ganham a liquidez e a dívida do Fundamentus
+ * e o código CVM (para juntar as classes da mesma empresa); as de fora entram com o teto estimado. Fundamentus fora do
+ * ar: só as analisadas.
  */
 export async function comTodaABolsa(analises: Analise[], data: string, exigido?: number): Promise<Analise[]> {
   const linhas = await tabelaFundamentus()
@@ -116,16 +132,25 @@ export async function comTodaABolsa(analises: Analise[], data: string, exigido?:
     .catch((e) => (console.warn(`Ranking: tabela do Fundamentus indisponível (${(e as Error).message})`), [] as LinhaBolsa[]));
   const porTicker = new Map(linhas.map((b) => [b.ticker, b]));
   // Lucro e dividendo nos últimos 10 anos (CVM). Enquanto a análise diária não baixou o histórico, o filtro ignora a constância
-  const constancias = await constanciaPorTicker().catch(() => new Map<string, Constancia>());
-  const usar = constancias.size > 0;
+  const cvm = await dadosCvmPorTicker().catch(() => new Map<string, DadosCvm>());
+  const usar = [...cvm.values()].some((c) => c.constancia);
   const ja = new Set(analises.map((a) => a.ticker));
   return [
     ...analises.map((a) => {
       const b = porTicker.get(a.ticker);
-      const c = constancias.get(a.ticker) ?? null;
+      const d = cvm.get(a.ticker);
+      const c = d?.constancia ?? null;
       const motivos = [...motivosAnalisada(a, b), ...(usar && (a.tipo ?? "acao") === "acao" ? motivosConstancia(c) : [])];
-      return { ...a, liquidez: b?.liquidez ?? null, constancia: c, fora_do_filtro: motivos.join("; ") || null };
+      return {
+        ...a,
+        setor: a.setor ?? d?.setor ?? null,
+        liquidez: b?.liquidez ?? null,
+        divida: b?.divida ?? null,
+        constancia: c,
+        empresa: d?.cdCvm ?? null,
+        fora_do_filtro: motivos.join("; ") || null,
+      };
     }),
-    ...linhas.filter((b) => !ja.has(b.ticker)).map((b) => analiseDaBolsa(b, data, exigido, constancias.get(b.ticker), usar)),
+    ...linhas.filter((b) => !ja.has(b.ticker)).map((b) => analiseDaBolsa(b, data, exigido, cvm.get(b.ticker), usar)),
   ];
 }

@@ -174,6 +174,32 @@ export function consistenciaDividendos(
   return { anos, anosPagos, cortes, crescimento };
 }
 
+/**
+ * Lucro por ação usado nos métodos de lucro (Graham, Buffett, P/L justo): o menor entre o de 12 meses e a média dos
+ * últimos 5 anos na CVM. Média com prejuízo: sem valor (não dá para confiar no lucro de hoje). Sem média: o de 12 meses.
+ */
+export function lpaNormalizado(lpa: number | null, lpaMedio: number | null | undefined): number | null {
+  if (lpa == null || lpa <= 0) return lpa;
+  if (lpaMedio == null || !Number.isFinite(lpaMedio)) return lpa;
+  return lpaMedio <= 0 ? null : Math.min(lpa, lpaMedio);
+}
+
+/**
+ * Lucro e dividendo médios por ação dos últimos 5 anos, a partir dos totais da CVM (em reais) e do número de ações
+ * (valor de mercado ÷ cotação). Precisa de pelo menos 3 anos de balanço. Usa os 5 anos mais recentes de `anos`.
+ */
+export function mediasPorAcao(
+  anos: { ano: number; lucro: number; dividendos: number | null }[],
+  acoes: number | null,
+): { lpaMedio: number | null; dpaMedio: number | null } {
+  const ult = [...anos].sort((a, b) => a.ano - b.ano).slice(-5);
+  if (!acoes || acoes <= 0 || ult.length < 3) return { lpaMedio: null, dpaMedio: null };
+  const media = (v: number[]) => v.reduce((s, x) => s + x, 0) / v.length;
+  // Nenhum dividendo em todo o histórico costuma ser conta da DVA que não foi lida (ex.: bancos), não "nunca pagou"
+  const temDividendo = anos.some((l) => (l.dividendos ?? 0) > 0);
+  return { lpaMedio: media(ult.map((l) => l.lucro)) / acoes, dpaMedio: temDividendo ? media(ult.map((l) => l.dividendos ?? 0)) / acoes : null };
+}
+
 /** Abaixo disso de dividend yield, a empresa é tratada como "não pagadora" e o teto vem do Graham. */
 export const DY_MINIMO_PAGADORA = 0.02;
 /** Diferença máxima aceitável entre o DPA 12m do Yahoo e o do Fundamentus antes de desconfiar do histórico. */
@@ -206,6 +232,10 @@ export function calcularIndicadores(d: {
   vpa: number | null;
   dyFundamentus: number | null;
   proventos: { valor: number; data: Date }[];
+  /** Lucro médio por ação dos últimos 5 anos (balanços da CVM); ver lpaNormalizado. */
+  lpaMedio?: number | null;
+  /** Dividendo médio por ação dos últimos 5 anos (CVM): vale quando o histórico do Yahoo não existe. */
+  dpaMedioCvm?: number | null;
 }, hoje = new Date(), exigido = YIELD_MINIMO_BAZIN): Indicadores {
   const alertas: string[] = [];
   const yahoo = calcularDpa(d.proventos, hoje);
@@ -222,6 +252,8 @@ export function calcularIndicadores(d: {
   } else if (dpa12mFund == null) {
     alertas.push("sem DY do Fundamentus; DPA 12m vem só do Yahoo");
   }
+  // Sem o histórico do Yahoo (ações fora da análise diária), a média de 5 anos vem dos dividendos da CVM
+  if (dpaMedio == null && d.proventos.length === 0 && d.dpaMedioCvm != null && d.dpaMedioCvm >= 0) dpaMedio = d.dpaMedioCvm;
 
   const dy12m = dpa12m && d.preco ? dpa12m / d.preco : null;
   // Bazin só para quem paga de verdade: DY de pelo menos metade do yield exigido (≈ 3,5% a 4,5%).
@@ -236,8 +268,15 @@ export function calcularIndicadores(d: {
     if (!dpa12m) dpa12m = null;
   }
 
-  let graham = tetoGraham(d.lpa);
-  let buffett = tetoBuffett(d.lpa);
+  // Lucro normalizado: no pico do ciclo (commodities, construção) o lucro de 12 meses engana; vale o menor entre ele e a média
+  const lpa = lpaNormalizado(d.lpa, d.lpaMedio);
+  if (d.lpa != null && d.lpa > 0 && d.lpaMedio != null) {
+    if (d.lpaMedio <= 0) alertas.push("prejuízo na média dos últimos 5 anos (CVM): Graham e Buffett ficam sem valor");
+    else if (d.lpaMedio < d.lpa * 0.8)
+      alertas.push(`lucro de 12 meses ${Math.round((d.lpa / d.lpaMedio - 1) * 100)}% acima da média de 5 anos (pico de ciclo?): Graham e Buffett pelo lucro médio`);
+  }
+  let graham = tetoGraham(lpa);
+  let buffett = tetoBuffett(lpa);
   if (d.lpa != null && d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01) {
     alertas.push(`LPA ${d.lpa} parece errado (ROE implícito < 1%), Graham e Buffett ignorados`);
     graham = null;
@@ -371,7 +410,16 @@ type DadosTeto = {
   teto_graham: number | null;
   teto_buffett: number | null;
   preco_teto: number | null;
+  lpa_medio?: number | null; // lucro médio por ação de 5 anos (CVM), quando conhecido
+  indicadores?: Record<string, unknown> | null; // as analisadas guardam o lucro médio em indicadores.lpaMedio
 };
+
+/** Lucro médio de 5 anos por ação de uma linha (campo do ranking ou o guardado pela análise diária). */
+export function lpaMedioDe(d: Pick<DadosTeto, "lpa_medio" | "indicadores">): number | null {
+  if (d.lpa_medio != null) return d.lpa_medio;
+  const v = d.indicadores?.lpaMedio;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
 
 /**
  * Preço teto de uma ação pelo método escolhido. Usa os mesmos cuidados da análise diária:
@@ -379,7 +427,7 @@ type DadosTeto = {
  */
 export function tetoPorMetodo(metodo: MetodoTeto, d: DadosTeto): number | null {
   if (metodo === "mediana") return d.preco_teto;
-  const lpaOk = d.lpa != null && d.lpa > 0 && !(d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01) ? d.lpa : null;
+  const lpaOk = d.lpa != null && d.lpa > 0 && !(d.vpa && d.vpa > 0 && d.lpa / d.vpa < 0.01) ? lpaNormalizado(d.lpa, lpaMedioDe(d)) : null;
   const divs = [d.dpa_12m, d.dpa_medio].filter((v): v is number => v != null && v > 0);
   const dividendo = divs.length ? Math.min(...divs) : null;
   const { k, g, plJusto } = PREMISSAS;
