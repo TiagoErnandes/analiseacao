@@ -70,7 +70,10 @@ export type Analise = {
   fora_da_analise?: boolean; // só no ranking: ação da bolsa fora da análise diária (teto estimado pelo Fundamentus)
   liquidez?: number | null; // só no ranking: volume médio diário de 2 meses (Fundamentus), em R$
   fora_do_filtro?: string | null; // só no ranking: por que não passa no filtro "Boas empresas" (null: passa)
-  constancia?: { anos: number; anosComLucro: number; anosComDividendo: number } | null; // só no ranking: 10 anos na CVM
+  constancia?: { anos: number; anosComLucro: number; anosComDividendo: number; crescimentoLucro?: number | null } | null; // só no ranking: 10 anos na CVM
+  empresa?: number | null; // só no ranking: código CVM (junta as classes da mesma empresa, ex.: PETR3 e PETR4)
+  divida?: number | null; // só no ranking: dívida bruta ÷ patrimônio (Fundamentus)
+  lpa_medio?: number | null; // só no ranking: lucro médio por ação de 5 anos (CVM), usado no preço teto
 };
 
 export type Relatorio = {
@@ -253,6 +256,20 @@ export async function migrar() {
     create table if not exists tickers_cvm (
       ticker text primary key,
       cd_cvm int not null
+    );
+    -- Nome e setor de cada empresa (FCA da CVM): o ranking mostra o setor de toda a bolsa
+    create table if not exists empresas_cvm (
+      cd_cvm int primary key,
+      nome   text,
+      setor  text
+    );
+    -- Foto diária do ranking (por método de preço teto): fatores da Nota de cada ação, para a seta de posição e o placar
+    create table if not exists ranking_historico (
+      data    date not null,
+      metodo  text not null,
+      ticker  text not null,
+      fatores jsonb not null,
+      primary key (data, metodo, ticker)
     );
     -- FIIs e ETFs mais negociados entram no universo analisado (uma vez; não volta se você desativar)
     insert into universo (ticker) values

@@ -323,9 +323,23 @@ export function tickersDoFca(geral: Record<string, string>[], valores: Record<st
   return mapa;
 }
 
-/** Guarda o código CVM de cada ação da bolsa (FCA do ano, renovado a cada 30 dias). */
+/** Nome e setor de cada empresa no arquivo "geral" do FCA (setor sem o prefixo das holdings: "Emp. Adm. Part. - "). */
+export function empresasDoFca(geral: Record<string, string>[]): Map<number, { nome: string | null; setor: string | null }> {
+  const campo = (r: Record<string, string>, re: RegExp) => r[Object.keys(r).find((k) => re.test(k)) ?? ""] ?? "";
+  const mapa = new Map<number, { nome: string | null; setor: string | null }>();
+  for (const r of geral) {
+    const cd = Number.parseInt(campo(r, /^codigo_cvm$/i), 10);
+    if (!cd) continue;
+    const setor = campo(r, /^setor_atividade$/i).replace(/^emp\.?\s*adm\.?\s*part\.?\s*-\s*/i, "").trim();
+    const nome = campo(r, /^nome_empresarial$/i).trim();
+    mapa.set(cd, { nome: nome || null, setor: setor && !/^sem setor/i.test(setor) ? setor : null });
+  }
+  return mapa;
+}
+
+/** Guarda o código CVM de cada ação da bolsa, com o nome e o setor da empresa (FCA do ano, renovado a cada 30 dias). */
 export async function atualizarTickersCvm(hoje = new Date()): Promise<number> {
-  const c = await lerCache<{ tickers: number }>("fca_tickers");
+  const c = await lerCache<{ tickers: number }>("fca_tickers2"); // 2: com nome e setor
   if (c && c.idadeDias < 30) return 0;
   const ano = hoje.getFullYear();
   for (const a of [ano, ano - 1]) {
@@ -337,7 +351,8 @@ export async function atualizarTickersCvm(hoje = new Date()): Promise<number> {
       const mapa = tickersDoFca(lerCsv(geral), lerCsv(valores));
       if (!mapa.size) continue;
       await salvarTickersCvm(mapa);
-      await salvarCache("fca_tickers", { tickers: mapa.size });
+      await salvarEmpresasCvm(empresasDoFca(lerCsv(geral)));
+      await salvarCache("fca_tickers2", { tickers: mapa.size });
       return mapa.size;
     } catch (err) {
       console.warn(`  Cadastro CVM ${a}: ${(err as Error).message}`);
@@ -356,15 +371,50 @@ export async function salvarTickersCvm(mapa: Map<string, number>) {
   );
 }
 
-/** Constância nos últimos 10 anos (balanços da CVM): em quantos anos lucrou e em quantos distribuiu dividendo/JCP. */
-export async function constanciaPorTicker(hoje = new Date()): Promise<Map<string, Constancia>> {
-  const linhas = await query<{ ticker: string; anos: number; com_lucro: number; com_dividendo: number }>(
-    `select t.ticker, count(*)::int as anos, count(*) filter (where l.lucro > 0)::int as com_lucro,
-            count(*) filter (where l.dividendos > 0)::int as com_dividendo
-       from tickers_cvm t join lucros_anuais l on l.cd_cvm = t.cd_cvm
-      where l.ano >= $1 and l.lucro <> 0
-      group by t.ticker`,
-    [hoje.getFullYear() - 10],
+export async function salvarEmpresasCvm(mapa: Map<number, { nome: string | null; setor: string | null }>) {
+  if (!mapa.size) return;
+  const cds = [...mapa.keys()];
+  await query(
+    `insert into empresas_cvm (cd_cvm, nome, setor) select c, n, s from unnest($1::int[], $2::text[], $3::text[]) as x(c, n, s)
+     on conflict (cd_cvm) do update set nome = excluded.nome, setor = excluded.setor`,
+    [cds, cds.map((c) => mapa.get(c)!.nome), cds.map((c) => mapa.get(c)!.setor)],
   );
-  return new Map(linhas.map((l) => [l.ticker, { anos: l.anos, anosComLucro: l.com_lucro, anosComDividendo: l.com_dividendo }]));
+}
+
+/** O que o ranking sabe de cada ação da bolsa pelos dados da CVM. */
+export type DadosCvm = {
+  cdCvm: number;
+  nome: string | null;
+  setor: string | null;
+  constancia: Constancia | null;
+  anos: { ano: number; lucro: number; dividendos: number | null }[]; // últimos 10 anos, do mais antigo ao mais recente
+};
+
+/** Código CVM, nome, setor e os lucros e dividendos dos últimos 10 anos de cada ação da bolsa. */
+export async function dadosCvmPorTicker(hoje = new Date()): Promise<Map<string, DadosCvm>> {
+  const [tickers, anos] = await Promise.all([
+    query<{ ticker: string; cd_cvm: number; nome: string | null; setor: string | null }>(
+      "select t.ticker, t.cd_cvm, e.nome, e.setor from tickers_cvm t left join empresas_cvm e on e.cd_cvm = t.cd_cvm",
+    ),
+    query<{ cd_cvm: number; ano: number; lucro: number; dividendos: number | null }>(
+      "select cd_cvm, ano, lucro::float8 as lucro, dividendos::float8 as dividendos from lucros_anuais where ano >= $1 and lucro <> 0 order by ano",
+      [hoje.getFullYear() - 10],
+    ),
+  ]);
+  const porEmpresa = new Map<number, DadosCvm["anos"]>();
+  for (const l of anos) porEmpresa.set(l.cd_cvm, [...(porEmpresa.get(l.cd_cvm) ?? []), { ano: l.ano, lucro: Number(l.lucro), dividendos: l.dividendos == null ? null : Number(l.dividendos) }]);
+  const mapa = new Map<string, DadosCvm>();
+  for (const t of tickers) {
+    const hist = porEmpresa.get(t.cd_cvm) ?? [];
+    const constancia = hist.length
+      ? {
+          anos: hist.length,
+          anosComLucro: hist.filter((l) => l.lucro > 0).length,
+          anosComDividendo: hist.filter((l) => (l.dividendos ?? 0) > 0).length,
+          crescimentoLucro: resumirLucros(hist).crescimentoAnual,
+        }
+      : null;
+    mapa.set(t.ticker, { cdCvm: t.cd_cvm, nome: t.nome, setor: t.setor, constancia, anos: hist });
+  }
+  return mapa;
 }

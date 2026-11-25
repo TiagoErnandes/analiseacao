@@ -8,6 +8,8 @@ import { query, type Analise } from "./db";
 import { yieldAtual } from "./juros";
 import { infoTipo } from "./tipos";
 import { brl, dataBr, num, pct, pctSinal } from "./format";
+import { comTodaABolsa } from "./bolsa";
+import { notaRanking } from "./boaEmpresa";
 
 const r2 = (v: number | null | undefined, casas = 2) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 10 ** casas) / 10 ** casas);
 const lista = (s: string | null | undefined) => (s ? s.split(/;\s*/).filter(Boolean) : []);
@@ -313,14 +315,18 @@ export async function montarRanking(usuario: Usuario) {
   );
   const meus = (await carteiraDe(usuario.id)).map((c) => c.ticker);
   const [estrategia, metodo] = await Promise.all([estrategiaAtual(usuario.id), metodoTetoDe(usuario.id)]);
+  const y = await yieldAtual();
+  // As analisadas do dia, com a constância e a dívida que o ranking usa, na ordem da Nota (perfil Equilibrado)
   const analises = rel
     ? aplicarMetodoTetoEmTodas(
-        marcarCarteira(await query<Analise>("select * from analises where data = $1", [rel.data]), meus),
+        marcarCarteira(await comTodaABolsa(await query<Analise>("select * from analises where data = $1", [rel.data]), rel.data, y.acao), meus),
         metodo,
         estrategia.atual === "balanceamento",
-      ).sort((x, y) => (y.score ?? -1) - (x.score ?? -1))
+      )
+        .filter((a) => !a.fora_da_analise)
+        .map((a) => ({ ...a, nota: notaRanking(a) }))
+        .sort((x, y) => (y.nota ?? -1) - (x.nota ?? -1))
     : [];
-  const y = await yieldAtual();
   const ativos = analises.map((a, i) => {
     const ind = (a.indicadores ?? {}) as Record<string, unknown>;
     const n = (k: string) => (typeof ind[k] === "number" ? (ind[k] as number) : null);
@@ -352,6 +358,7 @@ export async function montarRanking(usuario: Usuario) {
       crescimento_dividendo: r2(div?.crescimento ?? null, 4),
       qualidade_0a10: r2(a.qualidade, 1),
       nota_ia_0a10: r2(a.nota_ia, 1),
+      nota_ranking_0a100: a.nota,
       score_0a100: r2(a.score, 0),
       recomendacao: a.recomendacao,
       alertas: lista(a.alertas),
@@ -377,17 +384,17 @@ export function rankingMarkdown(e: ExportacaoRanking): string {
   L.push(
     `Yield exigido: ações ${pct(e.yield_exigido.acoes)}, FIIs ${pct(e.yield_exigido.fiis)}` +
       (e.yield_exigido.juro_real != null ? ` (juro real ${pct(e.yield_exigido.juro_real, 2)})` : "") +
-      ". Margem > 0 = abaixo do preço teto. Score: 35% qualidade, 25% IA, 40% desconto (até 40%); alerta grave multiplica por 0,75.",
+      ". Margem > 0 = abaixo do preço teto. Ordem pela Nota do ranking (perfil Equilibrado): 40% desconto até o teto, 15% anos com lucro, 10% anos com dividendo, 15% ROE, 10% crescimento do lucro e 10% dívida, com 15% vindo da qualidade e da IA. Score: 35% qualidade, 25% IA, 40% desconto (até 40%); alerta grave multiplica por 0,75.",
   );
   if (e.cenario_do_dia) L.push("", `Cenário: ${e.cenario_do_dia}`);
   L.push(
     "",
-    "| # | Ativo | Origem | Setor | Preço | Teto | Margem | DY | P/L | P/VP | ROE | Valor merc. | Lucro (anos) | Div. (anos) | Qual. | IA | Score | Sinal |",
-    "|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+    "| # | Ativo | Origem | Setor | Preço | Teto | Margem | DY | P/L | P/VP | ROE | Valor merc. | Lucro (anos) | Div. (anos) | Qual. | IA | Nota | Score | Sinal |",
+    "|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
   );
   for (const a of e.ativos) {
     L.push(
-      `| ${a.posicao} | ${a.ticker} | ${a.origem} | ${a.setor ?? "—"} | ${num(a.preco)} | ${num(a.preco_teto)}${a.metodo_teto ? ` (${a.metodo_teto})` : ""} | ${pctSinal(a.margem_ate_teto)} | ${pct(a.dy_12m)} | ${num(a.pl)} | ${num(a.pvp)} | ${pct(a.roe)} | ${a.valor_mercado_bi != null ? `${num(a.valor_mercado_bi, 1)} bi` : "—"} | ${a.anos_com_lucro ?? "—"} | ${a.anos_com_dividendo ?? "—"} | ${num(a.qualidade_0a10, 1)} | ${num(a.nota_ia_0a10, 1)} | ${a.score_0a100 ?? "—"} | ${a.recomendacao ?? "—"} |`,
+      `| ${a.posicao} | ${a.ticker} | ${a.origem} | ${a.setor ?? "—"} | ${num(a.preco)} | ${num(a.preco_teto)}${a.metodo_teto ? ` (${a.metodo_teto})` : ""} | ${pctSinal(a.margem_ate_teto)} | ${pct(a.dy_12m)} | ${num(a.pl)} | ${num(a.pvp)} | ${pct(a.roe)} | ${a.valor_mercado_bi != null ? `${num(a.valor_mercado_bi, 1)} bi` : "—"} | ${a.anos_com_lucro ?? "—"} | ${a.anos_com_dividendo ?? "—"} | ${num(a.qualidade_0a10, 1)} | ${num(a.nota_ia_0a10, 1)} | ${a.nota_ranking_0a100 ?? "—"} | ${a.score_0a100 ?? "—"} | ${a.recomendacao ?? "—"} |`,
     );
   }
   L.push("", "## Detalhes");

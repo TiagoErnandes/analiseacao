@@ -11,7 +11,7 @@ import { precosRendaFixa } from "./rendafixa";
 import { alertasDaAnalise } from "./alertas";
 import { idDoDono, migrar, query, salvarAnalises, salvarRelatorio, type Analise, type Carteira } from "./db";
 import { calcularQualidade, calcularQualidadeEtf, calcularQualidadeFii, tipoDeSetor, type Qualidade } from "./qualidade";
-import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, scoreFinal, type Indicadores } from "./valuation";
+import { calcularIndicadores, calcularIndicadoresEtf, calcularIndicadoresFii, consistenciaDividendos, mediasPorAcao, scoreFinal, type Indicadores } from "./valuation";
 import { juroReal, yieldAtual, yieldExigido, type YieldExigido } from "./juros";
 import {
   atualizarDocumentosCvm, atualizarLucrosCvm, atualizarTickersCvm, documentosRecentes, salvarTickersCvm, historicoLucros, infoB3, proventosRecentes,
@@ -59,7 +59,7 @@ function foraDoPadraoPrevidencia(
 }
 
 /** Preço teto e qualidade conforme o tipo de ativo. `exigido`: yield do Bazin ligado ao juro real. */
-function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | null): { ind: Indicadores; qual: Qualidade } {
+function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | null): { ind: Indicadores & { lpaMedio?: number | null }; qual: Qualidade } {
   const hoje = new Date();
   if (d.tipo === "fii") {
     const ind = calcularIndicadoresFii({
@@ -87,7 +87,13 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
     const ind = calcularIndicadoresEtf({ preco: d.preco, media12m: d.historico?.media12m ?? null, proventos: d.proventos }, hoje, exigido.acao);
     return { ind, qual: calcularQualidadeEtf(d.historico, ind.dy12m) };
   }
-  const ind = calcularIndicadores(d, hoje, exigido.acao);
+  // Lucro médio de 5 anos por ação (CVM ÷ número de ações): o preço teto não paga pelo lucro de um pico de ciclo
+  const vmAcao = d.fundamentos?.valorMercado;
+  const { lpaMedio } = mediasPorAcao(
+    (lucros?.lucros ?? []).map((l) => ({ ...l, dividendos: null })),
+    vmAcao && d.preco ? vmAcao / d.preco : null,
+  );
+  const ind = calcularIndicadores({ ...d, lpaMedio }, hoje, exigido.acao);
   // Lucro de 12 meses do Fundamentus quase zero (ROE < 1%) mas a empresa lucrou no último balanço anual da CVM:
   // o dado do Fundamentus está errado (ex.: TIMS3 com P/L 1.914). A nota não usa ROE, P/L, payout e margem dele.
   const ultimoLucro = lucros?.lucros.at(-1)?.lucro ?? 0;
@@ -113,7 +119,7 @@ function avaliar(d: DadosAcao, exigido: YieldExigido, lucros: HistoricoLucro | n
   }
   const vm = d.fundamentos?.valorMercado;
   if (vm != null && vm > 0 && vm < VALOR_MINIMO_ACAO) qual.alertas.push(`empresa pequena (valor de mercado R$ ${(vm / 1e9).toFixed(1).replace(".", ",")} bi)`);
-  return { ind, qual };
+  return { ind: { ...ind, lpaMedio }, qual };
 }
 
 let custoDaExecucao: CustoIa | null = null;
@@ -424,7 +430,7 @@ export async function executarAnalise(origem: "agendador" | "botao" | "manual" =
         d.tipo === "fii"
           ? { ...d.fii, dividendos10a: div10 }
           : d.tipo === "acao"
-            ? { ...d.fundamentos, lucros10a: lucro, dividendos10a: div10, documentosCvm: documentos, proventosAnunciados: anunciados, yieldExigido: exigido.acao }
+            ? { ...d.fundamentos, lpaMedio: ind.lpaMedio ?? null, lucros10a: lucro, dividendos10a: div10, documentosCvm: documentos, proventosAnunciados: anunciados, yieldExigido: exigido.acao }
             : d.tipo === "cripto"
               ? (d.cripto ?? null)
               : d.historico,
